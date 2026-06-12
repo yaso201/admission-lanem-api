@@ -1,0 +1,111 @@
+{
+ "actions": [],
+ "autoname": "AFF-.YYYY.-.#####",
+ "creation": "2026-06-07 21:30:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "applicant",
+  "session",
+  "person_id",
+  "fee_type",
+  "amount_xof",
+  "status",
+  "idempotency_key"
+ ],
+ "fields": [
+  {
+   "fieldname": "applicant",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Admission Applicant",
+   "options": "Admission Applicant",
+   "reqd": 1
+  },
+  {
+   "fieldname": "session",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Admission Session",
+   "options": "Admission Session",
+   "reqd": 1
+  },
+  {
+   "fieldname": "person_id",
+   "fieldtype": "Data",
+   "label": "Person ID"
+  },
+  {
+   "default": "application",
+   "fieldname": "fee_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Fee Type",
+   "options": "application\ncompetition\nenrollment",
+   "reqd": 1
+  },
+  {
+   "fieldname": "amount_xof",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Amount XOF",
+   "non_negative": 1,
+   "reqd": 1
+  },
+  {
+   "default": "Pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Pending\nPaid\nCancelled",
+   "reqd": 1
+  },
+  {
+   "fieldname": "idempotency_key",
+   "fieldtype": "Data",
+   "label": "Idempotency Key",
+   "unique": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-06-07 21:30:00",
+ "modified_by": "Administrator",
+ "module": "Admission",
+ "name": "Applicant Fee",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Admission Administratif",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Admission Responsable"
+  },
+  {
+   "read": 1,
+   "role": "Admission Direction"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

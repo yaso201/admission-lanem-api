@@ -1,0 +1,127 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:mirror_key",
+ "creation": "2026-06-09 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "mirror_key",
+  "scholarship_name",
+  "category",
+  "column_break_rate",
+  "rate",
+  "exclusivity_group",
+  "section_scope",
+  "program",
+  "section_sync",
+  "last_synced_on"
+ ],
+ "fields": [
+  {
+   "fieldname": "mirror_key",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Mirror Key",
+   "reqd": 1,
+   "unique": 1,
+   "read_only": 1,
+   "description": "UF Scholarship Rate name (ex: BOURSE-TRES-BIEN). Cle de replication."
+  },
+  {
+   "fieldname": "scholarship_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Scholarship Name",
+   "reqd": 1,
+   "description": "Nom de la bourse (ex: Mention Tres Bien)."
+  },
+  {
+   "fieldname": "category",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Category",
+   "options": "Excellence\nSociale\nMerite\nPartenariat\nAutre",
+   "reqd": 1,
+   "description": "Categorie de bourse. Miroir UF."
+  },
+  {
+   "fieldname": "column_break_rate",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "rate",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Rate",
+   "reqd": 1,
+   "precision": 4,
+   "description": "Taux de reduction (0.00 a 1.00)."
+  },
+  {
+   "fieldname": "exclusivity_group",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Exclusivity Group",
+   "description": "Groupe d'exclusivite (= categorie lowercase). Intra-groupe: seul le taux max s'applique."
+  },
+  {
+   "fieldname": "section_scope",
+   "fieldtype": "Section Break",
+   "label": "Scope"
+  },
+  {
+   "fieldname": "program",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Program",
+   "description": "Code programme. Vide = tous programmes."
+  },
+  {
+   "fieldname": "section_sync",
+   "fieldtype": "Section Break",
+   "label": "Synchronisation",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "last_synced_on",
+   "fieldtype": "Datetime",
+   "label": "Last Synced On",
+   "read_only": 1,
+   "description": "Derniere synchronisation depuis UF."
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-06-09 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Admission",
+ "name": "Admission Scholarship Mirror",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "role": "System Manager",
+   "write": 1,
+   "create": 1,
+   "delete": 1
+  },
+  {
+   "read": 1,
+   "role": "Admission Administratif"
+  },
+  {
+   "read": 1,
+   "role": "Admission Responsable"
+  },
+  {
+   "read": 1,
+   "role": "Admission Direction"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 0
+}

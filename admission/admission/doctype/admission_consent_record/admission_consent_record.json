@@ -1,0 +1,119 @@
+{
+ "actions": [],
+ "autoname": "CONS-.YYYY.-.#####",
+ "creation": "2026-06-09 12:00:00",
+ "description": "Enregistrement immuable de consentement candidat. Trace : qui (applicant), quoi (consent_type + legal_document), quand (accepted_at), d'ou (client_ip, user_agent), quelle version (version_hash). Ref: ADM-LEG, loi 2017-20 art.29.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "applicant",
+  "consent_type",
+  "column_break_doc",
+  "legal_document",
+  "version_hash",
+  "section_trace",
+  "accepted_at",
+  "column_break_client",
+  "client_ip",
+  "user_agent"
+ ],
+ "fields": [
+  {
+   "fieldname": "applicant",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Applicant",
+   "options": "Admission Applicant",
+   "reqd": 1
+  },
+  {
+   "fieldname": "consent_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Consent Type",
+   "options": "DATA_PROCESSING\nCGV\nREFUND_ACKNOWLEDGMENT\nDATA_TRANSFER",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_doc",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "legal_document",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Legal Document",
+   "options": "Admission Legal Document",
+   "reqd": 1
+  },
+  {
+   "fieldname": "version_hash",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Version Hash",
+   "read_only": 1,
+   "reqd": 1,
+   "description": "Copie du content_hash du Legal Document au moment de l'acceptation. Prouve QUELLE version."
+  },
+  {
+   "fieldname": "section_trace",
+   "fieldtype": "Section Break",
+   "label": "Tracabilite"
+  },
+  {
+   "fieldname": "accepted_at",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Accepted At",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_client",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "client_ip",
+   "fieldtype": "Data",
+   "label": "Client IP",
+   "read_only": 1
+  },
+  {
+   "fieldname": "user_agent",
+   "fieldtype": "Small Text",
+   "label": "User Agent",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-06-09 12:00:00",
+ "modified_by": "Administrator",
+ "module": "Admission",
+ "name": "Admission Consent Record",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "role": "System Manager"
+  },
+  {
+   "read": 1,
+   "role": "Admission Administratif"
+  },
+  {
+   "read": 1,
+   "role": "Admission Responsable"
+  },
+  {
+   "read": 1,
+   "role": "Admission Direction"
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "track_changes": 0
+}

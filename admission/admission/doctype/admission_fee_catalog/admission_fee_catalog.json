@@ -1,0 +1,115 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:catalog_key",
+ "creation": "2026-06-08 12:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "catalog_key",
+  "program_code",
+  "level_code",
+  "fee_type",
+  "column_break_amount",
+  "amount_xof",
+  "section_sync",
+  "last_synced_on"
+ ],
+ "fields": [
+  {
+   "fieldname": "catalog_key",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Catalog Key",
+   "reqd": 1,
+   "unique": 1,
+   "description": "Cle unique 3D: {program_code}-{level_code}-{fee_type}. Generee automatiquement. Ref: ADM-SCH.",
+   "read_only": 1
+  },
+  {
+   "fieldname": "program_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Program Code",
+   "reqd": 1,
+   "description": "Code programme (PRE, LIS, LRC, DEFAULT). Replique depuis UF."
+  },
+  {
+   "fieldname": "level_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Level Code",
+   "reqd": 1,
+   "description": "Code niveau (LIS-L1, PRE-A2, DEFAULT). Replique depuis UF. Ref: ADM-SCH."
+  },
+  {
+   "fieldname": "fee_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Fee Type",
+   "options": "\napplication\ncompetition\nenrollment\nannual\ncap",
+   "reqd": 1,
+   "description": "Type de frais: application (dossier), competition (concours), enrollment (inscription), annual (scolarite), cap (plafond bourses, row SCHOLARSHIP-DEFAULT-cap ecrite par scholarship_sync)."
+  },
+  {
+   "fieldname": "column_break_amount",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "amount_xof",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Amount XOF",
+   "non_negative": 1,
+   "reqd": 1,
+   "description": "Montant en XOF. Source de verite: UF Finance Parameter."
+  },
+  {
+   "fieldname": "section_sync",
+   "fieldtype": "Section Break",
+   "label": "Synchronisation",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "last_synced_on",
+   "fieldtype": "Datetime",
+   "label": "Last Synced On",
+   "read_only": 1,
+   "description": "Derniere synchronisation depuis UF."
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-06-09 12:00:00",
+ "modified_by": "Administrator",
+ "module": "Admission",
+ "name": "Admission Fee Catalog",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "role": "System Manager",
+   "write": 1,
+   "create": 1,
+   "delete": 1
+  },
+  {
+   "read": 1,
+   "role": "Admission Administratif"
+  },
+  {
+   "read": 1,
+   "role": "Admission Responsable"
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "Admission Direction",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 0
+}

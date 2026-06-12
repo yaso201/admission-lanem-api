@@ -1,0 +1,143 @@
+{
+ "actions": [],
+ "creation": "2026-06-10 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "consultation_section",
+  "consultation_cloisonnee",
+  "consultation_axis",
+  "consultation_role_scopes",
+  "rib_section",
+  "rib_banque",
+  "rib_titulaire",
+  "rib_iban",
+  "rib_bic",
+  "rib_pdf",
+  "rib_column",
+  "rib_version",
+  "rib_updated_by",
+  "rib_updated_at",
+  "rib_pdf_hash"
+ ],
+ "fields": [
+  {
+   "fieldname": "consultation_section",
+   "fieldtype": "Section Break",
+   "label": "Cloisonnement consultation (SOCLE-0-CONSULT)"
+  },
+  {
+   "default": "0",
+   "description": "OFF par defaut : tout staff voit tous les dossiers (MVP). ON : cloisonne selon l'axe et le perimetre par role.",
+   "fieldname": "consultation_cloisonnee",
+   "fieldtype": "Check",
+   "label": "Cloisonnement consultation actif"
+  },
+  {
+   "default": "status",
+   "depends_on": "consultation_cloisonnee",
+   "description": "Fieldname d'Admission Applicant servant d'axe (ex. status, session, programme_code).",
+   "fieldname": "consultation_axis",
+   "fieldtype": "Data",
+   "label": "Axe de cloisonnement"
+  },
+  {
+   "default": "{\"Admission Administratif\": [\"BRO\", \"SOP\", \"SOU\", \"INC\", \"DES\"], \"Admission Responsable\": [\"ETU\", \"ATT\", \"ADM\", \"ACO\"], \"Admission Direction\": [\"ACC\", \"INS\", \"REF\"]}",
+   "depends_on": "consultation_cloisonnee",
+   "description": "Perimetre par role : {role: [valeurs autorisees de l'axe]}. Defaut aligne sur le Workflow. Inerte tant que OFF.",
+   "fieldname": "consultation_role_scopes",
+   "fieldtype": "JSON",
+   "label": "Perimetre par role (JSON)"
+  },
+  {
+   "fieldname": "rib_section",
+   "fieldtype": "Section Break",
+   "label": "Compte d'encaissement (RIB) — source unique mails + portail",
+   "description": "Édité par le rôle Admission Finance. À l'enregistrement : rotation versionnée du PDF (l'ancien fichier est DÉTRUIT), mail de vérification à l'éditeur (gabarit candidat réel), alertes Direction/compta."
+  },
+  {
+   "fieldname": "rib_banque",
+   "fieldtype": "Data",
+   "label": "Banque"
+  },
+  {
+   "fieldname": "rib_titulaire",
+   "fieldtype": "Data",
+   "label": "Titulaire du compte"
+  },
+  {
+   "fieldname": "rib_iban",
+   "fieldtype": "Data",
+   "label": "IBAN"
+  },
+  {
+   "fieldname": "rib_bic",
+   "fieldtype": "Data",
+   "label": "BIC / SWIFT"
+  },
+  {
+   "fieldname": "rib_pdf",
+   "fieldtype": "Attach",
+   "label": "RIB officiel (PDF)",
+   "description": "PDF joint aux mails d'instructions de virement. Remplacez-le ici : l'ancienne version est supprimée partout."
+  },
+  {
+   "fieldname": "rib_column",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "rib_version",
+   "fieldtype": "Data",
+   "label": "Version (hash)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "rib_updated_by",
+   "fieldtype": "Link",
+   "options": "User",
+   "label": "Modifié par",
+   "read_only": 1
+  },
+  {
+   "fieldname": "rib_updated_at",
+   "fieldtype": "Datetime",
+   "label": "Modifié le",
+   "read_only": 1
+  },
+  {
+   "fieldname": "rib_pdf_hash",
+   "fieldtype": "Data",
+   "label": "PDF sha256",
+   "read_only": 1,
+   "hidden": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-06-12 23:59:00",
+ "modified_by": "Administrator",
+ "module": "Admission",
+ "name": "Admission Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "role": "Admission Finance",
+   "read": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

@@ -1,0 +1,75 @@
+{
+ "actions": [],
+ "creation": "2026-06-09 00:00:00",
+ "description": "Durées de conservation des données admission (loi 2017-20). Valeurs DEFAULT = placeholder, à fixer par le juriste/métier. Lu par admission.api.retention. Ref: DAT-1, AUDIT-DAT1-RETENTION.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "durations_section",
+  "abandoned_bro_days",
+  "ref_des_retention_days",
+  "column_break_dur",
+  "post_ins_retention_days",
+  "log_retention_days"
+ ],
+ "fields": [
+  {
+   "fieldname": "durations_section",
+   "fieldtype": "Section Break",
+   "label": "Durees de conservation (jours) - a fixer par le juriste (loi 2017-20)"
+  },
+  {
+   "default": "90",
+   "description": "Dossiers BRO jamais soumis : jours d'inactivite avant anonymisation.",
+   "fieldname": "abandoned_bro_days",
+   "fieldtype": "Int",
+   "label": "BRO abandonnes (jours)"
+  },
+  {
+   "default": "365",
+   "description": "Dossiers REF/DES : jours apres decision (delai de recours) avant anonymisation.",
+   "fieldname": "ref_des_retention_days",
+   "fieldtype": "Int",
+   "label": "REF/DES (jours)"
+  },
+  {
+   "fieldname": "column_break_dur",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "30",
+   "description": "Dossiers INS transferes au campus : jours apres transfert avant anonymisation.",
+   "fieldname": "post_ins_retention_days",
+   "fieldtype": "Int",
+   "label": "INS transferes (jours)"
+  },
+  {
+   "default": "90",
+   "description": "Logs : jours de conservation.",
+   "fieldname": "log_retention_days",
+   "fieldtype": "Int",
+   "label": "Logs (jours)"
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-06-09 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Admission",
+ "name": "Admission Retention Policy",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 0
+}

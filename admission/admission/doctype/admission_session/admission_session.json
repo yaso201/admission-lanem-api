@@ -1,0 +1,159 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:session_code",
+ "creation": "2026-06-07 21:30:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "session_code",
+  "label",
+  "programme_section",
+  "programme_code",
+  "programme_label",
+  "academic_year",
+  "dates_section",
+  "opens_on",
+  "closes_on",
+  "bac_results_date",
+  "fee_section",
+  "application_fee_xof",
+  "is_open",
+  "is_prepa_session"
+ ],
+ "fields": [
+  {
+   "fieldname": "session_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Session Code",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Label",
+   "reqd": 1
+  },
+  {
+   "fieldname": "programme_section",
+   "fieldtype": "Section Break",
+   "label": "Programme"
+  },
+  {
+   "fieldname": "programme_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Programme Code",
+   "reqd": 1
+  },
+  {
+   "fieldname": "programme_label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Programme Label",
+   "reqd": 1
+  },
+  {
+   "fieldname": "academic_year",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Academic Year",
+   "reqd": 1
+  },
+  {
+   "fieldname": "dates_section",
+   "fieldtype": "Section Break",
+   "label": "Dates"
+  },
+  {
+   "fieldname": "opens_on",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Opens On",
+   "reqd": 1
+  },
+  {
+   "fieldname": "closes_on",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Closes On",
+   "reqd": 1
+  },
+  {
+   "fieldname": "bac_results_date",
+   "fieldtype": "Date",
+   "label": "Bac Results Date",
+   "reqd": 1
+  },
+  {
+   "fieldname": "fee_section",
+   "fieldtype": "Section Break",
+   "label": "Fees"
+  },
+  {
+   "default": "15000",
+   "fieldname": "application_fee_xof",
+   "fieldtype": "Currency",
+   "label": "Application Fee XOF",
+   "non_negative": 1,
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "is_open",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Is Open"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_prepa_session",
+   "fieldtype": "Check",
+   "label": "Prepa Session"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-06-07 21:30:00",
+ "modified_by": "Administrator",
+ "module": "Admission",
+ "name": "Admission Session",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Admission Administratif"
+  },
+  {
+   "read": 1,
+   "role": "Admission Responsable"
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "Admission Direction",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "label",
+ "track_changes": 1
+}

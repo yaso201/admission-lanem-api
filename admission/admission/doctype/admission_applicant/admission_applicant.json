@@ -1,0 +1,559 @@
+{
+ "actions": [],
+ "autoname": "CAN-.YYYY.-.#####",
+ "creation": "2026-06-07 21:30:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "status",
+  "motif_incompletude",
+  "motif_refus",
+  "motif_desistement",
+  "decided_by",
+  "decision_date",
+  "rang_liste_attente",
+  "notes_concours",
+  "notes_validated",
+  "notes_validated_by",
+  "notes_validated_date",
+  "bac_verified",
+  "bac_verified_by",
+  "bac_verified_date",
+  "applicant_name",
+  "identity_section",
+  "first_name",
+  "last_name",
+  "email",
+  "phone",
+  "date_of_birth",
+  "academic_section",
+  "programme_code",
+  "programme_label",
+  "level_code",
+  "session",
+  "person_id",
+  "bac_date",
+  "bac_profile",
+  "conditionnel",
+  "pieces_section",
+  "pieces",
+  "access_section",
+  "dossier_token_hash",
+  "token_expires_at",
+  "otp_email_hash",
+  "otp_phone_hash",
+  "otp_verified",
+  "otp_verified_at",
+  "otp_expires_at",
+  "sop_reminder_sent_at",
+  "purge_notice_sent_at",
+  "bridge_notified",
+  "bridge_notified_at",
+  "bridge_last_error",
+  "consent_section",
+  "consent_data_processing",
+  "consent_data_processing_at",
+  "column_break_consent",
+  "consent_cgv",
+  "consent_cgv_at",
+  "scholarship_section",
+  "requested_scholarships",
+  "proposed_scholarships",
+  "scholarships_proposed_by",
+  "scholarships_proposed_date",
+  "finance_section",
+  "validated_scholarships",
+  "scholarships_validated_by",
+  "scholarships_validated_date",
+  "acompte_xof",
+  "promo_code",
+  "promo_rate",
+  "promo_captured_date",
+  "integration_section",
+  "idempotency_key",
+  "source",
+  "anonymized"
+ ],
+ "fields": [
+  {
+   "default": "BRO",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "BRO\nSOP\nSOU\nINC\nETU\nATT\nADM\nACO\nACC\nINS\nREF\nDES",
+   "reqd": 1
+  },
+  {
+   "description": "Motif du renvoi en Incomplet (INC). Effacé à la re-soumission candidat (INC→SOU).",
+   "fieldname": "motif_incompletude",
+   "fieldtype": "Text",
+   "label": "Motif d'incomplétude"
+  },
+  {
+   "description": "Motif du refus (REF) — obligatoire à la décision de refus.",
+   "fieldname": "motif_refus",
+   "fieldtype": "Text",
+   "label": "Motif de refus"
+  },
+  {
+   "description": "Motif du désistement (DES) — obligatoire au geste de désistement (W1) ; posé par la clôture de session (W4).",
+   "fieldname": "motif_desistement",
+   "fieldtype": "Text",
+   "label": "Motif de désistement"
+  },
+  {
+   "description": "Compte staff de la dernière décision (posé par le code).",
+   "fieldname": "decided_by",
+   "fieldtype": "Link",
+   "label": "Décideur",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "decision_date",
+   "fieldtype": "Datetime",
+   "label": "Date de décision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "rang_liste_attente",
+   "fieldtype": "Int",
+   "label": "Rang liste d'attente"
+  },
+  {
+   "description": "Notes de concours Prépa (DEC-197), objet {épreuve: note}. Saisies par l'Administratif (non validées), validées par le Responsable.",
+   "fieldname": "notes_concours",
+   "fieldtype": "JSON",
+   "label": "Notes de concours (Prépa)"
+  },
+  {
+   "default": "0",
+   "fieldname": "notes_validated",
+   "fieldtype": "Check",
+   "label": "Notes validées",
+   "read_only": 1
+  },
+  {
+   "fieldname": "notes_validated_by",
+   "fieldtype": "Link",
+   "label": "Notes validées par",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "notes_validated_date",
+   "fieldtype": "Datetime",
+   "label": "Date validation notes",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Diplôme bac vérifié par l'Administratif (C1-ACO, DEC-214). Prérequis humain de la levée de condition.",
+   "fieldname": "bac_verified",
+   "fieldtype": "Check",
+   "label": "Diplôme bac vérifié",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bac_verified_by",
+   "fieldtype": "Link",
+   "label": "Diplôme vérifié par",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bac_verified_date",
+   "fieldtype": "Datetime",
+   "label": "Date vérification diplôme",
+   "read_only": 1
+  },
+  {
+   "fieldname": "applicant_name",
+   "fieldtype": "Data",
+   "in_global_search": 1,
+   "in_list_view": 1,
+   "label": "Applicant Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "identity_section",
+   "fieldtype": "Section Break",
+   "label": "Identity"
+  },
+  {
+   "fieldname": "first_name",
+   "fieldtype": "Data",
+   "label": "First Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "last_name",
+   "fieldtype": "Data",
+   "label": "Last Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "email",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Email",
+   "options": "Email",
+   "reqd": 1
+  },
+  {
+   "fieldname": "phone",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Phone",
+   "reqd": 1
+  },
+  {
+   "fieldname": "date_of_birth",
+   "fieldtype": "Date",
+   "label": "Date of Birth"
+  },
+  {
+   "fieldname": "academic_section",
+   "fieldtype": "Section Break",
+   "label": "Academic"
+  },
+  {
+   "fieldname": "programme_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Programme Code",
+   "reqd": 1
+  },
+  {
+   "fieldname": "programme_label",
+   "fieldtype": "Data",
+   "label": "Programme Label"
+  },
+  {
+   "fieldname": "level_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Level Code",
+   "reqd": 1,
+   "description": "Code niveau d'entree (ex. LIS-L1, PRE-A1). Valide contre Admission Level Mirror. Ref: ADM-SCH."
+  },
+  {
+   "fieldname": "session",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Admission Session",
+   "options": "Admission Session",
+   "reqd": 1
+  },
+  {
+   "fieldname": "person_id",
+   "fieldtype": "Data",
+   "label": "Person ID"
+  },
+  {
+   "fieldname": "bac_date",
+   "fieldtype": "Date",
+   "label": "Bac Date"
+  },
+  {
+   "fieldname": "bac_profile",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Bac Profile",
+   "options": "\nbac_anterieur\nbac_attente\nbac_annee"
+  },
+  {
+   "default": "0",
+   "fieldname": "conditionnel",
+   "fieldtype": "Check",
+   "label": "Conditional"
+  },
+  {
+   "fieldname": "pieces_section",
+   "fieldtype": "Section Break",
+   "label": "Pieces"
+  },
+  {
+   "fieldname": "pieces",
+   "fieldtype": "Table",
+   "label": "Pieces",
+   "options": "Applicant Piece"
+  },
+  {
+   "fieldname": "access_section",
+   "fieldtype": "Section Break",
+   "label": "External Access"
+  },
+  {
+   "fieldname": "dossier_token_hash",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Dossier Token Hash"
+  },
+  {
+   "fieldname": "token_expires_at",
+   "fieldtype": "Datetime",
+   "hidden": 1,
+   "label": "Token Expires At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sop_reminder_sent_at",
+   "fieldtype": "Datetime",
+   "hidden": 1,
+   "label": "SOP Reminder Sent At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "purge_notice_sent_at",
+   "fieldtype": "Datetime",
+   "hidden": 1,
+   "label": "Purge Notice Sent At",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "bridge_notified",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Bridge Notified (campus ack)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bridge_notified_at",
+   "fieldtype": "Datetime",
+   "hidden": 1,
+   "label": "Bridge Notified At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bridge_last_error",
+   "fieldtype": "Small Text",
+   "hidden": 1,
+   "label": "Bridge Last Error",
+   "read_only": 1
+  },
+  {
+   "fieldname": "otp_email_hash",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Email OTP Hash"
+  },
+  {
+   "fieldname": "otp_phone_hash",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Phone OTP Hash"
+  },
+  {
+   "default": "0",
+   "fieldname": "otp_verified",
+   "fieldtype": "Check",
+   "label": "OTP Verified"
+  },
+  {
+   "fieldname": "otp_verified_at",
+   "fieldtype": "Datetime",
+   "label": "OTP Verified At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "otp_expires_at",
+   "fieldtype": "Datetime",
+   "hidden": 1,
+   "label": "OTP Expires At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "consent_section",
+   "fieldtype": "Section Break",
+   "label": "Consentements"
+  },
+  {
+   "default": "0",
+   "fieldname": "consent_data_processing",
+   "fieldtype": "Check",
+   "label": "Consent Data Processing",
+   "description": "Consentement au traitement des donnees personnelles. Ref: loi 2017-20 art.28."
+  },
+  {
+   "fieldname": "consent_data_processing_at",
+   "fieldtype": "Datetime",
+   "label": "Consent Data Processing At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_consent",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "consent_cgv",
+   "fieldtype": "Check",
+   "label": "Consent CGV",
+   "description": "Acceptation des Conditions Generales de Vente. Ref: OHADA, 2007-21."
+  },
+  {
+   "fieldname": "consent_cgv_at",
+   "fieldtype": "Datetime",
+   "label": "Consent CGV At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "scholarship_section",
+   "fieldtype": "Section Break",
+   "label": "Scholarship Request"
+  },
+  {
+   "fieldname": "requested_scholarships",
+   "fieldtype": "JSON",
+   "label": "Requested Scholarships",
+   "description": "JSON array de mirror_keys (ex: [\"BOURSE-TRES-BIEN\"]). Bourses demandees par le candidat au depot."
+  },
+  {
+   "fieldname": "proposed_scholarships",
+   "fieldtype": "JSON",
+   "label": "Proposed Scholarships",
+   "description": "Mirror_keys proposees par le Responsable a l'etude (sous-ensemble de requested_scholarships). Guide la validation Direction. Ref: D11 §6.3, C2-BOURSES."
+  },
+  {
+   "fieldname": "scholarships_proposed_by",
+   "fieldtype": "Link",
+   "options": "User",
+   "label": "Bourses proposees par",
+   "read_only": 1,
+   "description": "Responsable ayant propose les bourses (trace non falsifiable). C2-BOURSES."
+  },
+  {
+   "fieldname": "scholarships_proposed_date",
+   "fieldtype": "Datetime",
+   "label": "Date proposition bourses",
+   "read_only": 1
+  },
+  {
+   "fieldname": "finance_section",
+   "fieldtype": "Section Break",
+   "label": "Finance (validated)"
+  },
+  {
+   "fieldname": "validated_scholarships",
+   "fieldtype": "JSON",
+   "label": "Validated Scholarships",
+   "description": "Mirror_keys validees par la Direction a ACC (sous-ensemble de requested_scholarships). Ref: D11 §199, ADM-UF-5a."
+  },
+  {
+   "fieldname": "scholarships_validated_by",
+   "fieldtype": "Link",
+   "options": "User",
+   "label": "Bourses validees par",
+   "read_only": 1,
+   "description": "Direction ayant valide les bourses a l'ACC (trace non falsifiable). C2-BOURSES."
+  },
+  {
+   "fieldname": "scholarships_validated_date",
+   "fieldtype": "Datetime",
+   "label": "Date validation bourses",
+   "read_only": 1
+  },
+  {
+   "fieldname": "acompte_xof",
+   "fieldtype": "Currency",
+   "label": "Acompte XOF",
+   "default": "0",
+   "description": "Acompte scolarite encaisse au frais 2. Ventile par admission. Ref: ADM-UF-5a §3ter."
+  },
+  {
+   "fieldname": "promo_code",
+   "fieldtype": "Data",
+   "label": "Promo Code",
+   "read_only": 1,
+   "description": "Mirror_key(s) promo capturee au frais 1. Figee. Ref: ADM-UF-5a §3bis-PROMO."
+  },
+  {
+   "fieldname": "promo_rate",
+   "fieldtype": "Float",
+   "label": "Promo Rate",
+   "read_only": 1,
+   "default": "0",
+   "description": "Taux promo fige au frais 1 (snapshot). Ne bouge plus. Ref: ADM-UF-5a §3bis-PROMO."
+  },
+  {
+   "fieldname": "promo_captured_date",
+   "fieldtype": "Date",
+   "label": "Promo Captured Date",
+   "read_only": 1,
+   "description": "Date de capture promo (= date candidature). Ref: ADM-UF-5a §3bis-PROMO."
+  },
+  {
+   "fieldname": "integration_section",
+   "fieldtype": "Section Break",
+   "label": "Integration"
+  },
+  {
+   "fieldname": "idempotency_key",
+   "fieldtype": "Data",
+   "label": "Idempotency Key",
+   "unique": 1
+  },
+  {
+   "default": "api_applicant",
+   "fieldname": "source",
+   "fieldtype": "Data",
+   "label": "Source"
+  },
+  {
+   "default": "0",
+   "description": "DAT-1 : dossier anonymise (droit a l'effacement loi 2017-20). Base de l'idempotence purge.",
+   "fieldname": "anonymized",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Anonymized",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-06-12 13:00:00",
+ "modified_by": "Administrator",
+ "module": "Admission",
+ "name": "Admission Applicant",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Admission Administratif",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Admission Responsable",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Admission Direction",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "applicant_name",
+ "track_changes": 1
+}

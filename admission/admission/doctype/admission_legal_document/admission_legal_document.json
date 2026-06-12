@@ -1,0 +1,121 @@
+{
+ "actions": [],
+ "autoname": "LEGAL-.YYYY.-.#####",
+ "creation": "2026-06-09 12:00:00",
+ "description": "Textes legaux versionnés (CGV, politique de confidentialité, etc.). Contenu = placeholder (juriste F10). Le content_hash SHA-256 prouve la version. Un seul document actif par type. Ref: ADM-LEG, loi 2017-20.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "document_type",
+  "version",
+  "column_break_meta",
+  "effective_date",
+  "is_active",
+  "section_content",
+  "content_text",
+  "section_integrity",
+  "content_hash",
+  "legal_references"
+ ],
+ "fields": [
+  {
+   "fieldname": "document_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Document Type",
+   "options": "CGV\nPRIVACY_POLICY\nREFUND_POLICY\nDATA_TRANSFER_CONSENT\nSIMULATION_DISCLAIMER",
+   "reqd": 1
+  },
+  {
+   "fieldname": "version",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Version",
+   "reqd": 1,
+   "description": "Ex. 2026-06-V1, PLACEHOLDER-V0."
+  },
+  {
+   "fieldname": "column_break_meta",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "effective_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Effective Date",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "is_active",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Is Active",
+   "description": "Un seul document actif par type. Activer celui-ci desactive l'ancien via validation."
+  },
+  {
+   "fieldname": "section_content",
+   "fieldtype": "Section Break",
+   "label": "Contenu"
+  },
+  {
+   "fieldname": "content_text",
+   "fieldtype": "Text",
+   "label": "Content Text",
+   "reqd": 1,
+   "description": "Contenu integral du texte legal. Placeholder = a remplir par le juriste (F10)."
+  },
+  {
+   "fieldname": "section_integrity",
+   "fieldtype": "Section Break",
+   "label": "Intégrité",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "content_hash",
+   "fieldtype": "Data",
+   "label": "Content Hash",
+   "read_only": 1,
+   "description": "SHA-256 du content_text. Calculé automatiquement. Prouve la version acceptée."
+  },
+  {
+   "fieldname": "legal_references",
+   "fieldtype": "Small Text",
+   "label": "Legal References",
+   "description": "Ex. Loi 2017-20 art.28, DEC-222."
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-06-09 12:00:00",
+ "modified_by": "Administrator",
+ "module": "Admission",
+ "name": "Admission Legal Document",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Admission Administratif"
+  },
+  {
+   "read": 1,
+   "role": "Admission Responsable"
+  },
+  {
+   "read": 1,
+   "role": "Admission Direction"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1
+}

@@ -1,0 +1,124 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:mirror_key",
+ "creation": "2026-06-09 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "mirror_key",
+  "promo_name",
+  "rate",
+  "column_break_period",
+  "start_date",
+  "end_date",
+  "section_scope",
+  "program",
+  "section_sync",
+  "last_synced_on"
+ ],
+ "fields": [
+  {
+   "fieldname": "mirror_key",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Mirror Key",
+   "reqd": 1,
+   "unique": 1,
+   "read_only": 1,
+   "description": "UF Promotion name (ex: PROMO-00001). Cle de replication."
+  },
+  {
+   "fieldname": "promo_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Promotion Name",
+   "reqd": 1,
+   "description": "Nom de la promotion (ex: Early Bird 2026)."
+  },
+  {
+   "fieldname": "rate",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Rate",
+   "reqd": 1,
+   "precision": 4,
+   "description": "Taux de reduction (0.00 a 1.00)."
+  },
+  {
+   "fieldname": "column_break_period",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "start_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Start Date",
+   "description": "Debut de validite."
+  },
+  {
+   "fieldname": "end_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "End Date",
+   "description": "Fin de validite."
+  },
+  {
+   "fieldname": "section_scope",
+   "fieldtype": "Section Break",
+   "label": "Scope"
+  },
+  {
+   "fieldname": "program",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Program",
+   "description": "Code programme. Vide = tous programmes."
+  },
+  {
+   "fieldname": "section_sync",
+   "fieldtype": "Section Break",
+   "label": "Synchronisation",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "last_synced_on",
+   "fieldtype": "Datetime",
+   "label": "Last Synced On",
+   "read_only": 1,
+   "description": "Derniere synchronisation depuis UF."
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-06-09 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Admission",
+ "name": "Admission Promotion Mirror",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "role": "System Manager",
+   "write": 1,
+   "create": 1,
+   "delete": 1
+  },
+  {
+   "read": 1,
+   "role": "Admission Administratif"
+  },
+  {
+   "read": 1,
+   "role": "Admission Responsable"
+  },
+  {
+   "read": 1,
+   "role": "Admission Direction"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 0
+}

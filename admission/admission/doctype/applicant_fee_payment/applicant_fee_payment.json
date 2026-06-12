@@ -1,0 +1,186 @@
+{
+ "actions": [],
+ "autoname": "REC-.YYYY.-.#####",
+ "creation": "2026-06-07 21:30:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "receipt_number",
+  "applicant_fee",
+  "applicant",
+  "payment_mode",
+  "source",
+  "amount_xof",
+  "payment_status",
+  "paid_at",
+  "justificatif",
+  "provider_section",
+  "provider",
+  "provider_reference",
+  "provider_transaction_id",
+  "idempotency_key",
+  "uf_sync_section",
+  "uf_notified",
+  "uf_notified_at"
+ ],
+ "fields": [
+  {
+   "fieldname": "receipt_number",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Receipt Number",
+   "read_only": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "applicant_fee",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Applicant Fee",
+   "options": "Applicant Fee",
+   "reqd": 1
+  },
+  {
+   "fieldname": "applicant",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Admission Applicant",
+   "options": "Admission Applicant",
+   "reqd": 1
+  },
+  {
+   "fieldname": "payment_mode",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Payment Mode",
+   "options": "Online\nBank\nCash",
+   "reqd": 1
+  },
+  {
+   "fieldname": "source",
+   "fieldtype": "Select",
+   "label": "Canal",
+   "options": "\nespece\nbanque\nonline",
+   "read_only": 1,
+   "description": "ADM-DEBT-25 : tracabilite du canal d'encaissement (pattern Student Fee Payment). AUCUNE logique de montant."
+  },
+  {
+   "fieldname": "amount_xof",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Amount XOF",
+   "non_negative": 1,
+   "reqd": 1
+  },
+  {
+   "default": "Pending",
+   "fieldname": "payment_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Payment Status",
+   "options": "Pending\nConfirmed\nRejected",
+   "reqd": 1
+  },
+  {
+   "fieldname": "paid_at",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Paid At"
+  },
+  {
+   "description": "Scan du recu (espece = recu comptable, banque = preuve de virement). Obligatoire pour confirmer un paiement Cash/Bank ; non requis en Online (webhook fait foi).",
+   "fieldname": "justificatif",
+   "fieldtype": "Attach",
+   "label": "Justificatif (scan)",
+   "read_only_depends_on": "eval:doc.payment_status=='Confirmed'"
+  },
+  {
+   "fieldname": "provider_section",
+   "fieldtype": "Section Break",
+   "label": "Provider"
+  },
+  {
+   "fieldname": "provider",
+   "fieldtype": "Data",
+   "label": "Provider"
+  },
+  {
+   "fieldname": "provider_reference",
+   "fieldtype": "Data",
+   "label": "Provider Reference",
+   "unique": 1
+  },
+  {
+   "fieldname": "provider_transaction_id",
+   "fieldtype": "Data",
+   "label": "Provider Transaction ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "idempotency_key",
+   "fieldtype": "Data",
+   "label": "Idempotency Key",
+   "unique": 1
+  },
+  {
+   "fieldname": "uf_sync_section",
+   "fieldtype": "Section Break",
+   "label": "UF Sync (OBS-1)"
+  },
+  {
+   "default": "0",
+   "description": "Paiement repercute a UF (DEC-221). Pose par notify_uf ; re-drive si 0.",
+   "fieldname": "uf_notified",
+   "fieldtype": "Check",
+   "in_standard_filter": 1,
+   "label": "UF Notified",
+   "read_only": 1
+  },
+  {
+   "fieldname": "uf_notified_at",
+   "fieldtype": "Datetime",
+   "label": "UF Notified At",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-06-13 01:30:00",
+ "modified_by": "Administrator",
+ "module": "Admission",
+ "name": "Applicant Fee Payment",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Admission Administratif",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Admission Responsable"
+  },
+  {
+   "read": 1,
+   "role": "Admission Direction"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

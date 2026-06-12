@@ -1,0 +1,100 @@
+{
+ "actions": [],
+ "autoname": "field:level_code",
+ "creation": "2026-06-09 12:00:00.000000",
+ "description": "Miroir des niveaux academiques (Academic Level campus). Replique depuis campus pour le choix candidat. Ref: ADM-SCH, D2.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "level_code",
+  "level_name",
+  "column_break_prog",
+  "program_code",
+  "level_order",
+  "section_sync",
+  "last_synced_on"
+ ],
+ "fields": [
+  {
+   "fieldname": "level_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Level Code",
+   "reqd": 1,
+   "unique": 1,
+   "description": "Code niveau replique (ex. LIS-L1, PRE-A2). Cle primaire = name du Academic Level campus."
+  },
+  {
+   "fieldname": "level_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Level Name",
+   "reqd": 1,
+   "description": "Libelle du niveau (ex. Licence 1, Prepa Annee 2)."
+  },
+  {
+   "fieldname": "column_break_prog",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "program_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Program Code",
+   "reqd": 1,
+   "description": "Code programme (ex. LIS, PRE, LRC). Replique depuis Academic Level.program."
+  },
+  {
+   "fieldname": "level_order",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Level Order",
+   "reqd": 1,
+   "description": "Ordre du niveau dans le programme (1, 2, 3...)."
+  },
+  {
+   "fieldname": "section_sync",
+   "fieldtype": "Section Break",
+   "label": "Synchronisation",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "last_synced_on",
+   "fieldtype": "Datetime",
+   "label": "Last Synced On",
+   "read_only": 1,
+   "description": "Derniere synchronisation depuis campus."
+  }
+ ],
+ "links": [],
+ "modified": "2026-06-09 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Admission",
+ "name": "Admission Level Mirror",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Admission Administratif"
+  },
+  {
+   "read": 1,
+   "role": "Admission Responsable"
+  },
+  {
+   "read": 1,
+   "role": "Admission Direction"
+  }
+ ],
+ "sort_field": "program_code",
+ "sort_order": "ASC",
+ "track_changes": 0
+}

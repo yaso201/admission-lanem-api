@@ -1,0 +1,124 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-06-10 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "applicant",
+  "from_status",
+  "to_status",
+  "action",
+  "column_break_audit",
+  "transition_at",
+  "actor",
+  "source",
+  "result",
+  "context_section",
+  "context_snapshot"
+ ],
+ "fields": [
+  {
+   "fieldname": "applicant",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Applicant",
+   "options": "Admission Applicant",
+   "reqd": 1
+  },
+  {
+   "fieldname": "from_status",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "From Status"
+  },
+  {
+   "fieldname": "to_status",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "To Status",
+   "reqd": 1
+  },
+  {
+   "fieldname": "action",
+   "fieldtype": "Data",
+   "label": "Workflow Action"
+  },
+  {
+   "fieldname": "column_break_audit",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Date/heure de la transition (sert aussi l'aging SLA — DEC-261).",
+   "fieldname": "transition_at",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Transition At",
+   "reqd": 1
+  },
+  {
+   "description": "Compte actif ayant effectue la transition (A03 §10.2).",
+   "fieldname": "actor",
+   "fieldtype": "Link",
+   "label": "Actor",
+   "options": "User"
+  },
+  {
+   "description": "Contexte derive du runtime (best-effort).",
+   "fieldname": "source",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Source",
+   "options": "workflow\nwebhook\npublic_api\nstaff_api\nsystem"
+  },
+  {
+   "default": "ok",
+   "fieldname": "result",
+   "fieldtype": "Select",
+   "label": "Result",
+   "options": "ok\nrefused\nerror"
+  },
+  {
+   "fieldname": "context_section",
+   "fieldtype": "Section Break",
+   "label": "Context (non-PII)"
+  },
+  {
+   "description": "Contexte technique NON-PII (codes session/programme/niveau). Jamais nom/email/telephone/IP.",
+   "fieldname": "context_snapshot",
+   "fieldtype": "JSON",
+   "label": "Context Snapshot"
+  }
+ ],
+ "in_create": 0,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-06-10 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Admission",
+ "name": "Admission Applicant Transition Log",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "role": "System Manager"
+  },
+  {
+   "read": 1,
+   "role": "Admission Administratif"
+  },
+  {
+   "read": 1,
+   "role": "Admission Responsable"
+  },
+  {
+   "read": 1,
+   "role": "Admission Direction"
+  }
+ ],
+ "sort_field": "transition_at",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}
