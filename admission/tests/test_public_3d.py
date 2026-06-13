@@ -189,6 +189,7 @@ class TestListProgrammesWithLevels(TestCase):
                 MagicMock(level_code="LIS-L1", level_name="Licence 1", program_code="LIS", level_order=1),
                 MagicMock(level_code="LIS-L2", level_name="Licence 2", program_code="LIS", level_order=2),
             ],
+            [],  # _programme_meta_map : Admission Programme (pas de métadonnée dans ce test)
         ]
 
         result = list_programmes()
