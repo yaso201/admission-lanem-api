@@ -772,6 +772,19 @@ def _serialize_dossier(applicant):
 	}
 
 
+PROGRAMME_META_FIELDS = ["programme_code", "title", "parcours", "partner", "partner_name",
+                         "location", "dd_component_1", "dd_component_2", "dd_affinity"]
+
+
+def _programme_meta_map():
+	"""Métadonnées catalogue par programme_code (vide si le doctype n'existe pas encore)."""
+	if not frappe.db.exists("DocType", "Admission Programme"):
+		return {}
+	rows = frappe.get_all("Admission Programme", filters={"is_active": 1},
+	                      fields=PROGRAMME_META_FIELDS, limit=CATALOG_QUERY_LIMIT)
+	return {r["programme_code"]: r for r in rows}
+
+
 @frappe.whitelist(allow_guest=True, methods=["GET"])
 def list_programmes():
 	sessions = frappe.get_all(
@@ -796,14 +809,23 @@ def list_programmes():
 			"level_name": lvl.level_name,
 			"level_order": lvl.level_order,
 		})
-	return _ok({"programmes": [
-		{
+	meta = _programme_meta_map()
+	out = []
+	for code, label in seen.items():
+		m = meta.get(code, {})
+		out.append({
 			"code": code,
-			"label": label,
+			"label": m.get("title") or label,
 			"niveaux": levels_by_prog.get(code, []),
-		}
-		for code, label in seen.items()
-	]})
+			"parcours": m.get("parcours"),
+			"partner": m.get("partner"),
+			"partner_name": m.get("partner_name"),
+			"location": m.get("location"),
+			"dd_affinity": m.get("dd_affinity"),
+			"dd_component_1": m.get("dd_component_1"),
+			"dd_component_2": m.get("dd_component_2"),
+		})
+	return _ok({"programmes": out})
 
 
 @frappe.whitelist(allow_guest=True, methods=["GET"])
@@ -883,6 +905,16 @@ def _build_frais_data(session_doc, level_code=None):
 	result["rib"] = ({"banque": bank["banque"], "titulaire": bank["titulaire"],
 	                  "iban": bank["iban"], "bic": bank["bic"], "version": bank["version"]}
 	                 if bank else None)
+	meta = _programme_meta_map().get(session_doc.programme_code, {})
+	result["programme"] = {
+		"code": session_doc.programme_code,
+		"title": meta.get("title") or session_doc.programme_label,
+		"parcours": meta.get("parcours"),
+		"partner": meta.get("partner"),
+		"partner_name": meta.get("partner_name"),
+		"location": meta.get("location"),
+		"dd_affinity": meta.get("dd_affinity"),
+	}
 	if frais2_amount is not None:
 		result["frais2"] = {
 			"montant_xof": frais2_amount,
