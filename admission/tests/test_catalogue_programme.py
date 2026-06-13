@@ -59,3 +59,22 @@ class TestProgrammeInvariants(TestCase):
         doc = _doc(parcours="Bachelor", partner=None)
         with self.assertRaises(Exception):
             validate_programme(doc)
+
+
+class TestListProgrammesEnriched(TestCase):
+    @patch(f"{PUBLIC}.frappe")
+    def test_programmes_carry_metadata_and_affinity(self, mf):
+        from admission.api.public import _programme_meta_map
+        mf.get_all.return_value = [
+            {"programme_code": "LIC-IS", "title": "Licence Info", "parcours": "Licence",
+             "partner": None, "partner_name": None, "location": "Cotonou",
+             "dd_component_1": None, "dd_component_2": None, "dd_affinity": None},
+            {"programme_code": "DD-IS-DWM", "title": "Licence Info + Bachelor DWM",
+             "parcours": "Double-Diplomation", "partner": "ESIIA", "partner_name": "ESIIA SA",
+             "location": "Cotonou", "dd_component_1": "LIC-IS", "dd_component_2": "BACH-DWM",
+             "dd_affinity": "Recommandé"},
+        ]
+        m = _programme_meta_map()
+        self.assertEqual(m["LIC-IS"]["partner"], None)
+        self.assertEqual(m["DD-IS-DWM"]["dd_affinity"], "Recommandé")
+        self.assertEqual(m["DD-IS-DWM"]["parcours"], "Double-Diplomation")
