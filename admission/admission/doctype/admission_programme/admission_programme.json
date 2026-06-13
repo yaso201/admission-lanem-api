@@ -1,0 +1,53 @@
+{
+ "actions": [],
+ "creation": "2026-06-13 14:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "programme_code",
+  "title",
+  "parcours",
+  "partner",
+  "partner_name",
+  "location",
+  "is_active",
+  "dd_section",
+  "dd_component_1",
+  "dd_component_2",
+  "dd_affinity",
+  "sync_section",
+  "source",
+  "last_synced_on"
+ ],
+ "fields": [
+  {"fieldname": "programme_code", "fieldtype": "Data", "label": "Programme Code", "reqd": 1, "unique": 1},
+  {"fieldname": "title", "fieldtype": "Data", "label": "Title", "reqd": 1},
+  {"fieldname": "parcours", "fieldtype": "Select", "label": "Parcours", "reqd": 1, "options": "Prépa\nLicence\nBachelor\nDouble-Diplomation"},
+  {"fieldname": "partner", "fieldtype": "Data", "label": "Partner (sigle)"},
+  {"fieldname": "partner_name", "fieldtype": "Data", "label": "Partner Name"},
+  {"fieldname": "location", "fieldtype": "Data", "label": "Location"},
+  {"fieldname": "is_active", "fieldtype": "Check", "label": "Is Active", "default": "1"},
+  {"fieldname": "dd_section", "fieldtype": "Section Break", "label": "Double-Diplomation", "depends_on": "eval:doc.parcours=='Double-Diplomation'"},
+  {"fieldname": "dd_component_1", "fieldtype": "Link", "label": "Composant 1 (Licence)", "options": "Admission Programme"},
+  {"fieldname": "dd_component_2", "fieldtype": "Link", "label": "Composant 2 (Bachelor)", "options": "Admission Programme"},
+  {"fieldname": "dd_affinity", "fieldtype": "Select", "label": "Affinité", "options": "\nRecommandé\nPossible"},
+  {"fieldname": "sync_section", "fieldtype": "Section Break", "label": "Synchronisation"},
+  {"fieldname": "source", "fieldtype": "Select", "label": "Source", "options": "Manuel\nVitrine\nUF", "default": "Manuel"},
+  {"fieldname": "last_synced_on", "fieldtype": "Datetime", "label": "Last Synced On", "read_only": 1}
+ ],
+ "links": [],
+ "modified": "2026-06-13 14:00:00",
+ "module": "Admission",
+ "name": "Admission Programme",
+ "naming_rule": "By fieldname",
+ "autoname": "field:programme_code",
+ "owner": "Administrator",
+ "permissions": [
+  {"create": 1, "delete": 1, "email": 1, "print": 1, "read": 1, "report": 1, "role": "System Manager", "share": 1, "write": 1},
+  {"read": 1, "role": "Admission Administratif"},
+  {"read": 1, "role": "Admission Responsable"},
+  {"read": 1, "role": "Admission Direction"}
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC"
+}
