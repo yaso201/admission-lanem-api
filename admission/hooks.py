@@ -83,7 +83,7 @@ app_license = "mit"
 # ------------
 
 # before_install = "admission.install.before_install"
-# after_install = "admission.install.after_install"
+after_install = "admission.install.after_install"
 
 after_migrate = ["admission.api.legal.seed_legal_placeholders"]
 
