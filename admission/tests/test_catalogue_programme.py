@@ -78,3 +78,16 @@ class TestListProgrammesEnriched(TestCase):
         self.assertEqual(m["LIC-IS"]["partner"], None)
         self.assertEqual(m["DD-IS-DWM"]["dd_affinity"], "Recommandé")
         self.assertEqual(m["DD-IS-DWM"]["parcours"], "Double-Diplomation")
+
+
+class TestCatalogueData(TestCase):
+    def test_17_programmes_9_double_diplomes(self):
+        from admission.seed.catalogue import PROGRAMMES, DOUBLE_DIPLOMES
+        self.assertEqual(len(PROGRAMMES), 8)
+        self.assertEqual(len(DOUBLE_DIPLOMES), 9)
+        rec = [d for d in DOUBLE_DIPLOMES if d["affinity"] == "Recommandé"]
+        self.assertEqual(len(rec), 3)
+
+    def test_dd_fees_uniform(self):
+        from admission.seed.catalogue import DD_FEES
+        self.assertEqual(DD_FEES, {"application": 40000, "enrollment": 75000, "annual": 1640000})
