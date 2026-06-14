@@ -111,9 +111,33 @@ class TestResolvePersonFailure(TestCase):
     def test_no_config_returns_none(self, mock_frappe, mock_config):
         from admission.api.public import _resolve_person_from_campus
 
+        mock_frappe.conf.get.return_value = None  # flag fallback local OFF
         result = _resolve_person_from_campus("koffi@example.com", "Koffi", "", "")
 
         self.assertIsNone(result)
+
+
+class TestResolvePersonLocalFallback(TestCase):
+    """Recette sans campus : fallback Person LOCALE gardé par flag (PERS-REC- déterministe)."""
+
+    @patch(f"{PUBLIC}._get_campus_config", return_value=None)
+    @patch(f"{PUBLIC}.frappe")
+    def test_flag_on_returns_deterministic_local_id(self, mock_frappe, mock_config):
+        from admission.api.public import _resolve_person_from_campus
+
+        mock_frappe.conf.get.return_value = 1  # allow_local_person_resolution ON
+        r1 = _resolve_person_from_campus("Koffi@Example.com", "Koffi", "", "")
+        r2 = _resolve_person_from_campus("koffi@example.com", "Koffi", "Autre", "+229")  # même email (casse)
+        self.assertTrue(r1.startswith("PERS-REC-"))
+        self.assertEqual(r1, r2)  # déterministe par email (insensible à la casse)
+
+    @patch(f"{PUBLIC}._get_campus_config", return_value=None)
+    @patch(f"{PUBLIC}.frappe")
+    def test_flag_off_no_fallback(self, mock_frappe, mock_config):
+        from admission.api.public import _resolve_person_from_campus
+
+        mock_frappe.conf.get.return_value = None
+        self.assertIsNone(_resolve_person_from_campus("x@y.bj", "X", "", ""))
 
 
 class TestResolvePersonPayload(TestCase):

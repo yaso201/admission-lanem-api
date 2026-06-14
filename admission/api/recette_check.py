@@ -84,6 +84,14 @@ def _check_kkiapay_mode():
     return PASS, "mode LIVE"
 
 
+def _check_local_person():
+    """Garde-fou : la résolution Person LOCALE (recette sans campus) ne doit jamais
+    atteindre la prod — le pont INS exige le vrai campus."""
+    if frappe.conf.get("allow_local_person_resolution"):
+        return FAIL, "allow_local_person_resolution actif — Person LOCALE recette (PERS-REC-), à retirer + brancher le campus avant prod"
+    return PASS, "résolution Person déléguée au campus"
+
+
 def _check_expose_dev_otp():
     if frappe.conf.get("expose_dev_otp"):
         return FAIL, "expose_dev_otp actif — DIVULGUE le code OTP dans la réponse API"
@@ -255,6 +263,7 @@ CHECKS = [
     ("SEC-uf-secret", "Secret API UF", _check_secret("uf_api_secret", "idem uf_api_key")),
     ("SEC-kkiapay", "Clés marchand KkiaPay (3)", _check_kkiapay_keys),
     ("MODE-kkiapay", "Mode KkiaPay (mock interdit, sandbox toléré)", _check_kkiapay_mode),
+    ("MODE-local-person", "Résolution Person via campus (pas de locale)", _check_local_person),
     # ── URLs / transport (DAT-2 : https obligatoire hors developer_mode) ──
     ("URL-campus", "campus_base_url en https", _check_url(
         "campus_base_url", "résolution Person impossible (création de dossier bloquée)")),

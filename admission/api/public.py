@@ -1746,6 +1746,16 @@ def _resolve_person_from_campus(email, first_name, last_name, phone):
 	"""
 	config = _get_campus_config()
 	if not config:
+		# RECETTE/DEV uniquement (campus non encore branché) : identité Person LOCALE
+		# déterministe (même email → même id), pour dérouler le tunnel candidat sans le
+		# campus. GARDÉ par flag `allow_local_person_resolution` (OFF par défaut) et
+		# SIGNALÉ par le gate recette (MODE-local-person) → ne peut atteindre la prod
+		# silencieusement. Le pont INS exige toujours le vrai campus (id PERS-REC- distinct).
+		if frappe.conf.get("allow_local_person_resolution"):
+			import hashlib
+			local_id = "PERS-REC-" + hashlib.sha1((email or "").lower().encode()).hexdigest()[:10].upper()
+			log_event("person_resolve", "local_recette", person_id=local_id, level="warning")
+			return local_id
 		log_event("person_resolve", "skipped_no_config", level="error")
 		return None
 
