@@ -19,26 +19,29 @@ headers protègent le Desk admin + les réponses API de ce bench.
 Ref: HEAD-1, AUDIT-GLOBAL (headers absents).
 """
 
-import re
-
 import frappe
 
 
-def _to_cross_site(set_cookie_value):
-    """Réécrit un en-tête Set-Cookie en SameSite=None; Secure (cookies cross-sous-domaine).
+def _apply_cross_site_cookies():
+    """Force SameSite=None; Secure sur les cookies de session EN ATTENTE de flush.
 
     Nécessaire quand le front staff (ex. staff-rec.lanem.bj) et l'API (api-...lanem.bj) sont
-    sur des origines différentes : avec SameSite=Lax (défaut Frappe, codé en dur dans auth.py)
-    le navigateur N'ENVOIE PAS le cookie `sid` sur les requêtes XHR cross-site → 403 Guest.
-    SameSite=None EXIGE Secure ; le navigateur reçoit la réponse en HTTPS (terminaison
-    Cloudflare) donc Secure est accepté même si l'origine derrière le tunnel est en http.
-    CSRF reste couvert par le token X-Frappe-CSRF-Token (le front l'envoie)."""
-    value = re.sub(r"(?i)samesite=(lax|strict|none)", "SameSite=None", set_cookie_value)
-    if "samesite=" not in value.lower():
-        value += "; SameSite=None"
-    if "secure" not in value.lower():
-        value += "; Secure"
-    return value
+    sur des origines différentes : avec SameSite=Lax (défaut Frappe, codé en dur dans
+    auth.py CookieManager.set_cookie) le navigateur N'ENVOIE PAS le cookie `sid` sur les
+    requêtes XHR cross-site → 403 Guest.
+
+    IMPÉRATIF de TIMING : le hook after_request s'exécute AVANT process_response/flush_cookies
+    (cf. frappe/app.py) — donc on mute les OPTS des cookies en attente
+    (`cookie_manager.cookies`), pas les en-têtes (pas encore posés). flush_cookies émettra
+    ensuite SameSite=None; Secure. SameSite=None EXIGE Secure ; le navigateur reçoit la réponse
+    en HTTPS (terminaison Cloudflare) → Secure accepté même si l'origine derrière le tunnel est
+    en http. CSRF reste couvert par le token X-Frappe-CSRF-Token (envoyé par le front)."""
+    cm = getattr(frappe.local, "cookie_manager", None)
+    if not cm or not getattr(cm, "cookies", None):
+        return
+    for opts in cm.cookies.values():
+        opts["samesite"] = "None"
+        opts["secure"] = True
 
 
 DEFAULT_HEADERS = {
@@ -73,11 +76,7 @@ def set_security_headers(response=None, request=None):
 
 	# Cookies cross-sous-domaine (front staff sur une autre origine que l'API).
 	# Gated par `cross_site_session` (site_config) → DEV same-site INTACT (défaut OFF).
-	if frappe.conf.get("cross_site_session") and hasattr(response.headers, "getlist"):
-		cookies = response.headers.getlist("Set-Cookie")
-		if cookies:
-			del response.headers["Set-Cookie"]
-			for c in cookies:
-				response.headers.add("Set-Cookie", _to_cross_site(c))
+	if frappe.conf.get("cross_site_session"):
+		_apply_cross_site_cookies()
 
 	return response

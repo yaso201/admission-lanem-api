@@ -13,23 +13,24 @@ from admission.api import notifications as N
 
 
 class TestCrossSiteCookie(TestCase):
-    def test_lax_devient_none_secure(self):
-        out = SH._to_cross_site("sid=abc; Expires=...; Max-Age=600; HttpOnly; Path=/; SameSite=Lax")
-        self.assertIn("SameSite=None", out)
-        self.assertNotIn("SameSite=Lax", out)
-        self.assertIn("Secure", out)
-        self.assertIn("HttpOnly", out)  # préservé
+    def test_mute_opts_session_none_secure(self):
+        cm = MagicMock()
+        cm.cookies = {
+            "sid": {"samesite": "Lax", "secure": False, "httponly": True},
+            "user_id": {"samesite": "Lax", "secure": False},
+        }
+        with patch.object(SH, "frappe") as mf:
+            mf.local.cookie_manager = cm
+            SH._apply_cross_site_cookies()
+        self.assertEqual(cm.cookies["sid"]["samesite"], "None")
+        self.assertTrue(cm.cookies["sid"]["secure"])
+        self.assertTrue(cm.cookies["sid"]["httponly"])  # préservé
+        self.assertEqual(cm.cookies["user_id"]["samesite"], "None")
 
-    def test_sans_samesite_ajoute(self):
-        out = SH._to_cross_site("sid=abc; Path=/")
-        self.assertIn("SameSite=None", out)
-        self.assertIn("Secure", out)
-
-    def test_idempotent(self):
-        once = SH._to_cross_site("sid=abc; SameSite=Lax")
-        twice = SH._to_cross_site(once)
-        self.assertEqual(twice.count("SameSite=None"), 1)
-        self.assertEqual(twice.lower().count("secure"), 1)
+    def test_sans_cookie_manager_no_op(self):
+        with patch.object(SH, "frappe") as mf:
+            mf.local.cookie_manager = None
+            SH._apply_cross_site_cookies()  # ne lève pas
 
 
 class TestOtpSync(TestCase):
