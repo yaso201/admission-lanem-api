@@ -6,6 +6,12 @@ from frappe.utils import now_datetime
 
 
 class AdmissionApplicant(Document):
+	def autoname(self):
+		# Numéro de dossier structuré XXXXYYYNNNN (année académique + formation + compteur).
+		# Remplace l'ancien CAN-AAAA-##### pour les NOUVEAUX dossiers (existants inchangés).
+		from admission.api.numbering import build_dossier_name
+		self.name = build_dossier_name(self)
+
 	def validate(self):
 		if not self.applicant_name:
 			self.applicant_name = " ".join(filter(None, [self.first_name, self.last_name])).strip()

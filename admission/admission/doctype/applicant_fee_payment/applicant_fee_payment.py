@@ -6,6 +6,13 @@ PROOF_REQUIRED_MODES = ("Cash", "Bank")
 
 
 class ApplicantFeePayment(Document):
+	def autoname(self):
+		# Numéro de reçu structuré XXAANNNNN (année + source/canal + compteur).
+		# Remplace l'ancien REC-AAAA-##### pour les NOUVEAUX reçus (existants inchangés).
+		from admission.api.numbering import build_receipt_name
+		self.name = build_receipt_name(self)
+		self.receipt_number = self.name
+
 	def before_insert(self):
 		self._sync_receipt_number()
 

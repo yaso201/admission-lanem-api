@@ -29,4 +29,6 @@ def validate_programme(doc):
 
 class AdmissionProgramme(Document):
     def validate(self):
+        from admission.api.numbering import assign_programme_numbering_code
+        assign_programme_numbering_code(self)  # YYY auto (famille + index dans la famille), persisté
         validate_programme(self)
