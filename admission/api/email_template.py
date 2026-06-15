@@ -74,10 +74,17 @@ def _legal_link(slug):
 
 
 def _logo_src():
-    """URL ABSOLUE du sceau (les clients mail ne résolvent pas les chemins relatifs).
-    En dev l'URL locale ne s'affichera que localement — publique en recette (OPS)."""
+    """URL ABSOLUE du sceau, servie par le PORTAIL candidat.
+
+    Les `/assets` de l'API ne sont PAS servis derrière le tunnel de prod (gunicorn sans
+    nginx/statics → 404), alors que le portail candidat sert bien `/lanem-seal.png`
+    (DEV localhost:4321 ET recette admission-rec.lanem.bj). Override possible via la conf
+    `email_logo_url`. (Avant : frappe.utils.get_url(LOGO_ASSET) → 404 en recette.)"""
+    override = frappe.conf.get("email_logo_url")
+    if override:
+        return override
     try:
-        return frappe.utils.get_url(LOGO_ASSET)
+        return f"{_portal_base()}/lanem-seal.png"
     except Exception:
         return None
 
@@ -144,11 +151,11 @@ def _meta_grid(nom, dossier, filiere, meta=None):
         ff = MONO if mono else FONT
         fs = "12px" if mono else "13px"
         return (
-            f'<td class="sm-stack" width="{w}%" style="width:{w}%;padding:12px 14px;background:{PAPER};'
+            f'<td class="sm-stack meta-cell" width="{w}%" style="width:{w}%;padding:12px 14px;background:{PAPER};'
             f'border-right:1px solid {HAIR};vertical-align:top;">'
-            f'<div style="font-family:{FONT};font-size:10px;font-weight:700;letter-spacing:.06em;'
+            f'<div class="tlabel" style="font-family:{FONT};font-size:10px;font-weight:700;letter-spacing:.06em;'
             f'text-transform:uppercase;color:#857B62;">{k}</div>'
-            f'<div style="font-family:{ff};font-size:{fs};font-weight:700;color:{T1};margin-top:4px;">{v}</div></td>'
+            f'<div class="t1" style="font-family:{ff};font-size:{fs};font-weight:700;color:{T1};margin-top:4px;">{v}</div></td>'
         )
     # meta : [(label, valeur, mono?), …] (1 à 3 cellules) — sinon défaut Candidat/Dossier/Filière
     src = meta or [("Candidat", nom), ("Dossier", dossier, True), ("Filière", filiere)]
@@ -368,20 +375,20 @@ def _footer(dossier):
         f'<tr><td style="padding:24px 0 0;">'
         f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'
         f'<td valign="middle">{_logo("dark")}</td>'
-        f'<td align="right" valign="middle" style="font-family:{FONT};font-style:italic;font-weight:700;font-size:13px;color:#857B62;" class="sm-hide">{SCHOOL["slogan"]}</td>'
+        f'<td align="right" valign="middle" class="sm-hide tmut" style="font-family:{FONT};font-style:italic;font-weight:700;font-size:13px;color:#857B62;">{SCHOOL["slogan"]}</td>'
         f'</tr></table>'
-        f'<div style="font-family:{FONT};font-size:12px;line-height:1.65;color:{T3};margin-top:16px;">'
+        f'<div class="t2" style="font-family:{FONT};font-size:12px;line-height:1.65;color:{T3};margin-top:16px;">'
         f'{SCHOOL["full"]}<br>{SCHOOL["address"]}<br>'
-        f'<a href="mailto:{SCHOOL["email"]}" style="color:#5B3FA8;font-weight:600;text-decoration:none;">{SCHOOL["email"]}</a> · {SCHOOL["tel"]}</div>'
-        f'<div style="font-family:{FONT};font-size:11.5px;line-height:1.6;color:#857B62;margin-top:14px;">'
+        f'<a class="tlink" href="mailto:{SCHOOL["email"]}" style="color:#5B3FA8;font-weight:600;text-decoration:none;">{SCHOOL["email"]}</a> · {SCHOOL["tel"]}</div>'
+        f'<div class="tmut" style="font-family:{FONT};font-size:11.5px;line-height:1.6;color:#857B62;margin-top:14px;">'
         f'Vous recevez cet e-mail parce que vous avez déposé une candidature auprès de {SCHOOL["name"]} (dossier&nbsp;{_esc(dossier)}). '
         f'Message automatique relatif au traitement de votre dossier — pour toute question, répondez simplement à cet e-mail.</div>'
-        f'<div style="font-family:{FONT};font-size:11.5px;line-height:1.6;color:#857B62;margin-top:8px;">'
-        f'<strong style="color:{T3};">Confidentiel</strong> — destiné au seul candidat. Si vous n’êtes pas le destinataire, merci de supprimer ce message.</div>'
+        f'<div class="tmut" style="font-family:{FONT};font-size:11.5px;line-height:1.6;color:#857B62;margin-top:8px;">'
+        f'<strong class="t2" style="color:{T3};">Confidentiel</strong> — destiné au seul candidat. Si vous n’êtes pas le destinataire, merci de supprimer ce message.</div>'
         f'<div style="margin-top:16px;font-family:{FONT};font-size:11.5px;">'
-        f'<a href="{_legal_link("politique-de-confidentialite")}" style="color:#5B3FA8;font-weight:600;text-decoration:none;">Politique de confidentialité</a>&nbsp;&nbsp;·&nbsp;&nbsp;'
-        f'<a href="{_legal_link("mentions-legales")}" style="color:#5B3FA8;font-weight:600;text-decoration:none;">Mentions légales</a>&nbsp;&nbsp;·&nbsp;&nbsp;'
-        f'<a href="{_legal_link("donnees-personnelles")}" style="color:#5B3FA8;font-weight:600;text-decoration:none;">Mes données personnelles</a></div>'
+        f'<a class="tlink" href="{_legal_link("politique-de-confidentialite")}" style="color:#5B3FA8;font-weight:600;text-decoration:none;">Politique de confidentialité</a>&nbsp;&nbsp;·&nbsp;&nbsp;'
+        f'<a class="tlink" href="{_legal_link("mentions-legales")}" style="color:#5B3FA8;font-weight:600;text-decoration:none;">Mentions légales</a>&nbsp;&nbsp;·&nbsp;&nbsp;'
+        f'<a class="tlink" href="{_legal_link("donnees-personnelles")}" style="color:#5B3FA8;font-weight:600;text-decoration:none;">Mes données personnelles</a></div>'
         f'<div style="font-family:{FONT};font-size:11px;color:#C9C2B2;margin:14px 0 26px;">© 2026 {SCHOOL["full"]}. Tous droits réservés.</div>'
         f'</td></tr></table></td></tr>'
     )
@@ -441,6 +448,9 @@ def render_candidate_email(
     .t1{{color:#FFFFFF!important}} .t2{{color:#D8D2EC!important}}
     .meta-cell{{background:#1A1140!important;border-color:#3A2F63!important}}
     .hair{{border-color:#3A2F63!important}} .foot{{background:#110628!important}}
+    /* lisibilité dark des textes secondaires (footer, libellés, liens) */
+    .tmut{{color:#A89F87!important}} .tlabel{{color:#A89F87!important}}
+    .tlink{{color:#C4B5FD!important}}
   }}
   a{{text-decoration:none}}
 </style>
