@@ -142,7 +142,10 @@ def reset_staff_password(email=None, motif=None):
     if not motif or not str(motif).strip():
         return _error("MOTIF_REQUIRED", "Le motif est obligatoire.", 400)
     user = frappe.get_doc("User", email)
-    user.reset_password(send_email=True)  # lien mailé ; AUCUN mot de passe en clair retourné
+    # Lien mailé ; AUCUN mot de passe en clair. Compat versions Frappe : la méthode s'appelle
+    # `reset_password` (frappe récents) OU `_reset_password` (15.111.x). On prend ce qui existe.
+    send_reset = getattr(user, "reset_password", None) or getattr(user, "_reset_password", None)
+    send_reset(send_email=True)
     log_event("admin_reset_password", "success", ref=_ref(email), motif=str(motif).strip()[:140])
     return _ok({"email": email, "sent": True})
 
