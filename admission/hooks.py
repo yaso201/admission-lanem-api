@@ -163,6 +163,8 @@ scheduler_events = {
 		"admission.api.fee_catalog_sync.sync_fee_catalog",
 		"admission.api.scholarship_sync.sync_scholarship_catalog",
 		"admission.api.level_sync.sync_levels",
+		# Catalogue (campus = source de vérité ; dormant tant que campus non configuré).
+		"admission.api.catalogue_sync.sync_catalogue",
 		"admission.api.retention.scheduled_retention_run",
 		"admission.api.notify_uf.redrive_uf_notifications",
 		"admission.api.public.expire_stale_online_pending",

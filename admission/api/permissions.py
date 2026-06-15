@@ -23,7 +23,7 @@ import frappe
 ADMISSION_APPLICANT = "Admission Applicant"
 SETTINGS = "Admission Settings"
 TABLE = "`tabAdmission Applicant`"
-BYPASS_ROLES = {"System Manager", "Administrator"}
+BYPASS_ROLES = {"System Manager", "Administrator", "Admission SM"}
 
 # conditions SQL "fail-closed" : ne matchent aucun dossier
 _NO_SCOPE = f"{TABLE}.`name` = '__no_scope__'"

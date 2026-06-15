@@ -8,6 +8,8 @@
   "consultation_cloisonnee",
   "consultation_axis",
   "consultation_role_scopes",
+  "degraded_section",
+  "degraded_mode",
   "rib_section",
   "rib_banque",
   "rib_titulaire",
@@ -48,6 +50,18 @@
    "fieldname": "consultation_role_scopes",
    "fieldtype": "JSON",
    "label": "Perimetre par role (JSON)"
+  },
+  {
+   "fieldname": "degraded_section",
+   "fieldtype": "Section Break",
+   "label": "Mode dégradé référentiel (campus indisponible)"
+  },
+  {
+   "default": "0",
+   "description": "OFF par defaut. ON : autorise l'edition manuelle des programmes (source=Manuel) tant que le catalogue campus est indisponible. Une sync campus reussie ECRASE et reverrouille (campus = source de verite).",
+   "fieldname": "degraded_mode",
+   "fieldtype": "Check",
+   "label": "Mode dégradé actif (édition manuelle du référentiel)"
   },
   {
    "fieldname": "rib_section",
@@ -115,7 +129,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-06-12 23:59:00",
+ "modified": "2026-06-14 12:00:00",
  "modified_by": "Administrator",
  "module": "Admission",
  "name": "Admission Settings",

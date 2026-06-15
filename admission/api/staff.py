@@ -279,7 +279,7 @@ def accept_admission(dossier_id=None, bourses_validees=None):
 # endpoint reste role-gardé ici. Les LISTES passent par frappe.get_list → respectent les
 # DocPerms ET le cloisonnement DEC-262 (permission_query_conditions) s'il est activé.
 
-STAFF_ROLES = ("Admission Administratif", "Admission Responsable", "Admission Direction", "System Manager")
+STAFF_ROLES = ("Admission Administratif", "Admission Responsable", "Admission Direction", "Admission SM", "System Manager")
 
 
 def _bourse_state(applicant_row):

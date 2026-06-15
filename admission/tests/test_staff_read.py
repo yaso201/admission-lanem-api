@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 STAFF = "admission.api.staff"
 
 STAFF_ROLES_T = ("Admission Administratif", "Admission Responsable",
-                 "Admission Direction", "System Manager")
+                 "Admission Direction", "Admission SM", "System Manager")
 
 
 def _patches():
