@@ -104,16 +104,16 @@ class DossierTokenExpired(Exception):
 
 def _get_applicant(dossier_id, token=None, check_expiry=True):
 	if not dossier_id:
-		frappe.throw("dossier_id is required")
+		frappe.throw("dossier_id requis.")
 	# SEC-1 : token OBLIGATOIRE sur tout accès dossier. Pas de court-circuit :
 	# un token absent/vide ne doit JAMAIS renvoyer un dossier (sinon IDOR/fuite PII).
 	# Le token manquant est rejeté avant même de charger le doc.
 	if not token:
-		frappe.throw("Invalid dossier token")
+		frappe.throw("Jeton de dossier invalide.")
 	doc = frappe.get_doc("Admission Applicant", dossier_id)
 	# Comparaison à temps constant du hash du token (anti timing-oracle).
 	if not hmac.compare_digest(str(doc.dossier_token_hash or ""), _hash(token)):
-		frappe.throw("Invalid dossier token")
+		frappe.throw("Jeton de dossier invalide.")
 	# SEC-TOKEN-EXPIRY : expiration vérifiée APRÈS le token (SEC-1 d'abord, jamais régressé).
 	# Les chemins de renouvellement (request_otp/verify_otp) passent check_expiry=False :
 	# le token reste obligatoire et vérifié, mais un token expiré peut encore relancer un OTP.
@@ -868,7 +868,7 @@ def get_frais(programme=None, session=None, level_code=None):
 		name = frappe.get_all("Admission Session", filters={"programme_code": programme, "is_open": 1}, pluck="name", limit=1)
 		session_doc = _session_doc(name[0]) if name else None
 	if not session_doc:
-		return _error("SESSION_NOT_FOUND", "No open admission session found.", 404)
+		return _error("SESSION_NOT_FOUND", "Aucune session d'admission ouverte.", 404)
 	return _ok(_build_frais_data(session_doc, level_code))
 
 
@@ -1057,7 +1057,7 @@ def request_otp(dossier_id=None, token=None):
 		# pour pouvoir relancer un OTP ; sinon un token expiré serait irrécupérable.
 		applicant = _get_applicant(dossier_id, token, check_expiry=False)
 	except Exception:
-		return _error("INVALID_DOSSIER", "Invalid dossier credentials.", 403)
+		return _error("INVALID_DOSSIER", "Identifiants de dossier invalides.", 403)
 	email_otp = _generate_otp()
 	phone_otp = _generate_otp()
 	applicant.otp_email_hash = _hash_otp(email_otp)  # ADM-DEBT-09 : HMAC, plus de SHA256 nu
@@ -1094,7 +1094,7 @@ def verify_otp(dossier_id=None, token=None, email_otp=None, phone_otp=None):
 		# (envoyé à l'email/tél du candidat) qui sert de second facteur pour renouveler.
 		applicant = _get_applicant(dossier_id, token, check_expiry=False)
 	except Exception:
-		return _error("INVALID_DOSSIER", "Invalid dossier credentials.", 403)
+		return _error("INVALID_DOSSIER", "Identifiants de dossier invalides.", 403)
 	# SEC-OTP : le CODE OTP expire (10 min, distinct du token 7j). Code expiré → refus + redemander.
 	otp_exp = get_datetime(applicant.otp_expires_at) if applicant.otp_expires_at else None
 	if not otp_exp or now_datetime() > otp_exp:
@@ -1145,7 +1145,7 @@ def classify_bac(bac_date=None, session=None, dossier_id=None, token=None):
 		except DossierTokenExpired:
 			return _error("TOKEN_EXPIRED", "Lien de dossier expiré. Demandez un nouveau code OTP.", 403)
 		except Exception:
-			return _error("INVALID_DOSSIER", "Invalid dossier credentials.", 403)
+			return _error("INVALID_DOSSIER", "Identifiants de dossier invalides.", 403)
 		applicant.bac_date = bac_date
 		applicant.bac_profile = profile
 		applicant.conditionnel = 1 if profile == "bac_attente" else 0
@@ -1166,7 +1166,7 @@ def upload_piece(dossier_id=None, token=None, piece_code=None, file_url=None):
 	except DossierTokenExpired:
 		return _error("TOKEN_EXPIRED", "Lien de dossier expiré. Demandez un nouveau code OTP.", 403)
 	except Exception:
-		return _error("INVALID_DOSSIER", "Invalid dossier credentials.", 403)
+		return _error("INVALID_DOSSIER", "Identifiants de dossier invalides.", 403)
 	otp_err = _require_otp_verified(applicant)
 	if otp_err:
 		return otp_err
@@ -1189,7 +1189,7 @@ def _mark_piece_uploaded(applicant, piece_code, file_docname):
 			frappe.db.commit()
 			log_event("upload_piece", "success", dossier_id=applicant.name, piece=piece_code)
 			return _ok({"piece_code": piece_code, "status": "deposee"})
-	return _error("PIECE_NOT_EXPECTED", "Piece code is not expected for this dossier.", 400)
+	return _error("PIECE_NOT_EXPECTED", "Cette pièce n'est pas attendue pour ce dossier.", 400)
 
 
 # A0.4 — signatures binaires admises (anti-contournement par simple renommage d'extension).
@@ -1221,12 +1221,12 @@ def upload_piece_file(dossier_id=None, token=None, piece_code=None):
 	except DossierTokenExpired:
 		return _error("TOKEN_EXPIRED", "Lien de dossier expiré. Demandez un nouveau code OTP.", 403)
 	except Exception:
-		return _error("INVALID_DOSSIER", "Invalid dossier credentials.", 403)
+		return _error("INVALID_DOSSIER", "Identifiants de dossier invalides.", 403)
 	otp_err = _require_otp_verified(applicant)
 	if otp_err:
 		return otp_err
 	if not piece_code or piece_code not in {row.piece_code for row in applicant.pieces}:
-		return _error("PIECE_NOT_EXPECTED", "Piece code is not expected for this dossier.", 400)
+		return _error("PIECE_NOT_EXPECTED", "Cette pièce n'est pas attendue pour ce dossier.", 400)
 	files = getattr(frappe.request, "files", None) if getattr(frappe, "request", None) else None
 	storage = files.get("file") if files else None
 	if storage is None or not getattr(storage, "filename", None):
@@ -1264,7 +1264,7 @@ def resubmit_complement(dossier_id=None, token=None):
 	except DossierTokenExpired:
 		return _error("TOKEN_EXPIRED", "Lien de dossier expiré. Demandez un nouveau code OTP.", 403)
 	except Exception:
-		return _error("INVALID_DOSSIER", "Invalid dossier credentials.", 403)
+		return _error("INVALID_DOSSIER", "Identifiants de dossier invalides.", 403)
 	otp_err = _require_otp_verified(applicant)
 	if otp_err:
 		return otp_err
@@ -1309,7 +1309,7 @@ def get_dossier(dossier_id=None, token=None):
 	except DossierTokenExpired:
 		return _error("TOKEN_EXPIRED", "Lien de dossier expiré. Demandez un nouveau code OTP.", 403)
 	except Exception:
-		return _error("INVALID_DOSSIER", "Invalid dossier credentials.", 403)
+		return _error("INVALID_DOSSIER", "Identifiants de dossier invalides.", 403)
 	return _ok(_serialize_dossier(applicant))
 
 
@@ -1369,7 +1369,7 @@ def request_data_deletion(dossier_id=None, token=None, confirm=None):
 	except DossierTokenExpired:
 		return _error("TOKEN_EXPIRED", "Lien de dossier expiré. Demandez un nouveau code OTP.", 403)
 	except Exception:
-		return _error("INVALID_DOSSIER", "Invalid dossier credentials.", 403)
+		return _error("INVALID_DOSSIER", "Identifiants de dossier invalides.", 403)
 	otp_err = _require_otp_verified(applicant)
 	if otp_err:
 		return otp_err
@@ -1405,7 +1405,7 @@ def submit_payment_online(dossier_id=None, token=None, idempotency_key=None, con
 	except DossierTokenExpired:
 		return _error("TOKEN_EXPIRED", "Lien de dossier expiré. Demandez un nouveau code OTP.", 403)
 	except Exception:
-		return _error("INVALID_DOSSIER", "Invalid dossier credentials.", 403)
+		return _error("INVALID_DOSSIER", "Identifiants de dossier invalides.", 403)
 	otp_err = _require_otp_verified(applicant)
 	if otp_err:
 		return otp_err
@@ -1435,7 +1435,7 @@ def declare_payment_offline(dossier_id=None, token=None, mode=None, reference=No
 	except DossierTokenExpired:
 		return _error("TOKEN_EXPIRED", "Lien de dossier expiré. Demandez un nouveau code OTP.", 403)
 	except Exception:
-		return _error("INVALID_DOSSIER", "Invalid dossier credentials.", 403)
+		return _error("INVALID_DOSSIER", "Identifiants de dossier invalides.", 403)
 	otp_err = _require_otp_verified(applicant)
 	if otp_err:
 		return otp_err
@@ -1627,7 +1627,7 @@ def submit_enrollment_payment_online(dossier_id=None, token=None, idempotency_ke
 	except DossierTokenExpired:
 		return _error("TOKEN_EXPIRED", "Lien de dossier expiré. Demandez un nouveau code OTP.", 403)
 	except Exception:
-		return _error("INVALID_DOSSIER", "Invalid dossier credentials.", 403)
+		return _error("INVALID_DOSSIER", "Identifiants de dossier invalides.", 403)
 	otp_err = _require_otp_verified(applicant)
 	if otp_err:
 		return otp_err
@@ -1676,7 +1676,7 @@ def declare_enrollment_payment_offline(
 	except DossierTokenExpired:
 		return _error("TOKEN_EXPIRED", "Lien de dossier expiré. Demandez un nouveau code OTP.", 403)
 	except Exception:
-		return _error("INVALID_DOSSIER", "Invalid dossier credentials.", 403)
+		return _error("INVALID_DOSSIER", "Identifiants de dossier invalides.", 403)
 	otp_err = _require_otp_verified(applicant)
 	if otp_err:
 		return otp_err

@@ -87,7 +87,7 @@ ACCENT = "#F59E0B"
 PAPER = "#FFFFFF"
 CANVAS = "#F0EDE5"
 SAND_50 = "#F8F6F1"
-T1, T2, T3, HAIR = "#1F124A", "#4D483D", "#6D6557", "#E4DFD3"
+T1, T2, T3, HAIR = "#1F124A", "#4D483D", "#574F40", "#C9C2B2"
 
 FONT = "'Plus Jakarta Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif"
 MONO = "'JetBrains Mono','SFMono-Regular',Consolas,'Courier New',monospace"
@@ -119,7 +119,7 @@ STATUS = {
 def _logo(tone):
     light = tone == "light"
     name = "#FFFFFF" if light else INK
-    sub = "rgba(255,255,255,.72)" if light else "#6D6557"
+    sub = "rgba(255,255,255,.72)" if light else "#574F40"
     # Sceau réel (URL absolue) dans le FOOTER (fond clair) ; le bandeau ink d'en-tête
     # garde le wordmark texte — lisible quelles que soient les images bloquées.
     logo_url = SCHOOL.get("logo_url") or _logo_src()
@@ -147,7 +147,7 @@ def _meta_grid(nom, dossier, filiere, meta=None):
             f'<td class="sm-stack" width="{w}%" style="width:{w}%;padding:12px 14px;background:{PAPER};'
             f'border-right:1px solid {HAIR};vertical-align:top;">'
             f'<div style="font-family:{FONT};font-size:10px;font-weight:700;letter-spacing:.06em;'
-            f'text-transform:uppercase;color:#9F9683;">{k}</div>'
+            f'text-transform:uppercase;color:#857B62;">{k}</div>'
             f'<div style="font-family:{ff};font-size:{fs};font-weight:700;color:{T1};margin-top:4px;">{v}</div></td>'
         )
     # meta : [(label, valeur, mono?), …] (1 à 3 cellules) — sinon défaut Candidat/Dossier/Filière
@@ -177,7 +177,7 @@ def _otp_code(otp):
         f'<div style="font-family:{FONT};font-size:13px;color:{T3};margin-top:14px;">Ce code est valable <strong style="color:{T2};">{_esc(str(minutes))}&nbsp;minutes</strong>.</div>'
         f'</td></tr>'
         f'<tr><td style="padding:0 22px 20px;">'
-        f'<div style="font-family:{FONT};font-size:11.5px;line-height:1.55;color:#8A82A8;border-top:1px solid #E6E0F5;padding-top:14px;text-align:center;">'
+        f'<div style="font-family:{FONT};font-size:11.5px;line-height:1.55;color:#6E649A;border-top:1px solid #E6E0F5;padding-top:14px;text-align:center;">'
         f'Ne partagez ce code avec personne — LaNEM ne vous le demandera jamais. '
         f'Si vous n’êtes pas à l’origine de cette demande, ignorez cet e-mail.</div>'
         f'</td></tr></table></td></tr>'
@@ -285,13 +285,13 @@ def _notes_table(notes):
     rows = "".join(
         f'<tr><td style="padding:13px 0;border-bottom:1px solid #F0EDE5;font-family:{FONT};font-size:14px;color:{T2};">{_esc(k)}</td>'
         f'<td align="right" style="padding:13px 0;border-bottom:1px solid #F0EDE5;font-family:{MONO};font-size:15px;'
-        f'font-weight:600;color:{T1};white-space:nowrap;">{_esc(v)}<span style="color:#9F9683;font-size:12px;">/20</span></td></tr>'
+        f'font-weight:600;color:{T1};white-space:nowrap;">{_esc(v)}<span style="color:#857B62;font-size:12px;">/20</span></td></tr>'
         for k, v in notes
     )
     return (
         f'<tr><td style="padding:6px 30px 0;" class="sm-px">'
         f'<div style="font-family:{FONT};font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;'
-        f'color:#9F9683;margin-bottom:2px;">Résultats au concours</div>'
+        f'color:#857B62;margin-bottom:2px;">Résultats au concours</div>'
         f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
         f'style="border-top:2px solid {INK};">{rows}</table>'
         f'<div style="font-family:{FONT};font-size:12px;color:{T3};margin-top:10px;line-height:1.5;">'
@@ -340,10 +340,10 @@ def _cta_block(cta, cta_intro):
         f'<tr><td style="padding:26px 30px 0;" class="sm-px">'
         f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
         f'style="background:{INK};border-radius:10px;border-collapse:separate;"><tr>'
-        f'<td style="padding:18px 20px;font-family:{FONT};">'
+        f'<td class="sm-stack" style="padding:18px 20px;font-family:{FONT};">'
         f'<div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:{ACCENT};">Action requise</div>'
         f'<div style="font-size:14px;color:#EDE9FE;margin-top:5px;line-height:1.45;">{_esc(cta_intro or "")}</div></td>'
-        f'<td align="right" valign="middle" style="padding:18px 20px;" class="sm-center sm-px2">'
+        f'<td align="right" valign="middle" style="padding:18px 20px;" class="sm-stack sm-center sm-px2">'
         f'<!--[if mso]><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="#FFFFFF" style="border-radius:6px;"><![endif]-->'
         f'<a href="{_esc(cta["url"])}" style="display:inline-block;background:#FFFFFF;color:{INK};font-family:{FONT};'
         f'font-size:14px;font-weight:700;text-decoration:none;padding:11px 20px;border-radius:6px;white-space:nowrap;">{_esc(cta["label"])}&nbsp;→</a>'
@@ -368,15 +368,15 @@ def _footer(dossier):
         f'<tr><td style="padding:24px 0 0;">'
         f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>'
         f'<td valign="middle">{_logo("dark")}</td>'
-        f'<td align="right" valign="middle" style="font-family:{FONT};font-style:italic;font-weight:700;font-size:13px;color:#9F9683;" class="sm-hide">{SCHOOL["slogan"]}</td>'
+        f'<td align="right" valign="middle" style="font-family:{FONT};font-style:italic;font-weight:700;font-size:13px;color:#857B62;" class="sm-hide">{SCHOOL["slogan"]}</td>'
         f'</tr></table>'
         f'<div style="font-family:{FONT};font-size:12px;line-height:1.65;color:{T3};margin-top:16px;">'
         f'{SCHOOL["full"]}<br>{SCHOOL["address"]}<br>'
         f'<a href="mailto:{SCHOOL["email"]}" style="color:#5B3FA8;font-weight:600;text-decoration:none;">{SCHOOL["email"]}</a> · {SCHOOL["tel"]}</div>'
-        f'<div style="font-family:{FONT};font-size:11.5px;line-height:1.6;color:#9F9683;margin-top:14px;">'
+        f'<div style="font-family:{FONT};font-size:11.5px;line-height:1.6;color:#857B62;margin-top:14px;">'
         f'Vous recevez cet e-mail parce que vous avez déposé une candidature auprès de {SCHOOL["name"]} (dossier&nbsp;{_esc(dossier)}). '
         f'Message automatique relatif au traitement de votre dossier — pour toute question, répondez simplement à cet e-mail.</div>'
-        f'<div style="font-family:{FONT};font-size:11.5px;line-height:1.6;color:#9F9683;margin-top:8px;">'
+        f'<div style="font-family:{FONT};font-size:11.5px;line-height:1.6;color:#857B62;margin-top:8px;">'
         f'<strong style="color:{T3};">Confidentiel</strong> — destiné au seul candidat. Si vous n’êtes pas le destinataire, merci de supprimer ce message.</div>'
         f'<div style="margin-top:16px;font-family:{FONT};font-size:11.5px;">'
         f'<a href="{_legal_link("politique-de-confidentialite")}" style="color:#5B3FA8;font-weight:600;text-decoration:none;">Politique de confidentialité</a>&nbsp;&nbsp;·&nbsp;&nbsp;'
@@ -460,9 +460,9 @@ def render_candidate_email(
         <div style="font-family:{FONT};font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.72);">{st['eyebrow']}</div>
         <div style="margin-top:8px;">{mark}<span class="status-value" style="font-family:{FONT};font-size:38px;font-weight:800;letter-spacing:-.03em;color:#FFFFFF;vertical-align:middle;">{_esc(st['label'])}</span>{filiere_band}</div>
       </td></tr>
-      <tr><td class="card" style="background:{PAPER};padding:28px 30px 4px;" class="sm-px">
+      <tr><td class="card sm-px" style="background:{PAPER};padding:28px 30px 4px;">
         <div class="t1" style="font-family:{FONT};font-size:15px;font-weight:600;color:{T1};">Bonjour {_esc(nom)},</div>
-        <div class="t2" style="font-family:{FONT};font-size:15px;line-height:1.6;color:{T3};margin-top:8px;">{_esc(intro)}</div>
+        <div class="t2" style="font-family:{FONT};font-size:15px;line-height:1.6;color:{T2};margin-top:8px;">{_esc(intro)}</div>
       </td></tr>
       <tr><td class="card" style="background:{PAPER};">
         <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
@@ -477,7 +477,7 @@ def render_candidate_email(
           {_cta_block(cta, cta_intro)}
           {_secondary_link(secondary)}
           <tr><td style="padding:24px 30px 26px;" class="sm-px">
-            <div class="t2" style="font-family:{FONT};font-size:13px;color:{T3};">{_esc(signoff or (SCHOOL['name'] + ' · Service des admissions'))}</div>
+            <div class="t2" style="font-family:{FONT};font-size:13px;color:{T2};">{_esc(signoff or (SCHOOL['name'] + ' · Service des admissions'))}</div>
           </td></tr>
         </table></td></tr>
       <tr><td class="foot" style="background:{SAND_50};border-radius:0 0 14px 14px;">
