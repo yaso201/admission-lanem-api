@@ -29,8 +29,12 @@ from admission.api.receipt import ECOLE
 # ── Socle d'envoi (NON-BLOQUANT, commun à tous les mails candidat) ─────────────
 
 
-def _send_candidate_mail(applicant, subject, message, event, attachments=None):
-    """Socle COMMUN d'envoi d'un mail candidat (non-bloquant ; skip si pas d'email)."""
+def _send_candidate_mail(applicant, subject, message, event, attachments=None, now=False):
+    """Socle COMMUN d'envoi d'un mail candidat (non-bloquant ; skip si pas d'email).
+
+    now=True → envoi SYNCHRONE (pendant la requête) pour les mails sensibles au délai (OTP) :
+    court-circuite la file d'attente (flushée par lots → latence). Les autres mails restent
+    en file (now=False) pour ne pas alourdir chaque requête."""
     try:
         email = getattr(applicant, "email", None)
         if not email:
@@ -39,6 +43,8 @@ def _send_candidate_mail(applicant, subject, message, event, attachments=None):
         kwargs = {"recipients": [email], "subject": subject, "message": message}
         if attachments:
             kwargs["attachments"] = attachments
+        if now:
+            kwargs["now"] = True
         frappe.sendmail(**kwargs)
         log_event(event, "sent", dossier_id=getattr(applicant, "name", None))
     except Exception:
@@ -251,7 +257,7 @@ def send_email_otp(applicant, email_otp, minutes=10):
         preheader="Votre code de vérification LaNEM — valable 10 minutes. Ne le partagez jamais.",
         subject="Votre code de vérification LaNEM",
     )
-    _send_candidate_mail(applicant, "Votre code de vérification LaNEM", html, "email_otp")
+    _send_candidate_mail(applicant, "Votre code de vérification LaNEM", html, "email_otp", now=True)
 
 
 # ── SOP — instructions de paiement (M5, mode-aware : virement RIB / espèces) ───

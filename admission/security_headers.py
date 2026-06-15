@@ -19,7 +19,26 @@ headers protègent le Desk admin + les réponses API de ce bench.
 Ref: HEAD-1, AUDIT-GLOBAL (headers absents).
 """
 
+import re
+
 import frappe
+
+
+def _to_cross_site(set_cookie_value):
+    """Réécrit un en-tête Set-Cookie en SameSite=None; Secure (cookies cross-sous-domaine).
+
+    Nécessaire quand le front staff (ex. staff-rec.lanem.bj) et l'API (api-...lanem.bj) sont
+    sur des origines différentes : avec SameSite=Lax (défaut Frappe, codé en dur dans auth.py)
+    le navigateur N'ENVOIE PAS le cookie `sid` sur les requêtes XHR cross-site → 403 Guest.
+    SameSite=None EXIGE Secure ; le navigateur reçoit la réponse en HTTPS (terminaison
+    Cloudflare) donc Secure est accepté même si l'origine derrière le tunnel est en http.
+    CSRF reste couvert par le token X-Frappe-CSRF-Token (le front l'envoie)."""
+    value = re.sub(r"(?i)samesite=(lax|strict|none)", "SameSite=None", set_cookie_value)
+    if "samesite=" not in value.lower():
+        value += "; SameSite=None"
+    if "secure" not in value.lower():
+        value += "; Secure"
+    return value
 
 
 DEFAULT_HEADERS = {
@@ -51,5 +70,14 @@ def set_security_headers(response=None, request=None):
 		hsts = overrides.get("Strict-Transport-Security", DEFAULT_HSTS)
 		if hsts:
 			response.headers.setdefault("Strict-Transport-Security", hsts)
+
+	# Cookies cross-sous-domaine (front staff sur une autre origine que l'API).
+	# Gated par `cross_site_session` (site_config) → DEV same-site INTACT (défaut OFF).
+	if frappe.conf.get("cross_site_session") and hasattr(response.headers, "getlist"):
+		cookies = response.headers.getlist("Set-Cookie")
+		if cookies:
+			del response.headers["Set-Cookie"]
+			for c in cookies:
+				response.headers.add("Set-Cookie", _to_cross_site(c))
 
 	return response
