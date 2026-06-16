@@ -9,3 +9,4 @@ admission.patches.v1_0.seed_rib_settings
 admission.patches.v1_1.backfill_numbering_codes
 admission.patches.v1_1.harden_sm_account
 admission.patches.v1_1.set_invitation_link_expiry
+admission.patches.v1_1.lock_desk_for_staff
