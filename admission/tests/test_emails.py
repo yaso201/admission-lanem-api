@@ -66,6 +66,24 @@ class TestSendEmailOtp(TestCase):
             send_email_otp(_app(email=None), "987654")
         mf.sendmail.assert_not_called()
 
+    def test_one_tap_link_carries_otp_and_token(self):
+        with patch(f"{NOTIF}.frappe") as mf:
+            from admission.api.notifications import send_email_otp
+            send_email_otp(_app(), "987654", minutes=10, token="TOK-XYZ")
+        kw = _sendmail_kwargs(mf)
+        msg = kw["message"]
+        self.assertIn("reprise?dossier=CAN-2026-00001", msg)  # lien de reprise
+        self.assertIn("TOK-XYZ", msg)                          # token dans le lien
+        self.assertIn("otp=987654", msg)                       # OTP pré-saisi dans le lien
+        self.assertNotIn("987654", kw["subject"])              # invariant : jamais dans le sujet
+
+    def test_no_link_when_no_token_backward_compat(self):
+        with patch(f"{NOTIF}.frappe") as mf:
+            from admission.api.notifications import send_email_otp
+            send_email_otp(_app(), "987654", minutes=10)
+        msg = _sendmail_kwargs(mf)["message"]
+        self.assertNotIn("reprise?dossier=", msg)              # pas de lien sans token
+
 
 # ── B. Liens tokenisés (A0.2) ──────────────────────────────────────────────────
 

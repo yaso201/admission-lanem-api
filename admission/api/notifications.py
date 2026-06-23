@@ -243,11 +243,13 @@ def send_recovery_link(applicant, token):
 # ── Code OTP e-mail (M3) ───────────────────────────────────────────────────────
 
 
-def send_email_otp(applicant, email_otp, minutes=10):
+def send_email_otp(applicant, email_otp, minutes=10, token=None):
     """Livre le code OTP e-mail. NON-BLOQUANT. SÉCURITÉ : jamais de code dans les
-    logs ni le preheader. Le SMS (phone_otp) = canal OPS distinct (A0.1)."""
+    logs ni le sujet/preheader. `token` (clair au moment du request_otp) → ajoute un
+    lien de reprise « un tap » avec OTP pré-saisi (corps uniquement, pas le sujet) ;
+    le front auto-vérifie en POST et purge l'URL. Le SMS (phone_otp) = OPS (A0.1)."""
     nom = _full_name(applicant)
-    html = render_candidate_email(
+    kwargs = dict(
         nom=nom, dossier=applicant.name, filiere="", status="otp",
         intro="Pour sécuriser votre espace candidat, saisissez le code ci-dessous dans la page "
               "de vérification. Il confirme que cette adresse e-mail vous appartient.",
@@ -257,6 +259,14 @@ def send_email_otp(applicant, email_otp, minutes=10):
         preheader="Votre code de vérification LaNEM — valable 10 minutes. Ne le partagez jamais.",
         subject="Votre code de vérification LaNEM",
     )
+    if token:
+        kwargs["cta"] = {
+            "label": "Reprendre ma candidature",
+            "url": _portal_link(applicant, token=token, otp=email_otp),
+        }
+        kwargs["cta_intro"] = ("Sur mobile, ce bouton vous ramène directement dans votre candidature, "
+                               "code déjà saisi. Sinon, recopiez le code ci-dessus.")
+    html = render_candidate_email(**kwargs)
     _send_candidate_mail(applicant, "Votre code de vérification LaNEM", html, "email_otp", now=True)
 
 

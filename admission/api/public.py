@@ -1072,7 +1072,7 @@ def request_otp(dossier_id=None, token=None):
 	# RIEN — contrat mensonger, audit parcours). Seul le HASH est persisté ; le code part
 	# par mail (template `otp`) et n'est JAMAIS loggé. SMS = canal OPS distinct (A0.1).
 	from admission.api.notifications import send_email_otp
-	send_email_otp(applicant, email_otp, minutes=OTP_TTL_MINUTES)
+	send_email_otp(applicant, email_otp, minutes=OTP_TTL_MINUTES, token=token)
 	data = {"delivery": {"email": "sent", "sms": "pending_ops"}}
 	# SEC : ne JAMAIS divulguer l'OTP en réponse sur la seule foi de developer_mode
 	# (landmine prod si developer_mode reste activé). Opt-in explicite et dédié requis.

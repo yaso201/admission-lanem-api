@@ -56,16 +56,20 @@ def _portal_base():
     return (frappe.conf.get("candidate_portal_url") or "http://localhost:4321").rstrip("/")
 
 
-def _portal_link(applicant=None, token=None):
+def _portal_link(applicant=None, token=None, otp=None):
     """Lien vers l'espace candidat.
 
-    A0.2 : avec `token` (détenu en clair UNIQUEMENT à la création/rotation/recovery),
+    A0.2 : avec `token` (détenu en clair UNIQUEMENT à la création/rotation/recovery/OTP),
     lien de REPRISE tokenisé — l'OTP reste exigé à l'arrivée pour les actions (SEC-4,
-    double barrière). Sans token : page de suivi générique (le candidat utilise son
-    lien de reprise reçu par mail)."""
+    double barrière). `otp` (optionnel) pré-remplit le code pour une reprise « un tap »
+    depuis l'e-mail OTP : le front auto-vérifie en POST et purge token+otp de l'URL.
+    Sans token : page de suivi générique (le candidat utilise son lien reçu par mail)."""
     base = _portal_base()
     if token and applicant is not None:
-        return f"{base}/reprise?dossier={applicant.name}&token={token}"
+        url = f"{base}/reprise?dossier={applicant.name}&token={token}"
+        if otp:
+            url += f"&otp={otp}"
+        return url
     return f"{base}/suivi"
 
 
