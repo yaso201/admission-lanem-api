@@ -209,6 +209,7 @@ class TestSec2Webhook(TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"]["code"], "WEBHOOK_SIGNATURE_INVALID")
 
+    @patch(f"{WEBHOOK}.notify_uf_payment")
     @patch(f"{WEBHOOK}.send_payment_receipt")
     @patch("admission.api.public._capture_promo_if_eligible")  # C2-BOURSES/R1 : capture dans la cascade
     @patch(f"{WEBHOOK}.verify_transaction", return_value={"status": "SUCCESS", "amount": 25000})
@@ -216,7 +217,7 @@ class TestSec2Webhook(TestCase):
     @patch(f"{WEBHOOK}._find_payment_by_reference")
     @patch(f"{WEBHOOK}.frappe")
     def test_webhook_valid_signature_accepted(
-        self, mock_frappe, mock_find, _mock_now, _mock_verify, mock_capture, _msend,
+        self, mock_frappe, mock_find, _mock_now, _mock_verify, mock_capture, _msend, _mnotify,
     ):
         self._rq(mock_frappe, "s3cr3t")  # en-tête == secret dashboard → accepté
         pending = MagicMock()
@@ -231,6 +232,8 @@ class TestSec2Webhook(TestCase):
         mock_frappe.get_doc.side_effect = lambda dt, name=None: (
             applicant if dt == "Admission Applicant" else fee)
         mock_frappe.session.user = "Administrator"
+        mock_frappe.db.get_value.return_value = "Pending"  # re-lecture du statut SOUS verrou (B2)
+        mock_frappe.db.exists.return_value = False          # aucun autre Confirmed sur le fee (D-SEQ-FEE-02)
 
         from admission.api.webhook import payment
         result = payment()

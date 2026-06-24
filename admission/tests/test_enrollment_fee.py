@@ -237,6 +237,7 @@ class TestSubmitEnrollmentPaymentOnline(TestCase):
         mock_frappe.form_dict = {}
         mock_frappe.request = None
         mock_legal.side_effect = lambda dt: MagicMock(name=f"LEGAL-{dt}")
+        mock_frappe.db.exists.return_value = False   # garde amont B1 : aucun paiement Confirmed sur ce fee
 
         result = submit_enrollment_payment_online(
             dossier_id="CAN-2026-00001", token="tok",

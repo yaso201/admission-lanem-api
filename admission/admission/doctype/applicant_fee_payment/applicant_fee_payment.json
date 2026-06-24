@@ -19,6 +19,7 @@
   "provider_reference",
   "provider_transaction_id",
   "idempotency_key",
+  "reconciliation",
   "uf_sync_section",
   "uf_notified",
   "uf_notified_at"
@@ -123,6 +124,14 @@
    "fieldtype": "Data",
    "label": "Idempotency Key",
    "unique": 1
+  },
+  {
+   "fieldname": "reconciliation",
+   "fieldtype": "Select",
+   "label": "Reconciliation (D-OBS-01)",
+   "options": "\nPromoted late\nOrphan - refund due\nStale - awaiting webhook\nUnderpaid - review",
+   "in_standard_filter": 1,
+   "read_only": 1
   },
   {
    "fieldname": "uf_sync_section",

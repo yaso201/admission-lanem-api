@@ -388,6 +388,7 @@ class TestPaymentOnlineConsentGate(TestCase):
         fee.amount_xof = 25000
         mock_ensure.return_value = fee
         mock_secrets.token_hex.return_value = "ref123"
+        mock_frappe.db.exists.return_value = False   # garde amont B1 : aucun paiement Confirmed sur ce fee
 
         result = submit_payment_online(
             dossier_id="CAN-001", token="tok", consent_refund=True
@@ -492,6 +493,7 @@ class TestEnrollmentPaymentConsentGate(TestCase):
         fee.amount_xof = 50000
         mock_ensure.return_value = fee
         mock_secrets.token_hex.return_value = "ref123"
+        mock_frappe.db.exists.return_value = False   # garde amont B1 : aucun paiement Confirmed sur ce fee
 
         result = submit_enrollment_payment_online(
             dossier_id="CAN-001", token="tok",

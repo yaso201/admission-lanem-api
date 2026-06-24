@@ -69,6 +69,7 @@ class TestSubmitOnlineDescriptorUnchanged(TestCase):
         refund = MagicMock(); refund.name = "LEGAL-REFUND"; mlegal.return_value = refund
         fee = MagicMock(); fee.amount_xof = 25000; mens.return_value = fee
         msec.token_hex.return_value = "ref123"
+        mf.db.exists.return_value = False            # garde amont B1 : aucun paiement Confirmed sur ce fee
         from admission.api.public import submit_payment_online
         result = submit_payment_online(dossier_id="CAN-001", token="tok", consent_refund=True)
         self.assertTrue(result["ok"])
@@ -115,7 +116,9 @@ class TestOrphanPendingHandling(TestCase):
             filters = mf.get_all.call_args.kwargs["filters"]
             self.assertIn("payment_mode", filters)  # restreint aux modes offline (Cash/Bank)
 
-    def test_expire_stale_online_pending(self):
+    def test_expire_stale_marks_non_terminal(self):
+        # T8 / PC1-D1 : expire_stale ne REJETTE plus (non terminal) → marque 'Stale - awaiting
+        # webhook' SANS toucher payment_status (le Pending reste promouvable par un success tardif).
         with patch(f"{PUBLIC}.frappe") as mf, \
              patch(f"{PUBLIC}.now_datetime", return_value="2026-06-10 10:00:00"), \
              patch(f"{PUBLIC}.add_to_date", return_value="2026-06-08 10:00:00"):
@@ -124,6 +127,30 @@ class TestOrphanPendingHandling(TestCase):
             n = expire_stale_online_pending(older_than_hours=48)
         self.assertEqual(n, 2)
         self.assertEqual(mf.db.set_value.call_count, 2)
+        for call in mf.db.set_value.call_args_list:
+            self.assertEqual(call.args[2], "reconciliation")          # marque, jamais payment_status
+            self.assertEqual(call.args[3], "Stale - awaiting webhook")
         filters = mf.get_all.call_args.kwargs["filters"]
         self.assertEqual(filters["payment_mode"], "Online")
         self.assertEqual(filters["payment_status"], "Pending")
+
+
+class TestUpstreamGuard(TestCase):
+    @patch(f"{PUBLIC}.prepare_online_payment")
+    @patch(f"{PUBLIC}._ensure_fee")
+    @patch(f"{LEGAL}._record_consent")
+    @patch(f"{LEGAL}._get_active_legal_document")
+    @patch(f"{PUBLIC}._require_otp_verified", return_value=None)
+    @patch(f"{PUBLIC}._get_applicant")
+    @patch(f"{PUBLIC}.frappe")
+    def test_submit_blocked_when_fee_already_confirmed(self, mf, mget, _otp, mleg, _rec, mfee, mprep):
+        # Garde amont B1 : un fee déjà Confirmed → ALREADY_PAID, AUCUN nouveau Pending créé.
+        mget.return_value = MagicMock()
+        mleg.return_value = MagicMock()              # REFUND_POLICY disponible
+        fee = MagicMock(); fee.name = "AFF-1"; mfee.return_value = fee
+        mf.db.exists.return_value = True             # un paiement Confirmed existe déjà sur ce fee
+        from admission.api.public import submit_payment_online
+        res = submit_payment_online(dossier_id="CAN-1", token="tok", consent_refund=1)
+        self.assertFalse(res["ok"])
+        self.assertEqual(res["error"]["code"], "ALREADY_PAID")
+        mprep.assert_not_called()                    # pas de nouveau Pending

@@ -599,6 +599,18 @@ def _build_promotion_section(applicant):
 	}
 
 
+def _assert_fee_unpaid(fee):
+	"""Garde amont B1 (anti double-débit) : refuse si un paiement Confirmed existe DÉJÀ sur ce fee.
+	MÊME critère autoritaire que la branche orphelin du webhook (le paiement Confirmed, pas la
+	dénormalisation fee.status). Retourne un _error() à propager, ou None si le fee est libre.
+	Combiné au handler corrigé (qui promeut/orpheline un success tardif), ferme la fenêtre du
+	double paiement. Factorisé pour les 2 entrées online (frais 1 + frais 2) — anti-divergence."""
+	if frappe.db.exists("Applicant Fee Payment",
+	                    {"applicant_fee": fee.name, "payment_status": "Confirmed"}):
+		return _error("ALREADY_PAID", "Ce frais a deja ete regle.", 409)
+	return None
+
+
 def _ensure_fee(applicant, idempotency_key=None):
 	session = _session_doc(applicant.session)
 	fee_type = _resolve_frais1_fee_type(session)
@@ -1416,6 +1428,9 @@ def submit_payment_online(dossier_id=None, token=None, idempotency_key=None, con
 	if not refund_doc:
 		return _error("LEGAL_DOCUMENT_MISSING", "Texte legal (REFUND_POLICY) non disponible.", 503)
 	fee = _ensure_fee(applicant)
+	already_paid = _assert_fee_unpaid(fee)  # garde amont B1 (anti double-débit, critère autoritaire)
+	if already_paid:
+		return already_paid
 	_record_consent(applicant.name, "REFUND_ACKNOWLEDGMENT", refund_doc.name)
 	log_event("payment_online", "initiated", dossier_id=applicant.name, fee_type="application")
 	return _ok(prepare_online_payment(applicant, fee, idempotency_key=idempotency_key))
@@ -1599,8 +1614,11 @@ def prepare_enrollment_online_payment(applicant, fee, *, acompte_xof=0, idempote
 
 
 def expire_stale_online_pending(older_than_hours=48):
-	"""Nettoie les Pending Online ORPHELINS (initiés candidat/agent sans paiement abouti) : les passe
-	en 'Rejected'. À planifier via scheduler_events — le câblage hooks.py est hors write-set de ce lot."""
+	"""PC1-D1 (VAGUE-PAY-FIX) : NON TERMINAL. Ne rejette plus les Pending Online périmés (>48h) —
+	il les MARQUE 'Stale - awaiting webhook' (file de réconciliation OPS) SANS toucher payment_status,
+	pour qu'un success VÉRIFIÉ tardif puisse encore les promouvoir via le handler webhook corrigé.
+	NB : la file mêle vrais abandons ET succès perdus (webhook jamais reçu) — Q1=NON (pas de lookup
+	KkiaPay par référence) → distinction = réconciliation OPS manuelle (dashboard)."""
 	cutoff = add_to_date(now_datetime(), hours=-older_than_hours)
 	names = frappe.get_all(
 		"Applicant Fee Payment",
@@ -1608,7 +1626,8 @@ def expire_stale_online_pending(older_than_hours=48):
 		pluck="name",
 	)
 	for name in names:
-		frappe.db.set_value("Applicant Fee Payment", name, "payment_status", "Rejected", update_modified=False)
+		frappe.db.set_value("Applicant Fee Payment", name, "reconciliation",
+		                    "Stale - awaiting webhook", update_modified=False)
 	return len(names)
 
 
@@ -1650,6 +1669,9 @@ def submit_enrollment_payment_online(dossier_id=None, token=None, idempotency_ke
 	fee = _ensure_enrollment_fee(applicant)
 	if not fee:
 		return _error("FEE_NOT_AVAILABLE", "Enrollment fee amount not available in catalog.", 500)
+	already_paid = _assert_fee_unpaid(fee)  # garde amont B1 symétrique frais 2 (même critère autoritaire)
+	if already_paid:
+		return already_paid
 	_record_consent(applicant.name, "REFUND_ACKNOWLEDGMENT", refund_doc.name)
 	_record_consent(applicant.name, "DATA_TRANSFER", transfer_doc.name)
 	log_event("enrollment_payment_online", "initiated", dossier_id=applicant.name)

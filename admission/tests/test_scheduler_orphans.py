@@ -1,6 +1,7 @@
 """Tests FIX-SCHEDULER-ORPHELINS (ADM-DEBT-62) — câblage de expire_stale_online_pending.
 
-La fonction (PAY-CONFIRM-AGENT phase e) passe les Pending Online périmés (>48h) en Rejected.
+La fonction (VAGUE-PAY-FIX PC1-D1) MARQUE les Pending Online périmés (>48h) 'Stale - awaiting webhook'
+SANS les rejeter (non terminal — un success vérifié tardif peut encore les promouvoir).
 Ce lot la CÂBLE dans scheduler_events["daily"] (chemin dotté direct, appel sans arg → défaut 48h).
 On ne teste pas la logique (déjà couverte par test_pay_online_core) mais le CÂBLAGE : entrée
 enregistrée + le chemin résout bien la fonction validée.

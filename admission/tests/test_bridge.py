@@ -152,6 +152,7 @@ class TestAcompteVentilationOnline(TestCase):
         mock_frappe.form_dict = {}
         mock_frappe.request = None
         mock_legal.side_effect = lambda dt: MagicMock(name=f"LEGAL-{dt}")
+        mock_frappe.db.exists.return_value = False   # garde amont B1 : aucun paiement Confirmed sur ce fee
 
         result = submit_enrollment_payment_online(
             dossier_id="CAN-2026-00001", token="tok", acompte_xof=100000,
@@ -553,6 +554,7 @@ class TestCapturePromoAtPayment(TestCase):
 
         mock_capture.assert_not_called()
 
+    @patch(f"{WEBHOOK}.notify_uf_payment")
     @patch("admission.api.public._capture_promo_if_eligible")
     @patch(f"{WEBHOOK}.send_payment_receipt")
     @patch(f"{WEBHOOK}.verify_transaction", return_value={"status": "SUCCESS", "amount": 25000})
@@ -560,7 +562,7 @@ class TestCapturePromoAtPayment(TestCase):
     @patch(f"{WEBHOOK}._find_payment_by_reference")
     @patch(f"{WEBHOOK}.frappe")
     def test_webhook_frais1_captures_promo_via_cascade(
-        self, mock_frappe, mock_find, mock_now, _mock_verify, _msend, mock_capture,
+        self, mock_frappe, mock_find, mock_now, _mock_verify, _msend, mock_capture, _mnotify,
     ):
         # LOT KKIAPAY : auth en-tête x-kkiapay-secret + re-vérification provider, puis
         # PROMOTION du Pending lié (plus d'insert). C2-BOURSES/R1 : la capture vit DANS
@@ -590,6 +592,8 @@ class TestCapturePromoAtPayment(TestCase):
         fee.fee_type = "application"  # frais 1 → la cascade capture
         mock_frappe.get_doc.side_effect = lambda dt, name=None: (
             applicant if dt == "Admission Applicant" else fee)
+        mock_frappe.db.get_value.return_value = "Pending"  # re-lecture du statut SOUS verrou (B2)
+        mock_frappe.db.exists.return_value = False          # aucun autre Confirmed sur le fee (D-SEQ-FEE-02)
 
         payment()
 
