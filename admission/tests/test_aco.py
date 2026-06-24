@@ -77,6 +77,65 @@ class TestDiplomePiece(TestCase):
         self.assertFalse(piece["requise"])
 
 
+class TestPiecesByProfile(TestCase):
+    """Lot 1 — liste métier des pièces par profil (GL1-GL4 + unicité des codes)."""
+
+    def _codes(self, profile):
+        from admission.api.public import PIECES_BY_BAC_PROFILE
+        return [p["code"] for p in PIECES_BY_BAC_PROFILE[profile]]
+
+    def test_gl1_decompte_et_codes_par_profil(self):
+        from admission.api.public import PIECES_BY_BAC_PROFILE
+        universelles = ["identite", "photo", "cv", "motivation"]
+        attente_annee = universelles + ["releves_terminale", "attestation_scolarite", "diplome_bac", "releve_bac"]
+        attendu = {
+            "bac_anterieur": universelles + ["diplome_bac", "releve_bac", "justificatifs_post_bac"],
+            "bac_attente": attente_annee,
+            "bac_annee": attente_annee,
+        }
+        for profile, codes in attendu.items():
+            self.assertEqual(self._codes(profile), codes, f"{profile} : liste de codes inattendue")
+        self.assertEqual(len(PIECES_BY_BAC_PROFILE["bac_anterieur"]), 7)
+        self.assertEqual(len(PIECES_BY_BAC_PROFILE["bac_attente"]), 8)
+        self.assertEqual(len(PIECES_BY_BAC_PROFILE["bac_annee"]), 8)
+
+    def test_gl2_universelles_presentes_et_requises(self):
+        from admission.api.public import PIECES_BY_BAC_PROFILE
+        for profile, pieces in PIECES_BY_BAC_PROFILE.items():
+            by_code = {p["code"]: p for p in pieces}
+            for code in ("identite", "photo", "cv", "motivation"):
+                self.assertIn(code, by_code, f"{code} manquante dans {profile}")
+                self.assertTrue(by_code[code]["requise"], f"{code} doit être requise ({profile})")
+
+    def test_gl3_diplome_releve_optionnels_attente_annee_requis_anterieur(self):
+        from admission.api.public import PIECES_BY_BAC_PROFILE
+        for profile in ("bac_attente", "bac_annee"):
+            by_code = {p["code"]: p for p in PIECES_BY_BAC_PROFILE[profile]}
+            self.assertFalse(by_code["diplome_bac"]["requise"], f"diplome_bac optionnel sur {profile}")
+            self.assertFalse(by_code["releve_bac"]["requise"], f"releve_bac optionnel sur {profile}")
+        ant = {p["code"]: p for p in PIECES_BY_BAC_PROFILE["bac_anterieur"]}
+        self.assertTrue(ant["diplome_bac"]["requise"], "diplome_bac requis sur bac_anterieur")
+        self.assertTrue(ant["releve_bac"]["requise"], "releve_bac requis sur bac_anterieur")
+
+    def test_gl4_attente_egale_annee(self):
+        from admission.api.public import PIECES_BY_BAC_PROFILE
+        self.assertEqual(PIECES_BY_BAC_PROFILE["bac_attente"], PIECES_BY_BAC_PROFILE["bac_annee"],
+                         "bac_attente et bac_annee doivent être la MÊME liste (factorisée)")
+
+    def test_unicite_codes_par_profil(self):
+        """Garde-fou _sync_pieces : un doublon de code dans un profil casse la child table (dédoublonnée
+        par piece_code). Itère CHAQUE profil ; échoue ROUGE si doublon."""
+        from admission.api.public import PIECES_BY_BAC_PROFILE
+        for profile, pieces in PIECES_BY_BAC_PROFILE.items():
+            codes = [p["code"] for p in pieces]
+            self.assertEqual(len(codes), len(set(codes)), f"DOUBLON de code dans {profile} : {codes}")
+
+    def test_fusion_mention_sur_justificatifs(self):
+        from admission.api.public import PIECES_BY_BAC_PROFILE
+        piece = next(p for p in PIECES_BY_BAC_PROFILE["bac_anterieur"] if p["code"] == "justificatifs_post_bac")
+        self.assertIn("fusionner", piece["label"].lower(), "mention fusion absente du libellé justificatifs")
+
+
 class TestBacVerifiedFields(TestCase):
     def setUp(self):
         self.doc = _doctype()

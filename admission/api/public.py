@@ -15,22 +15,37 @@ from admission.api._config import _get_campus_config, _pii_transport_allowed  # 
 from admission.api._log import log_event  # OBS-2 : log structuré + corrélation dossier_id
 
 
+# Pieces UNIVERSELLES (tous profils, REQUISES). Slot identite = 1 piece, 3 types acceptes
+# (CNI/passeport/CIP) — porte par le libelle ; le selecteur front est informationnel, le type
+# choisi n'est PAS persiste (decision PC1 voie b, schema non touche).
+_PIECES_UNIVERSELLES = [
+	{"code": "identite", "label": "Piece d'identite (CNI, passeport ou CIP)", "requise": True},
+	{"code": "photo", "label": "Photo d'identite", "requise": True},
+	{"code": "cv", "label": "Curriculum Vitae", "requise": True},
+	{"code": "motivation", "label": "Lettre de motivation", "requise": True},
+]
+
+# Pieces academiques PARTAGEES par bac_attente ET bac_annee (meme liste — pas de logique de date :
+# diplome/releve bac OPTIONNELS couvrent avant/apres resultats sans parametre de date). Le diplome
+# reste exige a posteriori par la gate DIPLOMA_MISSING a la verification (C1-ACO, DEC-214), pas a la soumission.
+_PIECES_ATTENTE_ANNEE = [
+	{"code": "releves_terminale", "label": "Releves de notes de terminale", "requise": True},
+	{"code": "attestation_scolarite", "label": "Attestation de scolarite", "requise": True},
+	{"code": "diplome_bac", "label": "Diplome du baccalaureat", "requise": False},
+	{"code": "releve_bac", "label": "Releve de notes du Bac", "requise": False},
+]
+
+# Ordre : universelles -> academiques, requises avant optionnelles. Decompte : anterieur 7 / attente 8 / annee 8.
 PIECES_BY_BAC_PROFILE = {
-	"bac_anterieur": [
-		{"code": "diplome_bac", "label": "Diplome ou releve du baccalaureat", "requise": True},
-		{"code": "justificatifs_post_bac", "label": "Justificatifs des annees post-bac", "requise": True},
+	"bac_anterieur": _PIECES_UNIVERSELLES + [
+		{"code": "diplome_bac", "label": "Diplome du baccalaureat", "requise": True},
+		{"code": "releve_bac", "label": "Releve de notes du Bac", "requise": True},
+		{"code": "justificatifs_post_bac",
+		 "label": "Justificatifs des annees post-bac (fusionner en un seul fichier si plusieurs annees)",
+		 "requise": True},
 	],
-	"bac_attente": [
-		{"code": "releves_terminale", "label": "Releves de notes de terminale", "requise": True},
-		{"code": "attestation_scolarite", "label": "Attestation de scolarite", "requise": True},
-		# Diplome fourni a posteriori (post-resultats) : non requis a la soumission ;
-		# l'exigence est portee par la gate DIPLOMA_MISSING a la verification (C1-ACO, DEC-214).
-		{"code": "diplome_bac", "label": "Diplome ou releve du baccalaureat", "requise": False},
-	],
-	"bac_annee": [
-		{"code": "releve_bac", "label": "Releve de notes du bac", "requise": True},
-		{"code": "attestation_reussite", "label": "Attestation de reussite", "requise": False},
-	],
+	"bac_attente": _PIECES_UNIVERSELLES + _PIECES_ATTENTE_ANNEE,
+	"bac_annee": _PIECES_UNIVERSELLES + _PIECES_ATTENTE_ANNEE,
 }
 
 
