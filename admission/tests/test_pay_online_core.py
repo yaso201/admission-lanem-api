@@ -65,7 +65,7 @@ class TestSubmitOnlineDescriptorUnchanged(TestCase):
     def test_descriptor_keys_values(self, mf, mkk, mget, mens, mlegal, mrec, msec, _exists):
         mkk.conf = {"kkiapay_sandbox": 1, "kkiapay_public_key": "pk_test"}
         mf.form_dict = {}; mf.request = None
-        applicant = MagicMock(); applicant.name = "CAN-001"; mget.return_value = applicant
+        applicant = MagicMock(); applicant.name = "CAN-001"; applicant.pieces = []; mget.return_value = applicant
         refund = MagicMock(); refund.name = "LEGAL-REFUND"; mlegal.return_value = refund
         fee = MagicMock(); fee.amount_xof = 25000; mens.return_value = fee
         msec.token_hex.return_value = "ref123"
@@ -145,7 +145,8 @@ class TestUpstreamGuard(TestCase):
     @patch(f"{PUBLIC}.frappe")
     def test_submit_blocked_when_fee_already_confirmed(self, mf, mget, _otp, mleg, _rec, mfee, mprep):
         # Garde amont B1 : un fee déjà Confirmed → ALREADY_PAID, AUCUN nouveau Pending créé.
-        mget.return_value = MagicMock()
+        applicant = MagicMock(); applicant.pieces = []  # Lot 3a : dossier complet → atteint la garde B1
+        mget.return_value = applicant
         mleg.return_value = MagicMock()              # REFUND_POLICY disponible
         fee = MagicMock(); fee.name = "AFF-1"; mfee.return_value = fee
         mf.db.exists.return_value = True             # un paiement Confirmed existe déjà sur ce fee

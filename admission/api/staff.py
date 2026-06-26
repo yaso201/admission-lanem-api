@@ -20,6 +20,7 @@ from admission.api.public import (
     apply_confirmed_payment_cascade,
     prepare_enrollment_online_payment,
     prepare_online_payment,
+    PIECES_FOURNIE_STATUSES,
 )
 from admission.api.notifications import (
     send_decision_notification,
@@ -366,7 +367,7 @@ def list_dossiers(q=None, programme=None, session=None, statuts=None, limit=200)
                                 fields=["applicant"]):
             pending_offline.add(p.applicant)
         for pc in frappe.get_all("Applicant Piece",
-                                 filters={"parent": ["in", names], "status": "missing", "required": 1},
+                                 filters={"parent": ["in", names], "status": ["not in", PIECES_FOURNIE_STATUSES], "required": 1},
                                  fields=["parent"]):
             missing_pieces[pc.parent] = missing_pieces.get(pc.parent, 0) + 1
 

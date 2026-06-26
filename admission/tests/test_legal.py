@@ -376,6 +376,7 @@ class TestPaymentOnlineConsentGate(TestCase):
 
         applicant = MagicMock()
         applicant.name = "CAN-001"
+        applicant.pieces = []  # Lot 3a : garde pièces lit applicant.pieces avant _ensure_fee
         mock_get.return_value = applicant
         mock_frappe.form_dict = {}
         mock_frappe.request = None

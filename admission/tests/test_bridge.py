@@ -618,6 +618,7 @@ class TestCapturePromoAtPayment(TestCase):
         applicant = MagicMock()
         applicant.name = "CAN-001"
         applicant.status = "BRO"
+        applicant.pieces = []  # Lot 3a : garde pièces lit applicant.pieces avant _ensure_fee
         mock_get.return_value = applicant
 
         fee = MagicMock()

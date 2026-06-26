@@ -287,6 +287,23 @@ def _sync_pieces(applicant, pieces):
 		row.status = row.status or "missing"
 
 
+# Lot 3a — porte paiement : statuts comptant comme « pièce fournie ». UN SEUL critère de vérité,
+# importé par staff.py (calcul des manquantes). 'verified' ne sera écrit qu'au Lot 3c (vérif par
+# pièce) ; aujourd'hui seuls 'missing'/'uploaded' existent, mais le critère est déjà juste.
+PIECES_FOURNIE_STATUSES = ("uploaded", "verified")
+
+
+def pieces_requises_manquantes(applicant):
+	"""Pièces required=1 dont le statut ne compte PAS comme fournie (porte paiement, Lot 3a).
+	Renvoie [{"code","label"}] (labels pour le message). Vide si rien à bloquer — y compris
+	applicant.pieces vide (dossier non synchronisé) : on ne bloque que sur des requises connues."""
+	return [
+		{"code": row.piece_code, "label": row.label}
+		for row in (applicant.pieces or [])
+		if row.required and row.status not in PIECES_FOURNIE_STATUSES
+	]
+
+
 def _resolve_frais1_fee_type(session):
 	if session and session.is_prepa_session:
 		return "competition"
@@ -1442,6 +1459,14 @@ def submit_payment_online(dossier_id=None, token=None, idempotency_key=None, con
 	refund_doc = _get_active_legal_document("REFUND_POLICY")
 	if not refund_doc:
 		return _error("LEGAL_DOCUMENT_MISSING", "Texte legal (REFUND_POLICY) non disponible.", 503)
+	# Lot 3a — porte paiement : toutes les pièces requises doivent être fournies (uploaded/verified).
+	# Garde AVANT _ensure_fee : fail-fast, aucun effet de bord si refus. Le back fait foi (le front 3b
+	# n'est qu'une garde UX). Hors scope : enrollment / canal staff (prepare_online_payment partagé).
+	manquantes = pieces_requises_manquantes(applicant)
+	if manquantes:
+		labels = ", ".join(m["label"] for m in manquantes)
+		return _error("PIECES_MANQUANTES",
+			f"Pièces obligatoires manquantes : {labels}. Merci de les déposer avant de payer.", 409)
 	fee = _ensure_fee(applicant)
 	already_paid = _assert_fee_unpaid(fee)  # garde amont B1 (anti double-débit, critère autoritaire)
 	if already_paid:
@@ -1483,6 +1508,12 @@ def declare_payment_offline(dossier_id=None, token=None, mode=None, reference=No
 		return _error("LEGAL_DOCUMENT_MISSING", "Texte legal (REFUND_POLICY) non disponible.", 503)
 	if applicant.status != "BRO":
 		return _error("INVALID_STATE", "Offline declaration is only allowed from BRO.", 409)
+	# Lot 3a — porte paiement (offline) : mêmes requises fournies avant de déclarer un paiement.
+	manquantes = pieces_requises_manquantes(applicant)
+	if manquantes:
+		labels = ", ".join(m["label"] for m in manquantes)
+		return _error("PIECES_MANQUANTES",
+			f"Pièces obligatoires manquantes : {labels}. Merci de les déposer avant de payer.", 409)
 	fee = _ensure_fee(applicant)
 	payment = frappe.get_doc(
 		{
