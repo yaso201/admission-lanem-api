@@ -21,11 +21,17 @@ from admission.api.public import (
     prepare_enrollment_online_payment,
     prepare_online_payment,
     PIECES_FOURNIE_STATUSES,
+    requise_effective,
+    pieces_requises_non_verifiees,
+    notify_pieces_blocked,
+    pieces_recap,
+    _record_piece_verdict,
 )
 from admission.api.notifications import (
     send_decision_notification,
     send_enrolled,
     send_incompletude_notification,
+    send_pieces_recap_notification,
     send_prepa_decision_notification,
     send_withdrawal_notification,
 )
@@ -147,6 +153,13 @@ def start_review(dossier_id=None):
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
     if applicant.status != "SOU":
         return _error("INVALID_STATE", "Mise en étude possible seulement depuis Soumis (SOU).", 409)
+    # Lot 3c — garde contrôle documentaire : toutes les requises EFFECTIVES doivent être 'verified'
+    # avant l'étude (waived exclu via requise_effective). Le critère est partagé (public.py).
+    non_verifiees = pieces_requises_non_verifiees(applicant)
+    if non_verifiees:
+        labels = ", ".join(p["label"] for p in non_verifiees)
+        return _error("PIECES_NON_VERIFIEES",
+                      f"Contrôle documentaire incomplet — pièces non vérifiées : {labels}.", 409)
     applicant.status = "ETU"
     applicant.save(ignore_permissions=True)
     log_event("start_review", "success", dossier_id=applicant.name)
@@ -459,7 +472,9 @@ def get_dossier(dossier_id=None):
         "motif_desistement": applicant.motif_desistement,
         "rang_liste_attente": applicant.rang_liste_attente,
         "pieces": [{"code": p.piece_code, "label": p.label, "statut": p.status,
-                    "requise": bool(p.required)} for p in (applicant.pieces or [])],
+                    "requise": requise_effective(p), "staff_requirement": p.staff_requirement,
+                    "reject_reason": p.reject_reason, "reject_comment": p.reject_comment,
+                    "has_file": bool(p.file)} for p in (applicant.pieces or [])],
         "frais": fees,
         "paiements": payments,
         "notes": {"valeurs": json.loads(applicant.notes_concours) if applicant.notes_concours else None,
@@ -738,6 +753,175 @@ def verify_bac_diploma(dossier_id=None):
     applicant.save(ignore_permissions=True)  # status inchangé : ne transitionne PAS (levée = étape c)
     log_event("verify_bac_diploma", "success", dossier_id=applicant.name)
     return _ok({"dossier_id": applicant.name, "bac_verified": 1})
+
+
+# ── Lot 3c — contrôle documentaire par pièce (verify / reject / require / waive + dossier) ─────
+
+REJECT_REASONS = {"Illisible / floue", "Mauvaise pièce", "Incomplète", "Non conforme", "Expirée", "Autre"}
+
+
+def _resolve_piece_sou(dossier_id, piece_code):
+    """Garde commune des verdicts pièce : rôle Administratif + dossier SOU + pièce existante.
+    Renvoie (applicant, row, err) — err = réponse _error ou None. Le rôle lève PermissionError."""
+    frappe.only_for(CONFIRM_ROLES)
+    if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
+        return None, None, _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
+    applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    if applicant.status != "SOU":
+        return None, None, _error("INVALID_STATE", "Contrôle documentaire possible seulement en Soumis (SOU).", 409)
+    row = next((p for p in (applicant.pieces or []) if p.piece_code == piece_code), None)
+    if not row:
+        return None, None, _error("PIECE_NOT_FOUND", "Pièce inconnue pour ce dossier.", 404)
+    return applicant, row, None
+
+
+@frappe.whitelist()
+def verify_piece(dossier_id=None, piece_code=None):
+    """Vérifie une pièce déposée (forme conforme). Pose verified + verdict + historique. Diplôme
+    fusionné : pose AUSSI bac_verified=1 (dérivé) → lift_condition inchangé."""
+    applicant, row, err = _resolve_piece_sou(dossier_id, piece_code)
+    if err:
+        return err
+    if row.status == "missing":
+        return _error("PIECE_NOT_UPLOADED", "Aucune pièce déposée à examiner.", 409)
+    row.status = "verified"
+    row.reject_reason = None
+    row.reject_comment = None
+    row.verdict_at = now_datetime()
+    row.verdict_by = frappe.session.user
+    if row.piece_code == "diplome_bac":
+        applicant.bac_verified = 1
+    applicant.save(ignore_permissions=True)
+    _record_piece_verdict(applicant.name, piece_code, "verify")
+    frappe.db.commit()
+    return _ok({"dossier_id": applicant.name, "piece_code": piece_code, "status": "verified"})
+
+
+@frappe.whitelist()
+def reject_piece(dossier_id=None, piece_code=None, reason=None, comment=None):
+    """Rejette une pièce déposée (motif liste + commentaire). « Autre » force le commentaire. Diplôme
+    fusionné : remet bac_verified=0 (cohérence si re-rejet d'un diplôme précédemment vérifié)."""
+    applicant, row, err = _resolve_piece_sou(dossier_id, piece_code)
+    if err:
+        return err
+    if row.status == "missing":
+        return _error("PIECE_NOT_UPLOADED", "Aucune pièce déposée à examiner.", 409)
+    reason = (reason or "").strip()
+    if reason not in REJECT_REASONS:
+        return _error("REASON_INVALID", "Motif de rejet invalide.", 400)
+    comment = (comment or "").strip()
+    if reason == "Autre" and not comment:
+        return _error("COMMENT_REQUIRED", "Un commentaire est obligatoire pour le motif « Autre ».", 400)
+    row.status = "rejected"
+    row.reject_reason = reason
+    row.reject_comment = comment
+    row.verdict_at = now_datetime()
+    row.verdict_by = frappe.session.user
+    if row.piece_code == "diplome_bac":
+        applicant.bac_verified = 0
+    applicant.save(ignore_permissions=True)
+    _record_piece_verdict(applicant.name, piece_code, "reject", reason=reason, comment=comment)
+    frappe.db.commit()
+    return _ok({"dossier_id": applicant.name, "piece_code": piece_code, "status": "rejected"})
+
+
+@frappe.whitelist()
+def require_piece(dossier_id=None, piece_code=None):
+    """Exige une pièce (surcharge staff) pour CE dossier — sans toucher la liste structurelle."""
+    applicant, row, err = _resolve_piece_sou(dossier_id, piece_code)
+    if err:
+        return err
+    row.staff_requirement = "required"
+    applicant.save(ignore_permissions=True)
+    _record_piece_verdict(applicant.name, piece_code, "require")
+    frappe.db.commit()
+    return _ok({"dossier_id": applicant.name, "piece_code": piece_code, "staff_requirement": "required"})
+
+
+@frappe.whitelist()
+def waive_piece(dossier_id=None, piece_code=None):
+    """Dispense une pièce (surcharge staff) — ne bloque plus les gardes (notif, SOU→ETU)."""
+    applicant, row, err = _resolve_piece_sou(dossier_id, piece_code)
+    if err:
+        return err
+    row.staff_requirement = "waived"
+    applicant.save(ignore_permissions=True)
+    _record_piece_verdict(applicant.name, piece_code, "waive")
+    frappe.db.commit()
+    return _ok({"dossier_id": applicant.name, "piece_code": piece_code, "staff_requirement": "waived"})
+
+
+@frappe.whitelist()
+def reject_dossier(dossier_id=None, motif=None):
+    """Rejet documentaire du dossier (SOU→REJ, sortie de boucle de re-soumission). Réversible (reopen).
+    Role Administratif, motif obligatoire, notif candidat, PAS de remboursement (CGV)."""
+    frappe.only_for(CONFIRM_ROLES)
+    if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
+        return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
+    applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    if applicant.status != "SOU":
+        return _error("INVALID_STATE", "Rejet documentaire possible seulement depuis Soumis (SOU).", 409)
+    if not motif or not str(motif).strip():
+        return _error("MOTIF_REQUIRED", "Le motif de rejet est obligatoire.", 400)
+    applicant.motif_rejet = str(motif).strip()
+    _stamp_decision(applicant)
+    applicant.status = "REJ"
+    applicant.save(ignore_permissions=True)
+    send_decision_notification(applicant, "refusé", motif=applicant.motif_rejet)
+    log_event("reject_dossier", "success", dossier_id=applicant.name)
+    return _ok({"dossier_id": applicant.name, "status": "REJ"})
+
+
+@frappe.whitelist()
+def reopen_dossier(dossier_id=None):
+    """Réouverture d'un dossier rejeté (REJ→SOU) — réversibilité du rejet documentaire. Role Administratif."""
+    frappe.only_for(CONFIRM_ROLES)
+    if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
+        return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
+    applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    if applicant.status != "REJ":
+        return _error("INVALID_STATE", "Réouverture possible seulement depuis Rejeté (REJ).", 409)
+    applicant.motif_rejet = None
+    applicant.status = "SOU"
+    applicant.save(ignore_permissions=True)
+    log_event("reopen_dossier", "success", dossier_id=applicant.name)
+    return _ok({"dossier_id": applicant.name, "status": "SOU"})
+
+
+@frappe.whitelist()
+def notify_pieces_recap(dossier_id=None):
+    """Geste SÉPARÉ : 1 mail récap (rejetées + à fournir). Bloqué tant qu'une requise_effective n'a
+    pas de statut terminal (uploaded non traité / missing requise non qualifié)."""
+    frappe.only_for(CONFIRM_ROLES)
+    if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
+        return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
+    applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    if applicant.status != "SOU":
+        return _error("INVALID_STATE", "Notification possible seulement en Soumis (SOU).", 409)
+    if notify_pieces_blocked(applicant):
+        return _error("PIECES_NON_TRAITEES",
+                      "Toutes les pièces requises doivent être traitées (vérifiées/rejetées) ou qualifiées avant de notifier.", 409)
+    recap = pieces_recap(applicant)
+    send_pieces_recap_notification(applicant, recap["rejetees"], recap["a_fournir"])
+    log_event("notify_pieces_recap", "success", dossier_id=applicant.name)
+    return _ok({"dossier_id": applicant.name,
+                "rejetees": len(recap["rejetees"]), "a_fournir": len(recap["a_fournir"])})
+
+
+@frappe.whitelist()
+def download_piece_file(dossier_id=None, piece_code=None):
+    """Visualisation staff d'une pièce (File privé). Role staff + check_permission (miroir download_receipt)."""
+    frappe.only_for(STAFF_ROLES)
+    if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
+        return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
+    applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    applicant.check_permission("read")
+    row = next((p for p in (applicant.pieces or []) if p.piece_code == piece_code), None)
+    if not row or not row.file:
+        return _error("PIECE_FILE_NOT_FOUND", "Aucun fichier pour cette pièce.", 404)
+    file_doc = frappe.get_doc("File", row.file)
+    frappe.local.response.filename = file_doc.file_name
+    frappe.local.response.filecontent = file_doc.get_content()
 
 
 @frappe.whitelist()

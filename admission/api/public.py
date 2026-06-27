@@ -304,6 +304,72 @@ def pieces_requises_manquantes(applicant):
 	]
 
 
+# ── Lot 3c — contrôle documentaire par pièce (helpers partagés public/staff) ──────────────
+
+
+def requise_effective(piece):
+	"""Exigence EFFECTIVE d'une pièce : la surcharge staff prime sur le structurel, SANS toucher
+	PIECES_BY_BAC_PROFILE. waived→False ; required→True ; default→required structurel.
+	UN SEUL critère, consommé par get_dossier (candidat+staff), la notif et la garde SOU→ETU."""
+	sr = getattr(piece, "staff_requirement", None) or "default"
+	if sr == "waived":
+		return False
+	if sr == "required":
+		return True
+	return bool(piece.required)
+
+
+def pieces_requises_non_verifiees(applicant):
+	"""Pièces requise_effective dont le statut n'est pas 'verified' (garde SOU→ETU, Lot 3c)."""
+	return [
+		{"code": row.piece_code, "label": row.label}
+		for row in (applicant.pieces or [])
+		if requise_effective(row) and row.status != "verified"
+	]
+
+
+def _piece_terminale_pour_notif(piece):
+	"""Statut terminal pour la notif : verified/rejected, ou missing explicitement qualifié
+	(required/waived). Un missing requise_effective resté 'default' n'est PAS terminal."""
+	if piece.status in ("verified", "rejected"):
+		return True
+	sr = getattr(piece, "staff_requirement", None) or "default"
+	return piece.status == "missing" and sr in ("required", "waived")
+
+
+def notify_pieces_blocked(applicant):
+	"""Notif récap bloquée tant qu'une requise_effective n'a pas de statut terminal (uploaded non
+	traité, ou missing requise non qualifié). Geste séparé — jamais auto au reject."""
+	return any(
+		requise_effective(row) and not _piece_terminale_pour_notif(row)
+		for row in (applicant.pieces or [])
+	)
+
+
+def pieces_recap(applicant):
+	"""Contenu du mail récap : rejetées (à refaire + motif) + requise_effective missing (à fournir)."""
+	rejetees = [
+		{"code": r.piece_code, "label": r.label, "reason": r.reject_reason, "comment": r.reject_comment}
+		for r in (applicant.pieces or []) if r.status == "rejected"
+	]
+	a_fournir = [
+		{"code": r.piece_code, "label": r.label}
+		for r in (applicant.pieces or [])
+		if requise_effective(r) and r.status == "missing"
+	]
+	return {"rejetees": rejetees, "a_fournir": a_fournir}
+
+
+def _record_piece_verdict(applicant_name, piece_code, action, reason=None, comment=None):
+	"""Trace append-only d'un verdict documentaire (Lot 3c) — 1 ligne Applicant Piece Verdict."""
+	frappe.get_doc({
+		"doctype": "Applicant Piece Verdict",
+		"applicant": applicant_name, "piece_code": piece_code, "action": action,
+		"reason": reason or "", "comment": comment or "",
+		"actor": frappe.session.user, "verdict_at": now_datetime(),
+	}).insert(ignore_permissions=True)
+
+
 def _resolve_frais1_fee_type(session):
 	if session and session.is_prepa_session:
 		return "competition"
@@ -792,7 +858,7 @@ def _serialize_dossier(applicant):
 				"code": row.piece_code,
 				"label": row.label,
 				"statut": "deposee" if row.status in {"uploaded", "verified"} else "manquante",
-				"requise": bool(row.required),
+				"requise": requise_effective(row),
 			}
 			for row in applicant.pieces
 		],
@@ -1226,11 +1292,22 @@ def _mark_piece_uploaded(applicant, piece_code, file_docname):
 	"""Pose le File sur la ligne pièce attendue (commun upload_piece / upload_piece_file)."""
 	for row in applicant.pieces:
 		if row.piece_code == piece_code:
+			# Lot 3c — une pièce déjà VALIDÉE par l'administration ne peut pas être remplacée
+			# (reste acquise). Une pièce REJETÉE repasse uploaded et le rejet est effacé (reset).
+			if row.status == "verified":
+				return _error("PIECE_ALREADY_VERIFIED",
+					"Cette pièce a déjà été validée par l'administration et ne peut pas être remplacée.", 409)
+			was_rejected = row.status == "rejected"
 			row.file = file_docname
 			row.status = "uploaded"
 			row.uploaded_at = now_datetime()
+			if was_rejected:
+				row.reject_reason = None
+				row.reject_comment = None
 			applicant.save(ignore_permissions=True)
 			frappe.db.commit()
+			if was_rejected:
+				_record_piece_verdict(applicant.name, piece_code, "reset")
 			log_event("upload_piece", "success", dossier_id=applicant.name, piece=piece_code)
 			return _ok({"piece_code": piece_code, "status": "deposee"})
 	return _error("PIECE_NOT_EXPECTED", "Cette pièce n'est pas attendue pour ce dossier.", 400)

@@ -8,9 +8,14 @@
   "piece_code",
   "label",
   "required",
+  "staff_requirement",
   "status",
+  "reject_reason",
+  "reject_comment",
   "file",
-  "uploaded_at"
+  "uploaded_at",
+  "verdict_at",
+  "verdict_by"
  ],
  "fields": [
   {
@@ -35,12 +40,30 @@
    "label": "Required"
   },
   {
+   "default": "default",
+   "fieldname": "staff_requirement",
+   "fieldtype": "Select",
+   "label": "Staff Requirement",
+   "options": "default\nrequired\nwaived"
+  },
+  {
    "default": "missing",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
    "options": "missing\nuploaded\nverified\nrejected"
+  },
+  {
+   "fieldname": "reject_reason",
+   "fieldtype": "Select",
+   "label": "Reject Reason",
+   "options": "\nIllisible / floue\nMauvaise pièce\nIncomplète\nNon conforme\nExpirée\nAutre"
+  },
+  {
+   "fieldname": "reject_comment",
+   "fieldtype": "Small Text",
+   "label": "Reject Comment"
   },
   {
    "fieldname": "file",
@@ -52,12 +75,23 @@
    "fieldname": "uploaded_at",
    "fieldtype": "Datetime",
    "label": "Uploaded At"
+  },
+  {
+   "fieldname": "verdict_at",
+   "fieldtype": "Datetime",
+   "label": "Verdict At"
+  },
+  {
+   "fieldname": "verdict_by",
+   "fieldtype": "Link",
+   "label": "Verdict By",
+   "options": "User"
   }
  ],
  "index_web_pages_for_search": 0,
  "istable": 1,
  "links": [],
- "modified": "2026-06-07 21:30:00",
+ "modified": "2026-06-27 10:00:00",
  "modified_by": "Administrator",
  "module": "Admission",
  "name": "Applicant Piece",

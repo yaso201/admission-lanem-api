@@ -198,6 +198,37 @@ def send_incompletude_notification(applicant, motif):
                          "incompletude_notification")
 
 
+def send_pieces_recap_notification(applicant, rejetees, a_fournir):
+    """Lot 3c — récap documentaire GROUPÉ : pièces rejetées (à refaire + motif) + à fournir, en 1 mail.
+    NON-BLOQUANT. Geste séparé déclenché par l'Administratif (jamais auto au reject). Réutilise le
+    moteur render_candidate_email (pas un nouveau moteur)."""
+    nom = _full_name(applicant)
+    lignes = []
+    for p in (rejetees or []):
+        motif = (p.get("reason") or "").strip()
+        if p.get("comment"):
+            motif = ((motif + " — ") if motif else "") + p["comment"]
+        lignes.append("À refaire : " + (p.get("label") or p.get("code") or "")
+                      + ((" (" + motif + ")") if motif else ""))
+    for p in (a_fournir or []):
+        lignes.append("À fournir : " + (p.get("label") or p.get("code") or ""))
+    html = render_candidate_email(
+        nom=nom, dossier=getattr(applicant, "name", ""), filiere="", status="complement",
+        intro="Après contrôle de votre dossier, certaines pièces doivent être refaites ou complétées "
+              "avant que nous puissions poursuivre l'instruction. Le détail figure ci-dessous.",
+        meta=[("Candidat", nom), ("Dossier", getattr(applicant, "name", ""), True),
+              ("Programme", _programme(applicant))],
+        motif="\n".join(lignes),
+        cta={"label": "Reprendre ma candidature", "url": _portal_link(applicant)},
+        cta_intro="Déposez les pièces demandées depuis votre espace — aucun nouveau paiement n'est requis.",
+        preheader="Des pièces de votre dossier doivent être refaites ou complétées.",
+        subject="Votre candidature LaNEM — pièces à corriger",
+        signoff="Merci de votre réactivité. — Le Service des admissions, LaNEM",
+    )
+    _send_candidate_mail(applicant, "Votre candidature LaNEM — pièces à corriger", html,
+                         "pieces_recap_notification")
+
+
 # ── Compte créé (BRO) — lien de reprise tokenisé (A0.2) ────────────────────────
 
 

@@ -12,3 +12,4 @@ admission.patches.v1_1.set_invitation_link_expiry
 admission.patches.v1_1.lock_desk_for_staff
 admission.patches.v1_1.set_invitation_email_template
 admission.patches.v1_1.add_confirmed_fee_unique
+admission.patches.v1_1.add_rej_workflow

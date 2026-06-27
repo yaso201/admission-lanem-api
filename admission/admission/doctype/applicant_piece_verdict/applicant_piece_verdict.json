@@ -1,0 +1,111 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-06-27 10:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "applicant",
+  "piece_code",
+  "action",
+  "column_break_verdict",
+  "actor",
+  "verdict_at",
+  "section_detail",
+  "reason",
+  "comment"
+ ],
+ "fields": [
+  {
+   "fieldname": "applicant",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Applicant",
+   "options": "Admission Applicant",
+   "reqd": 1
+  },
+  {
+   "fieldname": "piece_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Piece Code",
+   "reqd": 1
+  },
+  {
+   "fieldname": "action",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Action",
+   "options": "verify\nreject\nrequire\nwaive\nreset",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_verdict",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "actor",
+   "fieldtype": "Link",
+   "label": "Actor",
+   "options": "User"
+  },
+  {
+   "fieldname": "verdict_at",
+   "fieldtype": "Datetime",
+   "label": "Verdict At"
+  },
+  {
+   "fieldname": "section_detail",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Data",
+   "label": "Reason"
+  },
+  {
+   "fieldname": "comment",
+   "fieldtype": "Small Text",
+   "label": "Comment"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-06-27 10:00:00",
+ "modified_by": "Administrator",
+ "module": "Admission",
+ "name": "Applicant Piece Verdict",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Admission Administratif"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Admission Responsable"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Admission Direction"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

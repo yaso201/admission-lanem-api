@@ -19,6 +19,7 @@ STATES = [
 	("ACC", "Success", "Admission Direction"),
 	("INS", "Success", "Admission Direction"),
 	("REF", "Danger", "Admission Direction"),
+	("REJ", "Danger", "Admission Administratif"),
 	("DES", "Inverse", "Admission Administratif"),
 ]
 
@@ -29,6 +30,8 @@ TRANSITIONS = [
 	("SOU", "Request Complement", "INC", "Admission Administratif"),
 	("INC", "Resubmit Complement", "SOU", "Admission Administratif"),
 	("SOU", "Start Review", "ETU", "Admission Administratif"),
+	("SOU", "Reject Documentary", "REJ", "Admission Administratif"),
+	("REJ", "Reopen", "SOU", "Admission Administratif"),
 	("ETU", "Request Complement", "INC", "Admission Responsable"),
 	("ETU", "Waitlist", "ATT", "Admission Responsable"),
 	("ETU", "Mark Admissible", "ADM", "Admission Responsable"),
@@ -51,7 +54,7 @@ TRANSITIONS = [
 ]
 
 
-def execute():
+def _setup_workflow():
 	for role in ROLES:
 		if not frappe.db.exists("Role", role):
 			frappe.get_doc({"doctype": "Role", "role_name": role, "desk_access": 1}).insert(ignore_permissions=True)
@@ -118,6 +121,9 @@ def execute():
 	else:
 		workflow.save(ignore_permissions=True)
 
+
+def execute():
+	_setup_workflow()
 	_seed_sessions()
 
 
