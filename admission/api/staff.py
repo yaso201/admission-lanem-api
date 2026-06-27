@@ -852,6 +852,20 @@ def waive_piece(dossier_id=None, piece_code=None):
 
 
 @frappe.whitelist()
+def reset_piece_requirement(dossier_id=None, piece_code=None):
+    """Réinitialise l'exigence à 'default' (la pièce re-suit la règle structurelle du profil via
+    requise_effective). Miroir de require/waive — révisable librement tant que dossier SOU."""
+    applicant, row, err = _resolve_piece_sou(dossier_id, piece_code)
+    if err:
+        return err
+    row.staff_requirement = "default"
+    applicant.save(ignore_permissions=True)
+    _record_piece_verdict(applicant.name, piece_code, "reset")
+    frappe.db.commit()
+    return _ok({"dossier_id": applicant.name, "piece_code": piece_code, "staff_requirement": "default"})
+
+
+@frappe.whitelist()
 def reject_dossier(dossier_id=None, motif=None):
     """Rejet documentaire du dossier (SOU→REJ, sortie de boucle de re-soumission). Réversible (reopen).
     Role Administratif, motif obligatoire, notif candidat, PAS de remboursement (CGV)."""

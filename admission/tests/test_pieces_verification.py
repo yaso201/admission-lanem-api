@@ -258,6 +258,51 @@ class TestRequireWaive(TestCase):
         self.assertEqual(row.staff_requirement, "waived")
         self.assertEqual([c.args[2] for c in mrec.call_args_list], ["require", "waive"])
 
+    @patch(f"{STAFF}._record_piece_verdict")
+    @patch(f"{STAFF}.frappe")
+    def test_vr1_reset_depuis_required(self, mf, mrec):
+        # VR1 + VR3 : reset d'un required → default ; requise_effective revient au structurel.
+        mf.db.exists.return_value = True
+        row = _piece("diplome_bac", required=0, status="missing", staff_requirement="required")
+        mf.get_doc.return_value = _app([row])
+        from admission.api.staff import reset_piece_requirement
+        from admission.api.public import requise_effective
+        res = reset_piece_requirement(dossier_id="CAN-1", piece_code="diplome_bac")
+        self.assertTrue(res["ok"])
+        self.assertEqual(row.staff_requirement, "default")
+        self.assertFalse(requise_effective(row))   # default → required structurel (0)
+        mrec.assert_called_once_with("CAN-1", "diplome_bac", "reset")
+
+    @patch(f"{STAFF}._record_piece_verdict")
+    @patch(f"{STAFF}.frappe")
+    def test_vr2_reset_depuis_waived(self, mf, mrec):
+        # VR2 : reset d'un waived → default.
+        mf.db.exists.return_value = True
+        row = _piece("identite", required=1, status="missing", staff_requirement="waived")
+        mf.get_doc.return_value = _app([row])
+        from admission.api.staff import reset_piece_requirement
+        from admission.api.public import requise_effective
+        reset_piece_requirement(dossier_id="CAN-1", piece_code="identite")
+        self.assertEqual(row.staff_requirement, "default")
+        self.assertTrue(requise_effective(row))     # default → required structurel (1)
+
+    @patch(f"{STAFF}._record_piece_verdict")
+    @patch(f"{STAFF}.frappe")
+    def test_vr4_bloque_hors_sou(self, mf, mrec):
+        mf.db.exists.return_value = True
+        mf.get_doc.return_value = _app([_piece("identite", staff_requirement="required")], status="ETU")
+        from admission.api.staff import reset_piece_requirement
+        res = reset_piece_requirement(dossier_id="CAN-1", piece_code="identite")
+        self.assertEqual(res["error"]["code"], "INVALID_STATE")
+        mrec.assert_not_called()
+
+    @patch(f"{STAFF}.frappe")
+    def test_vr5_role_garde(self, mf):
+        mf.only_for.side_effect = PermissionError("403")
+        from admission.api.staff import reset_piece_requirement
+        with self.assertRaises(PermissionError):
+            reset_piece_requirement(dossier_id="CAN-1", piece_code="identite")
+
 
 class TestReUpload(TestCase):
     @patch(f"{PUBLIC}._record_piece_verdict")
