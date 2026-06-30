@@ -403,6 +403,55 @@ class TestNotifyRecap(TestCase):
         msend.assert_called_once()
 
 
+# ───────────────────────── download_piece_file (D-DOWNLOAD-TYPE-20) ─────────────────────────
+# Lot 3c-1-ter : la gate 3c-1 testait le CONTENU du stream (octets), pas le TYPE servi → le bug
+# (response.type omis → Frappe sérialise en application/json au lieu du binaire) est passé.
+# Ces tests assertent le TYPE de réponse, fermant le trou.
+
+class TestDownloadPieceFile(TestCase):
+    @patch(f"{STAFF}.frappe")
+    def test_vd1_pose_response_type_download(self, mf):
+        # VD1 — l'endpoint pose frappe.local.response.type = "download" (binaire, pas JSON)
+        # en plus de filename/filecontent. C'EST l'assertion qui manquait.
+        mf.db.exists.return_value = True
+        row = _piece("cni", status="uploaded", file="FILE-1", label="CNI")
+        applicant = _app([row])
+        file_doc = MagicMock(file_name="cni.pdf")
+        file_doc.get_content.return_value = b"%PDF-1.4 contenu"
+        mf.get_doc.side_effect = [applicant, file_doc]  # 1) Admission Applicant, 2) File
+        from admission.api.staff import download_piece_file
+        download_piece_file(dossier_id="CAN-1", piece_code="cni")
+        self.assertEqual(mf.local.response.type, "download")        # ← le type servi (pas JSON)
+        self.assertEqual(mf.local.response.filename, "cni.pdf")
+        self.assertEqual(mf.local.response.filecontent, b"%PDF-1.4 contenu")
+
+    def test_vd2_content_type_du_fichier_pas_json(self):
+        # VD2 — le type "download" route vers as_raw, qui dérive le Content-Type du nom de fichier
+        # (mimetypes.guess_type) → pdf/image réel, JAMAIS application/json. On exerce le vrai
+        # handler Frappe pour prouver le Content-Type résultant.
+        import frappe
+        from frappe.utils.response import as_raw
+        saved = getattr(frappe.local, "response", None)
+        try:
+            for fn, expected in (("cni.pdf", "application/pdf"),
+                                 ("photo.jpg", "image/jpeg"),
+                                 ("x.png", "image/png")):
+                frappe.local.response = frappe._dict(filename=fn, filecontent=b"DATA", type="download")
+                resp = as_raw()
+                self.assertEqual(resp.mimetype, expected)
+                self.assertNotEqual(resp.mimetype, "application/json")
+        finally:
+            frappe.local.response = saved
+
+    @patch(f"{STAFF}.frappe")
+    def test_vd3_role_garde(self, mf):
+        # VD3 — gardé staff (non régressé) : un non-staff (only_for lève) est refusé.
+        mf.only_for.side_effect = PermissionError("403")
+        from admission.api.staff import download_piece_file
+        with self.assertRaises(PermissionError):
+            download_piece_file(dossier_id="CAN-1", piece_code="cni")
+
+
 class TestDownloadPiece(TestCase):
     @patch(f"{STAFF}.frappe")
     def test_v16_download_staff(self, mf):

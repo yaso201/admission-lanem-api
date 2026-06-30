@@ -936,6 +936,12 @@ def download_piece_file(dossier_id=None, piece_code=None):
     file_doc = frappe.get_doc("File", row.file)
     frappe.local.response.filename = file_doc.file_name
     frappe.local.response.filecontent = file_doc.get_content()
+    # D-DOWNLOAD-TYPE-20 : sans response.type, Frappe sérialise filename/filecontent en JSON
+    # (le front voit application/json → "Pièce indisponible."). Miroir download_receipt
+    # (qui pose response.type), mais "download" (→ as_raw) car les pièces sont pdf/jpg/png :
+    # as_raw dérive le Content-Type du nom de fichier (mimetypes.guess_type) → type RÉEL du
+    # fichier, donc le blob front rend inline. "pdf" forcerait application/pdf (faux pour jpg/png).
+    frappe.local.response.type = "download"
 
 
 @frappe.whitelist()
