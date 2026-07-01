@@ -400,6 +400,7 @@ def list_dossiers(q=None, programme=None, session=None, statuts=None, limit=200)
         "statut": r.status,
         "conditionnel": bool(r.conditionnel),
         "bac_verified": bool(r.bac_verified),
+        "resoumis": bool(getattr(r, "resoumis", 0)),  # 3c-3c : badge « Re-soumis » (R11bis teste la SORTIE ; getattr = idiome _bourse_state)
         "is_prepa": is_prepa_by_session.get(r.session, False),
         "bourse": _bourse_state(r),
         "notes": _notes_state(r) if is_prepa_by_session.get(r.session) else "na",

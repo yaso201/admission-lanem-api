@@ -246,3 +246,30 @@ class TestListExposeResoumis(TestCase):
         list_dossiers()
         fields = mf.get_list.call_args.kwargs.get("fields", [])
         self.assertIn("resoumis", fields)
+
+    def _row(self, resoumis):
+        return SimpleNamespace(
+            name="CAN-1", applicant_name="A B", programme_code="LIC-MI", programme_label="Lic MI",
+            level_code="LIC-MI-L1", session="SES-1", status="SOU", conditionnel=0, bac_verified=0,
+            resoumis=resoumis, rang_liste_attente=None,
+            creation="2026-07-01 00:00:00", modified="2026-07-01 00:00:00",
+        )
+
+    @patch(f"{STAFF}.frappe")
+    def test_r11bis_reponse_shaped_contient_resoumis(self, mf):
+        # R11bis — teste la SORTIE (le dict shaped renvoyé au front), pas les fields du get_list.
+        # C'est le trou de R11 (3c-3a) : le champ était lu de la DB mais jeté au reshaping.
+        mf.get_list.return_value = [self._row(resoumis=1)]
+        mf.get_all.return_value = []   # enrichissements (fees/pending/pieces/sessions) vides
+        from admission.api.staff import list_dossiers
+        res = list_dossiers()
+        d = res["data"]["dossiers"][0]
+        self.assertIs(d["resoumis"], True)
+
+    @patch(f"{STAFF}.frappe")
+    def test_r11bis_faux_par_defaut(self, mf):
+        mf.get_list.return_value = [self._row(resoumis=0)]
+        mf.get_all.return_value = []
+        from admission.api.staff import list_dossiers
+        res = list_dossiers()
+        self.assertIs(res["data"]["dossiers"][0]["resoumis"], False)
