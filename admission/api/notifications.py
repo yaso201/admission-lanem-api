@@ -198,10 +198,11 @@ def send_incompletude_notification(applicant, motif):
                          "incompletude_notification")
 
 
-def send_pieces_recap_notification(applicant, rejetees, a_fournir):
+def send_pieces_recap_notification(applicant, rejetees, a_fournir, token=None):
     """Lot 3c — récap documentaire GROUPÉ : pièces rejetées (à refaire + motif) + à fournir, en 1 mail.
     NON-BLOQUANT. Geste séparé déclenché par l'Administratif (jamais auto au reject). Réutilise le
-    moteur render_candidate_email (pas un nouveau moteur)."""
+    moteur render_candidate_email (pas un nouveau moteur).
+    3c-3a : `token` (rotaté par notify_pieces_recap) → CTA `/reprise` actionnable (pas `/suivi`)."""
     nom = _full_name(applicant)
     lignes = []
     for p in (rejetees or []):
@@ -219,7 +220,7 @@ def send_pieces_recap_notification(applicant, rejetees, a_fournir):
         meta=[("Candidat", nom), ("Dossier", getattr(applicant, "name", ""), True),
               ("Programme", _programme(applicant))],
         motif="\n".join(lignes),
-        cta={"label": "Reprendre ma candidature", "url": _portal_link(applicant)},
+        cta={"label": "Reprendre ma candidature", "url": _portal_link(applicant, token=token)},
         cta_intro="Déposez les pièces demandées depuis votre espace — aucun nouveau paiement n'est requis.",
         preheader="Des pièces de votre dossier doivent être refaites ou complétées.",
         subject="Votre candidature LaNEM — pièces à corriger",
@@ -227,6 +228,36 @@ def send_pieces_recap_notification(applicant, rejetees, a_fournir):
     )
     _send_candidate_mail(applicant, "Votre candidature LaNEM — pièces à corriger", html,
                          "pieces_recap_notification")
+
+
+def send_resubmit_staff_notification(applicant):
+    """Lot 3c-3a — le candidat a signalé la fin de son re-dépôt (modèle A : dossier reste SOU).
+    1 SEUL e-mail (jamais par pièce) aux agents rôle « Admission Administratif » (option a). Le badge
+    `resoumis` reste le signal in-front principal ; cet e-mail est un complément NON BLOQUANT."""
+    role_users = frappe.get_all(
+        "Has Role", filters={"role": "Admission Administratif", "parenttype": "User"}, pluck="parent"
+    )
+    recipients = (
+        frappe.get_all("User", filters={"name": ["in", role_users], "enabled": 1}, pluck="name")
+        if role_users else []
+    )
+    recipients = [r for r in recipients if r and "@" in r]
+    if not recipients:
+        return
+    nom = _full_name(applicant)
+    from frappe.utils import escape_html
+    frappe.sendmail(
+        recipients=recipients,
+        subject=f"Dossier re-soumis — {getattr(applicant, 'name', '')} (pièces à re-contrôler)",
+        message=(
+            f"<p>Le candidat <strong>{escape_html(nom)}</strong> "
+            f"(dossier {escape_html(getattr(applicant, 'name', ''))}) a re-déposé ses pièces et "
+            f"signalé la fin du dépôt.</p>"
+            f"<p>Le dossier reste en <strong>Soumis (SOU)</strong> — à re-contrôler dans l'espace "
+            f"management.</p>"
+        ),
+        now=False,  # NON BLOQUANT : un échec d'envoi n'annule pas la re-soumission (badge resoumis = garantie)
+    )
 
 
 # ── Compte créé (BRO) — lien de reprise tokenisé (A0.2) ────────────────────────

@@ -857,7 +857,12 @@ def _serialize_dossier(applicant):
 			{
 				"code": row.piece_code,
 				"label": row.label,
+				# `statut` RÉTRO-COMPATIBLE (deposee/manquante) — le front candidat existant le lit tel quel.
 				"statut": "deposee" if row.status in {"uploaded", "verified"} else "manquante",
+				# Lot 3c-3a : état RÉEL 4-états + motif (re-upload informé, plus aveugle). Additif : 3c-3b les lira.
+				"statut_reel": row.status,
+				"reject_reason": row.reject_reason or None,
+				"reject_comment": row.reject_comment or None,
 				"requise": requise_effective(row),
 			}
 			for row in applicant.pieces
@@ -1419,6 +1424,46 @@ def _record_candidate_transition(applicant_name, from_status, to_status):
 		)
 	except Exception:
 		frappe.logger("public").warning(f"Transition log (candidate) failed: {frappe.get_traceback()}")
+
+
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+@rate_limit(key="dossier_id", limit=10, seconds=60 * 60)
+def candidate_resubmit(dossier_id=None, token=None):
+	"""Lot 3c-3a — le candidat signale « j'ai fini de re-déposer » (modèle A : le dossier RESTE SOU).
+
+	Marqueur `resoumis` ORTHOGONAL au statut (pas une transition). Gardé : actif seulement si plus
+	AUCUNE pièce `rejected` (toutes re-uploadées). Effet = resoumis=True + 1 notif staff. Le staff
+	re-contrôle ; `verify_piece`/`reject_piece` éteignent `resoumis`.
+	"""
+	dossier_id = dossier_id or _value("dossier_id")
+	token = token or _value("token")
+	try:
+		applicant = _get_applicant(dossier_id, token)
+	except DossierTokenExpired:
+		return _error("TOKEN_EXPIRED", "Lien de dossier expiré. Demandez un nouveau code OTP.", 403)
+	except Exception:
+		return _error("INVALID_DOSSIER", "Identifiants de dossier invalides.", 403)
+	otp_err = _require_otp_verified(applicant)
+	if otp_err:
+		return otp_err
+	# Gardes FAIL-FAST (avant tout effet) : SOU d'abord, puis 0 rejected (esprit garde Lot 3a).
+	if applicant.status != "SOU":
+		return _error("INVALID_STATE", "Re-soumission possible seulement depuis Soumis (SOU).", 409)
+	if any(p.status == "rejected" for p in (applicant.pieces or [])):
+		return _error("PIECES_REJECTED_PENDING",
+		              "Des pièces sont encore refusées — re-déposez-les avant de signaler la fin du dépôt.", 409)
+	# Marqueur Guest-safe (le candidat ne passe pas validate_workflow ; statut inchangé).
+	frappe.db.set_value("Admission Applicant", applicant.name, "resoumis", 1)
+	frappe.db.commit()
+	# Notif staff = COMPLÉMENT non bloquant (le badge resoumis est la garantie) : un échec mail ne
+	# doit pas annuler la re-soumission déjà committée.
+	try:
+		from admission.api.notifications import send_resubmit_staff_notification
+		send_resubmit_staff_notification(applicant)
+	except Exception:
+		frappe.logger("public").warning(f"Notif staff re-soumission échouée: {frappe.get_traceback()}")
+	log_event("candidate_resubmit", "success", dossier_id=applicant.name)
+	return _ok({"dossier_id": applicant.name, "resoumis": True})
 
 
 @frappe.whitelist(allow_guest=True, methods=["GET"])

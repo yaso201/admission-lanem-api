@@ -18,6 +18,7 @@
   "notes_validated_by",
   "notes_validated_date",
   "bac_verified",
+  "resoumis",
   "bac_verified_by",
   "bac_verified_date",
   "applicant_name",
@@ -161,6 +162,14 @@
    "fieldname": "bac_verified",
    "fieldtype": "Check",
    "label": "Diplôme bac vérifié",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "3c-3a — le candidat a signalé la fin de son re-dépôt (modèle A). Marqueur orthogonal au statut (le dossier reste SOU) ; éteint par verify/reject staff.",
+   "fieldname": "resoumis",
+   "fieldtype": "Check",
+   "label": "Re-soumis (candidat)",
    "read_only": 1
   },
   {

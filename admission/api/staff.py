@@ -8,7 +8,7 @@ helpers de paiement existants (pas de duplication de la notif UF : portée par l
 import json
 
 import frappe
-from frappe.utils import now_datetime
+from frappe.utils import now_datetime, add_days
 
 from admission.api._log import log_event
 from admission.api.public import (
@@ -26,6 +26,9 @@ from admission.api.public import (
     notify_pieces_blocked,
     pieces_recap,
     _record_piece_verdict,
+    _generate_token,
+    _hash,
+    TOKEN_TTL_DAYS,
 )
 from admission.api.notifications import (
     send_decision_notification,
@@ -357,7 +360,7 @@ def list_dossiers(q=None, programme=None, session=None, statuts=None, limit=200)
         filters=filters,
         fields=[
             "name", "applicant_name", "programme_code", "programme_label", "level_code",
-            "session", "status", "conditionnel", "bac_verified",
+            "session", "status", "conditionnel", "bac_verified", "resoumis",
             "requested_scholarships", "proposed_scholarships", "validated_scholarships",
             "notes_concours", "notes_validated", "rang_liste_attente", "creation", "modified",
         ],
@@ -791,6 +794,7 @@ def verify_piece(dossier_id=None, piece_code=None):
     row.verdict_by = frappe.session.user
     if row.piece_code == "diplome_bac":
         applicant.bac_verified = 1
+    applicant.resoumis = 0  # 3c-3a : un re-contrôle staff éteint le marqueur « re-soumis » candidat
     applicant.save(ignore_permissions=True)
     _record_piece_verdict(applicant.name, piece_code, "verify")
     frappe.db.commit()
@@ -819,6 +823,7 @@ def reject_piece(dossier_id=None, piece_code=None, reason=None, comment=None):
     row.verdict_by = frappe.session.user
     if row.piece_code == "diplome_bac":
         applicant.bac_verified = 0
+    applicant.resoumis = 0  # 3c-3a : un re-contrôle staff éteint le marqueur « re-soumis » candidat
     applicant.save(ignore_permissions=True)
     _record_piece_verdict(applicant.name, piece_code, "reject", reason=reason, comment=comment)
     frappe.db.commit()
@@ -916,7 +921,14 @@ def notify_pieces_recap(dossier_id=None):
         return _error("PIECES_NON_TRAITEES",
                       "Toutes les pièces requises doivent être traitées (vérifiées/rejetées) ou qualifiées avant de notifier.", 409)
     recap = pieces_recap(applicant)
-    send_pieces_recap_notification(applicant, recap["rejetees"], recap["a_fournir"])
+    # 3c-3a : CTA tokenisé → /reprise actionnable (pas /suivi passif). Rotation du token (pattern
+    # recovery : le clair n'est jamais persisté) ; l'OTP reste re-exigé à l'arrivée (double barrière).
+    tok = _generate_token()
+    applicant.dossier_token_hash = _hash(tok)
+    applicant.token_expires_at = add_days(now_datetime(), TOKEN_TTL_DAYS)
+    applicant.otp_verified = 0
+    applicant.save(ignore_permissions=True)
+    send_pieces_recap_notification(applicant, recap["rejetees"], recap["a_fournir"], token=tok)
     log_event("notify_pieces_recap", "success", dossier_id=applicant.name)
     return _ok({"dossier_id": applicant.name,
                 "rejetees": len(recap["rejetees"]), "a_fournir": len(recap["a_fournir"])})
