@@ -84,6 +84,7 @@ class TestConfirmGuards(TestCase):
         applicant = MagicMock(); fee = MagicMock()
         with patch(f"{STAFF}.frappe") as mf, \
              patch(f"{STAFF}._resolve_pending_payment", return_value=pay), \
+             patch(f"{STAFF}._assert_fee_unpaid", return_value=None), \
              patch(f"{STAFF}.apply_confirmed_payment_cascade") as casc, \
              patch(f"{STAFF}._ok", side_effect=lambda d: {"ok": True, **d}), \
              patch(f"{STAFF}._error", side_effect=lambda c, m, s=400: {"ok": False, "code": c}), \

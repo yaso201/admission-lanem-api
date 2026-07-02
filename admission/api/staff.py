@@ -17,6 +17,7 @@ from admission.api.public import (
     _ensure_fee,
     _error,
     _ok,
+    _assert_fee_unpaid,
     apply_confirmed_payment_cascade,
     prepare_enrollment_online_payment,
     prepare_online_payment,
@@ -101,13 +102,29 @@ def confirm_offline_payment(dossier_id=None, payment_mode=None, justificatif=Non
     # banque encaissé en espèces, et renseigne les Pending legacy sans source).
     payment.source = "espece" if payment.payment_mode == "Cash" else "banque"
 
+    # D-MANUAL-ROBUST-25 : aligne la dégradation du manuel sur KkiaPay (l'invariant argent était déjà
+    # garanti par l'index unique confirmed_fee, R3 — ici on remplace un 500 par un 409 propre).
+    # Pré-check = garde amont B1 RÉUTILISÉE (_assert_fee_unpaid) : fee déjà crédité → 409 « déjà réglé »,
+    # le Pending manuel reste INTACT (canal HUMAIN : le staff décide — rejeter/rembourser).
+    fee = frappe.get_doc("Applicant Fee", payment.applicant_fee) if payment.applicant_fee else None
+    if fee:
+        already = _assert_fee_unpaid(fee)
+        if already:
+            return already
+
     payment.payment_status = "Confirmed"
     payment.paid_at = now_datetime()
     # save() → validate (justificatif obligatoire Cash/Bank) + hook on_payment_update (notif UF)
-    payment.save(ignore_permissions=True)
+    try:
+        payment.save(ignore_permissions=True)
+    except frappe.UniqueValidationError:
+        # Course perdue à l'index entre le pré-check et le save (concurrent) → dégradation gracieuse,
+        # PAS de 500 ; le Pending survit (le staff traite le doublon). Trace non silencieuse.
+        frappe.db.rollback()
+        log_event("payment_offline", "already_paid_race", dossier_id=dossier_id, level="warning")
+        return _error("ALREADY_PAID", "Ce frais vient d'être réglé par un autre paiement.", 409)
 
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
-    fee = frappe.get_doc("Applicant Fee", payment.applicant_fee) if payment.applicant_fee else None
     apply_confirmed_payment_cascade(applicant, fee)
     send_payment_receipt(payment, applicant=applicant, fee=fee)  # reçu PDF mailé (non-bloquant)
 

@@ -227,8 +227,9 @@ class TestConcurrenceInterModes(FrappeTestCase):
         print(f"\n[Cas B1] manuel→webhook : Confirmed={confirmed}, webhook perdant → orphelin gracieux OK")
 
     # ===================== Cas B2 — séquentiel webhook → manuel (D-MANUAL-ROBUST-25) =====================
-    def test_b2_webhook_puis_manuel_exception(self):
-        site = frappe.local.site
+    def test_b2_webhook_puis_manuel_gracieux(self):
+        # D-MANUAL-ROBUST-25 : le manuel sur un fee déjà Confirmed doit DÉGRADER GRACIEUSEMENT
+        # (409 ALREADY_PAID, Pending intact — le staff décide), PAS lever une exception (500).
         secret = frappe.conf.get("admission_payment_webhook_secret")
         self._reset_pending()
         with self._patched():
@@ -237,31 +238,39 @@ class TestConcurrenceInterModes(FrappeTestCase):
             self.assertEqual(("kkiapay", "ok"), tuple(out[0][:2]))
             from admission.api.staff import confirm_offline_payment
             frappe.set_user("Administrator")
-            with self.assertRaises(frappe.UniqueValidationError):
-                confirm_offline_payment(dossier_id=self.applicant.name, payment_id=self.pay_bank)
-            frappe.db.rollback()
+            res = confirm_offline_payment(dossier_id=self.applicant.name, payment_id=self.pay_bank)
+        self.assertFalse(res.get("ok"), f"réponse gracieuse attendue (pas d'exception), obtenu {res}")
+        self.assertEqual(res.get("error", {}).get("code"), "ALREADY_PAID", res)
         confirmed = self._confirmed()
         self.assertEqual(len(confirmed), 1, f"1 Confirmed attendu (webhook), obtenu {confirmed}")
         self.assertEqual(confirmed[0], self.pay_online, "le webhook (1er) doit être le Confirmed")
-        print("\n[Cas B2] webhook→manuel : invariant OK (1 Confirmed) MAIS le manuel lève "
-              "UniqueValidationError NON CAPTURÉE (→ 500 staff) — D-MANUAL-ROBUST-25 confirmée")
+        # le Pending manuel reste INTACT (pas orphelin auto — canal humain, le staff décide)
+        self.assertEqual(
+            frappe.db.get_value("Applicant Fee Payment", self.pay_bank, "payment_status"), "Pending",
+            "le Pending manuel doit rester intact")
+        print("\n[Cas B2] webhook→manuel : dégradation GRACIEUSE (409 ALREADY_PAID), Pending intact, "
+              "invariant OK — D-MANUAL-ROBUST-25 remédiée")
 
-    # ===================== Cas C — l'index n'est pas contournable par le chemin manuel =====================
-    def test_c_manuel_ne_contourne_pas_index(self):
+    # ===================== Cas C — l'index reste le GARANT FINAL (défense en profondeur) =====================
+    def test_c_index_garant_final_meme_sans_precheck(self):
+        # Même si le pré-check était contourné (fenêtre concurrente pré-check→save), l'index unique
+        # rattrape au save → le try/except D-MANUAL-ROBUST-25 → 409 gracieux, toujours 1 Confirmed.
+        # On NEUTRALISE le pré-check (patch → None) pour exercer précisément la branche `except`.
         self._reset_pending()
-        # fee déjà crédité (online Confirmed via UPDATE direct → recalcule la colonne générée STORED)
         frappe.db.set_value("Applicant Fee Payment", self.pay_online, "payment_status", "Confirmed",
-                            update_modified=False)
+                            update_modified=False)  # fee déjà crédité (STORED recalculée)
         frappe.db.commit()
         self.assertEqual(len(self._confirmed()), 1)
-        with self._patched():
+        with self._patched(), patch(f"{STAFF}._assert_fee_unpaid", return_value=None):
             from admission.api.staff import confirm_offline_payment
             frappe.set_user("Administrator")
-            with self.assertRaises(frappe.UniqueValidationError):
-                confirm_offline_payment(dossier_id=self.applicant.name, payment_id=self.pay_bank)
-            frappe.db.rollback()
-        self.assertEqual(len(self._confirmed()), 1, "toujours 1 Confirmed — le 2e (manuel) refusé par l'index")
-        print("\n[Cas C] fee déjà Confirmed → confirm manuel refusé par l'index unique (non contournable)")
+            res = confirm_offline_payment(dossier_id=self.applicant.name, payment_id=self.pay_bank)
+        self.assertFalse(res.get("ok"), res)
+        self.assertEqual(res.get("error", {}).get("code"), "ALREADY_PAID", res)
+        self.assertEqual(len(self._confirmed()), 1,
+                         "toujours 1 Confirmed — l'index (rattrapé par try/except) est le garant final")
+        print("\n[Cas C] pré-check neutralisé → l'index rattrape au save (try/except) → 409 gracieux, "
+              "1 Confirmed (l'index reste le garant structurel)")
 
     def _patched(self):
         # Contexte de patchs partagé (usage séquentiel — un seul thread).
