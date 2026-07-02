@@ -1,4 +1,5 @@
 [pre_model_sync]
+admission.patches.v1_1.set_benin_timezone
 
 [post_model_sync]
 admission.patches.v1_0.set_password_policy
