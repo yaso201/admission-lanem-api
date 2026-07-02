@@ -237,11 +237,14 @@ def send_resubmit_staff_notification(applicant):
     role_users = frappe.get_all(
         "Has Role", filters={"role": "Admission Administratif", "parenttype": "User"}, pluck="parent"
     )
-    recipients = (
-        frappe.get_all("User", filters={"name": ["in", role_users], "enabled": 1}, pluck="name")
-        if role_users else []
-    )
-    recipients = [r for r in recipients if r and "@" in r]
+    # D-NOTIF-NAME-EMAIL-24 : destinataires résolus par User.email (pas User.name), comptes
+    # techniques Administrator/Guest et désactivés exclus. Une seule requête (pré-filtre en amont).
+    role_users = [u for u in role_users if u not in ("Administrator", "Guest")]
+    recipients = sorted({
+        e for e in frappe.get_all(
+            "User", filters={"name": ["in", role_users], "enabled": 1}, pluck="email"
+        ) if e
+    }) if role_users else []
     if not recipients:
         return
     nom = _full_name(applicant)

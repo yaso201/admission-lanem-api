@@ -273,3 +273,48 @@ class TestListExposeResoumis(TestCase):
         from admission.api.staff import list_dossiers
         res = list_dossiers()
         self.assertIs(res["data"]["dossiers"][0]["resoumis"], False)
+
+
+# ─────────── Bloc F — D-NOTIF-NAME-EMAIL-24 : résolution destinataires par email ───────────
+
+class TestResubmitStaffRecipients(TestCase):
+    """send_resubmit_staff_notification résout les agents Administratif par User.email
+    (pas User.name), exclut Administrator/Guest et les comptes désactivés. Une seule requête."""
+
+    @patch(f"{NOTIF}._full_name", return_value="A B")
+    @patch(f"{NOTIF}.frappe")
+    def test_f1_destinataires_par_email_hors_admin_et_desactives(self, mf, _fn):
+        # Fixture volontairement en ordre NON trié + un doublon d'email (agent3bis == agent3) pour
+        # exercer réellement set (dédoublonnage) ET sorted (tri) — pas seulement les asserter au passage.
+        emails = {"agent3": "agent3@lanem.bj", "admin.admissions": "admin.admissions@lanem.bj",
+                  "agent2": "agent2@lanem.bj", "agent3bis": "agent3@lanem.bj"}
+        enabled = {"agent3": 1, "admin.admissions": 1, "agent2": 0, "agent3bis": 1}  # agent2 désactivé
+
+        def _get_all(doctype, filters=None, pluck=None):
+            if doctype == "Has Role":                        # ordre brut non trié, Administrator inclus
+                return ["agent3", "admin.admissions", "Administrator", "agent2", "agent3bis"]
+            names = filters["name"][1]                       # ["in", [...]]
+            rows = [n for n in names if enabled.get(n)]       # la DB applique enabled=1
+            return [emails[n] for n in rows] if pluck == "email" else rows
+        mf.get_all.side_effect = _get_all
+        app = SimpleNamespace(name="CAN-1", first_name="A", last_name="B")
+        from admission.api.notifications import send_resubmit_staff_notification
+        send_resubmit_staff_notification(app)
+        # (i) la requête User a pré-exclu les comptes techniques
+        user_call = [c for c in mf.get_all.call_args_list if c.args[0] == "User"][0]
+        queried = user_call.kwargs["filters"]["name"][1]
+        self.assertNotIn("Administrator", queried)
+        self.assertNotIn("Guest", queried)
+        self.assertEqual(user_call.kwargs["pluck"], "email")   # résout .email, pas .name
+        # (ii) destinataires = EMAILS, désactivé exclu, triés
+        self.assertEqual(mf.sendmail.call_args.kwargs["recipients"],
+                         ["admin.admissions@lanem.bj", "agent3@lanem.bj"])
+
+    @patch(f"{NOTIF}._full_name", return_value="A B")
+    @patch(f"{NOTIF}.frappe")
+    def test_f2_aucun_destinataire_pas_de_sendmail(self, mf, _fn):
+        mf.get_all.return_value = []                          # aucun agent Administratif
+        app = SimpleNamespace(name="CAN-1", first_name="A", last_name="B")
+        from admission.api.notifications import send_resubmit_staff_notification
+        send_resubmit_staff_notification(app)
+        mf.sendmail.assert_not_called()
