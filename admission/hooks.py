@@ -171,6 +171,8 @@ scheduler_events = {
 		# LOT M (M9) : relance SOP J+7 et préavis J-7 avant purge des brouillons.
 		"admission.api.notifications.remind_dormant_sop_dossiers",
 		"admission.api.retention.notify_expiring_drafts",
+		# RAPPELS-J4J6 : rappels candidat J+4 et J+6 après le récap pièces (si non re-soumis).
+		"admission.api.notifications.send_pieces_reminders",
 		# LOT P4 : rattrapage du pont INS (un étudiant non créé côté campus n'est plus un silence).
 		"admission.api.bridge.redrive_bridge_notifications",
 	],

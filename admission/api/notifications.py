@@ -14,7 +14,7 @@ de suivi générique. L'OTP reste exigé à l'arrivée pour les actions (double 
 import json
 
 import frappe
-from frappe.utils import escape_html
+from frappe.utils import date_diff, escape_html, format_date, now_datetime
 
 from admission.api._log import log_event
 from admission.api.email_template import (
@@ -23,6 +23,7 @@ from admission.api.email_template import (
     get_bank,
     render_candidate_email,
 )
+from admission.api.public import TOKEN_TTL_DAYS, pieces_recap
 from admission.api.receipt import ECOLE
 
 
@@ -198,12 +199,9 @@ def send_incompletude_notification(applicant, motif):
                          "incompletude_notification")
 
 
-def send_pieces_recap_notification(applicant, rejetees, a_fournir, token=None):
-    """Lot 3c — récap documentaire GROUPÉ : pièces rejetées (à refaire + motif) + à fournir, en 1 mail.
-    NON-BLOQUANT. Geste séparé déclenché par l'Administratif (jamais auto au reject). Réutilise le
-    moteur render_candidate_email (pas un nouveau moteur).
-    3c-3a : `token` (rotaté par notify_pieces_recap) → CTA `/reprise` actionnable (pas `/suivi`)."""
-    nom = _full_name(applicant)
+def _recap_lines(rejetees, a_fournir):
+    """Lignes « À refaire … (motif) » / « À fournir … » — PARTAGÉ récap + rappel (RAPPELS-J4J6),
+    pour ne jamais diverger sur la présentation des pièces restantes."""
     lignes = []
     for p in (rejetees or []):
         motif = (p.get("reason") or "").strip()
@@ -213,6 +211,16 @@ def send_pieces_recap_notification(applicant, rejetees, a_fournir, token=None):
                       + ((" (" + motif + ")") if motif else ""))
     for p in (a_fournir or []):
         lignes.append("À fournir : " + (p.get("label") or p.get("code") or ""))
+    return lignes
+
+
+def send_pieces_recap_notification(applicant, rejetees, a_fournir, token=None):
+    """Lot 3c — récap documentaire GROUPÉ : pièces rejetées (à refaire + motif) + à fournir, en 1 mail.
+    NON-BLOQUANT. Geste séparé déclenché par l'Administratif (jamais auto au reject). Réutilise le
+    moteur render_candidate_email (pas un nouveau moteur).
+    3c-3a : `token` (rotaté par notify_pieces_recap) → CTA `/reprise` actionnable (pas `/suivi`)."""
+    nom = _full_name(applicant)
+    lignes = _recap_lines(rejetees, a_fournir)
     html = render_candidate_email(
         nom=nom, dossier=getattr(applicant, "name", ""), filiere="", status="complement",
         intro="Après contrôle de votre dossier, certaines pièces doivent être refaites ou complétées "
@@ -228,6 +236,80 @@ def send_pieces_recap_notification(applicant, rejetees, a_fournir, token=None):
     )
     _send_candidate_mail(applicant, "Votre candidature LaNEM — pièces à corriger", html,
                          "pieces_recap_notification")
+
+
+def send_pieces_reminder_notification(applicant, rejetees, a_fournir):
+    """RAPPELS-J4J6 — rappel candidat après le récap pièces. Option (b) : AUCUN token neuf — le
+    candidat réutilise le lien tokenisé du récap (valide jusqu'à token_expires_at) ; CTA de secours =
+    lien de suivi générique (reprise par code e-mail). Mêmes libellés que le récap (_recap_lines)."""
+    nom = _full_name(applicant)
+    expires = getattr(applicant, "token_expires_at", None)
+    valid_until = format_date(expires) if expires else ""
+    intro = "Rappel : certaines pièces de votre dossier restent à corriger ou à compléter. "
+    if valid_until:
+        intro += f"Le lien reçu dans notre précédent e-mail reste valide jusqu'au {valid_until}. "
+    intro += "Le détail figure ci-dessous."
+    html = render_candidate_email(
+        nom=nom, dossier=getattr(applicant, "name", ""), filiere="", status="complement",
+        intro=intro,
+        meta=[("Candidat", nom), ("Dossier", getattr(applicant, "name", ""), True),
+              ("Programme", _programme(applicant))],
+        motif="\n".join(_recap_lines(rejetees, a_fournir)),
+        cta={"label": "Reprendre ma candidature", "url": _portal_link(applicant)},  # SANS token (option b)
+        cta_intro="Utilisez le lien de votre précédent e-mail ; à défaut, reprenez depuis votre espace "
+                  "(un code vous sera renvoyé par e-mail). Aucun nouveau paiement n'est requis.",
+        preheader="Rappel — des pièces de votre dossier doivent être refaites ou complétées.",
+        subject="Rappel — pièces à corriger (LaNEM)",
+        signoff="Merci de votre réactivité. — Le Service des admissions, LaNEM",
+    )
+    _send_candidate_mail(applicant, "Rappel — pièces à corriger (LaNEM)", html,
+                         "pieces_reminder_notification")
+
+
+# Cadence des rappels, en JOURS depuis l'ancre. INVARIANT : J4 < J6 < TOKEN_TTL_DAYS — sinon la garde
+# post-J7 (skip dès age >= TOKEN_TTL_DAYS) court-circuiterait la fenêtre J6 (rappel jamais émis).
+REMINDER_J4_DAYS = 4
+REMINDER_J6_DAYS = 6
+
+
+def send_pieces_reminders():
+    """RAPPELS-J4J6 — job daily : rappelle à J+4 et J+6 les candidats qui n'ont pas re-soumis après
+    le récap pièces. Fenêtres pilotées par l'ancre STABLE `pieces_recap_sent_at` (jours calendaires) ;
+    la validité de lien affichée reste `token_expires_at`. Non-bloquant par dossier (patron
+    remind_dormant_sop). Anti-double-envoi : flags rappel_j4/j6_sent (set_value update_modified=False).
+    Retard scheduler (≥J6 sans flag) → 1 SEUL mail (J6) + les DEUX flags. Après J7 : plus de rappel."""
+    names = frappe.get_all(
+        "Admission Applicant",
+        filters={"status": "SOU", "resoumis": 0, "anonymized": ["!=", 1],
+                 "pieces_recap_sent_at": ["is", "set"], "rappel_j6_sent": 0},
+        pluck="name",
+    )
+    sent = 0
+    for name in names:
+        try:
+            applicant = frappe.get_doc("Admission Applicant", name)
+            age = date_diff(now_datetime(), applicant.pieces_recap_sent_at)   # jours calendaires
+            if age >= TOKEN_TTL_DAYS:                       # post-J7 → lien expiré, plus de rappel
+                continue
+            recap = pieces_recap(applicant)
+            if not (recap["rejetees"] or recap["a_fournir"]):   # plus rien à corriger/fournir
+                continue
+            if age >= REMINDER_J6_DAYS and not applicant.rappel_j6_sent:
+                send_pieces_reminder_notification(applicant, recap["rejetees"], recap["a_fournir"])
+                frappe.db.set_value("Admission Applicant", name, "rappel_j6_sent", 1, update_modified=False)
+                if not applicant.rappel_j4_sent:            # retard : jamais 2 mails, on pose aussi J4
+                    frappe.db.set_value("Admission Applicant", name, "rappel_j4_sent", 1, update_modified=False)
+                sent += 1
+            elif age >= REMINDER_J4_DAYS and not applicant.rappel_j4_sent:
+                send_pieces_reminder_notification(applicant, recap["rejetees"], recap["a_fournir"])
+                frappe.db.set_value("Admission Applicant", name, "rappel_j4_sent", 1, update_modified=False)
+                sent += 1
+        except Exception:
+            frappe.logger("notifications").warning(
+                f"pieces reminder failed for {name} (non-blocking): {frappe.get_traceback()}")
+    frappe.db.commit()
+    frappe.logger("notifications").info(f"pieces reminders sent: {sent}/{len(names)}")
+    return {"pieces_reminders_sent": sent}
 
 
 def send_resubmit_staff_notification(applicant):

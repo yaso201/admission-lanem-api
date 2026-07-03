@@ -49,6 +49,9 @@
   "otp_expires_at",
   "sop_reminder_sent_at",
   "purge_notice_sent_at",
+  "pieces_recap_sent_at",
+  "rappel_j4_sent",
+  "rappel_j6_sent",
   "bridge_notified",
   "bridge_notified_at",
   "bridge_last_error",
@@ -329,6 +332,29 @@
    "fieldtype": "Datetime",
    "hidden": 1,
    "label": "Purge Notice Sent At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pieces_recap_sent_at",
+   "fieldtype": "Datetime",
+   "hidden": 1,
+   "label": "Pieces Recap Sent At",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "rappel_j4_sent",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Rappel J4 Sent",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "rappel_j6_sent",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Rappel J6 Sent",
    "read_only": 1
   },
   {

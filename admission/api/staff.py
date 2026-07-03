@@ -945,6 +945,11 @@ def notify_pieces_recap(dossier_id=None):
     applicant.dossier_token_hash = _hash(tok)
     applicant.token_expires_at = add_days(now_datetime(), TOKEN_TTL_DAYS)
     applicant.otp_verified = 0
+    # RAPPELS-J4J6 : ancre STABLE des rappels (chaque récap = nouveau cycle) + reset des flags. Les
+    # fenêtres J4/J6 se calculent sur cette date (pas sur token_expires_at qui glisse à l'accès candidat).
+    applicant.pieces_recap_sent_at = now_datetime()
+    applicant.rappel_j4_sent = 0
+    applicant.rappel_j6_sent = 0
     applicant.save(ignore_permissions=True)
     send_pieces_recap_notification(applicant, recap["rejetees"], recap["a_fournir"], token=tok)
     log_event("notify_pieces_recap", "success", dossier_id=applicant.name)

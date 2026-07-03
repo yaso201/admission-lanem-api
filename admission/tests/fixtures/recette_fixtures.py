@@ -266,6 +266,47 @@ def build_states(targets=("ETU", "ADM", "REF")):
     return out
 
 
+def build_recap_rejected():
+    """Fixture RAPPELS-J4J6 (vague 3) : dossier SOU avec ≥1 pièce REJETÉE + récap envoyé (ancre posée).
+    100 % chemin métier : build_to(SOU) → verify requises SAUF une → reject la dernière → notify_pieces_recap.
+    Imprime l'id. Consommateur de l'enabler vague 2."""
+    from admission.api import staff
+    from admission.api.public import requise_effective
+    frappe.set_user("Administrator")
+    res = build_to("SOU")
+    dossier = res["dossier_id"]
+    frappe.db.commit()
+    app = frappe.get_doc("Admission Applicant", dossier)
+    codes = [p.piece_code for p in app.pieces if requise_effective(p)]
+    if not codes:
+        raise AssertionError("aucune pièce requise à rejeter (fixture recap)")
+    _as_staff("admin")
+    for c in codes[:-1]:
+        rv = staff.verify_piece(dossier_id=dossier, piece_code=c)     # les autres → verified
+        assert rv.get("ok"), f"verify_piece {c}: {rv}"
+    rj = staff.reject_piece(dossier_id=dossier, piece_code=codes[-1],
+                            reason="Illisible / floue", comment="flou")   # la dernière → rejected
+    assert rj.get("ok"), f"reject_piece {codes[-1]}: {rj}"
+    r = staff.notify_pieces_recap(dossier_id=dossier)                 # récap réel → pose l'ancre
+    _admin()
+    assert r.get("ok"), f"notify_pieces_recap: {r}"
+    out = _result(dossier, res["token"])
+    print(f"FIXTURE_ID::{out['dossier_id']}")
+    print(f"FIXTURE_STATUS::{out['status']}")
+    return out
+
+
+def seed_recap_age(dossier, days):
+    """Décor TEMPOREL non gardé : recule `pieces_recap_sent_at` de `days` jours pour éprouver les
+    fenêtres J4/J6 sans attendre. Les états dossier/pièces restent 100 % chemin métier."""
+    from frappe.utils import add_days, now_datetime
+    frappe.set_user("Administrator")
+    frappe.db.set_value("Admission Applicant", dossier, "pieces_recap_sent_at",
+                        add_days(now_datetime(), -int(days)), update_modified=False)
+    frappe.db.commit()
+    print(f"SEEDED_RECAP_AGE::{dossier}::-{days}d")
+
+
 def _purge_dossier(n):
     for f in frappe.get_all("File", filters={"attached_to_doctype": "Admission Applicant",
                                              "attached_to_name": n}, pluck="name"):
