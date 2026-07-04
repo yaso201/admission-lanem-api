@@ -41,8 +41,11 @@ def _online_pending(dossier, token, runid):
 
 @F.purge_after
 def d_conf_01_argent_terminal():
-    """Un Pending ONLINE survit au désistement (withdraw ne rejette que Cash/Bank) ; le webhook
-    `_promote_payment` le passe Confirmed SANS vérifier applicant.status → argent encaissé sur DES."""
+    """D-CONF-01 — INVERSÉ (lot FIX-D-CONF-01). Le scénario qui REPRODUISAIT le trou (Pending online
+    survivant au désistement → webhook `_promote_payment` → Confirmed sur DES) prouve désormais sa
+    FERMETURE : verrou 2 (withdraw rejette AUSSI le Pending Online) + verrou 1 (garde d'état dans
+    `_promote_payment` → promotion REFUSÉE sur dossier terminal, refund tracé, 0 argent confirmé).
+    Ce module est devenu la non-régression du correctif."""
     import admission.api.webhook as W
     frappe.set_user("Administrator")
     runid = frappe.generate_hash(length=8)
@@ -57,18 +60,28 @@ def d_conf_01_argent_terminal():
     status_avant = frappe.db.get_value("Admission Applicant", d, "status")
     pay_avant = frappe.db.get_value("Applicant Fee Payment", pay_name, "payment_status")
 
-    # Le webhook fire (KkiaPay a encaissé) : promotion réelle, verify stubé SUCCESS en amont du promote.
+    # Le webhook fire (KkiaPay a encaissé) : promotion réelle sur le Pending (désormais Rejected par le
+    # verrou 2). Le verrou 1 (garde d'état dans _promote_payment) doit REFUSER — même via le chemin de
+    # réconciliation « Promoted late » (Rejected→Confirmed) — car le dossier est DES.
     payment = frappe.get_doc("Applicant Fee Payment", pay_name)
-    W._promote_payment(payment, "TX-AUDIT-" + ref, ref)
+    promoted = W._promote_payment(payment, "TX-AUDIT-" + ref, ref)
 
     status_apres = frappe.db.get_value("Admission Applicant", d, "status")
     pay_apres = frappe.db.get_value("Applicant Fee Payment", pay_name, "payment_status")
-    trou = (pay_avant == "Pending" and pay_apres == "Confirmed" and status_apres == "DES")
+    reconciliation = frappe.db.get_value("Applicant Fee Payment", pay_name, "reconciliation")
+
+    verrou2_rejet = (pay_avant == "Rejected")                       # withdraw a rejeté le Pending Online
+    refund_trace = bool(reconciliation and "Refused" in reconciliation)  # perdant tracé (refund OPS)
+    verrou1_refus = (promoted is False and pay_apres != "Confirmed" and status_apres == "DES")
+    ferme = verrou1_refus and refund_trace                         # le trou est FERMÉ (0 argent sur DES)
+    trou = not ferme                                               # inversion : reproduit ⟺ pas fermé
     print(f"D-CONF-01:: statut_avant={status_avant} pay_avant={pay_avant} → "
-          f"statut_apres={status_apres} pay_apres={pay_apres}")
-    print(f"D-CONF-01:: [{'FINDING REPRODUIT' if trou else 'NON reproduit (corrigé ?)'}] "
-          f"argent Confirmed sur dossier terminal DES")
-    return {"finding": "D-CONF-01", "reproduit": trou}
+          f"statut_apres={status_apres} pay_apres={pay_apres} promoted={promoted} reconciliation={reconciliation!r}")
+    print(f"D-CONF-01:: verrou2(rejet online)={verrou2_rejet} verrou1(refus promotion)={verrou1_refus} "
+          f"refund_trace={refund_trace}")
+    print(f"D-CONF-01:: [{'FERMÉ — 0 argent sur DES' if ferme else 'TROU ENCORE OUVERT'}]")
+    return {"finding": "D-CONF-01", "reproduit": trou, "ferme": ferme,
+            "verrou1_refus": verrou1_refus, "verrou2_rejet": verrou2_rejet, "refund_trace": refund_trace}
 
 
 # ── D-CONF-02 : double frais 2 (pas de contrainte unique applicant+enrollment) ────────────────

@@ -30,6 +30,7 @@ from admission.api.public import (
 	_error,
 	_ok,
 	apply_confirmed_payment_cascade,
+	PAYMENT_FORBIDDEN_STATES,
 )
 from admission.api.receipt import send_payment_receipt
 from admission.api.notify_uf import notify_uf_payment  # PC2-quater : notif UF post-commit (hors verrou)
@@ -88,6 +89,14 @@ def _promote_payment(existing, transaction_id, reference, reconciliation=None):
 	existing.reload()  # PC2-bis : doc re-lu SOUS le verrou ligne du caller (FOR UPDATE tenu jusqu'au
 	                   # commit) → referme la fenêtre TimestampMismatch / lost-update (ceinture+bretelles).
 	applicant = frappe.get_doc("Admission Applicant", existing.applicant)
+	# D-CONF-01 (verrou 1 — LE GARANT) : jamais de Confirmed sur un dossier TERMINAL. Placé ICI, au
+	# point d'étranglement UNIQUE des DEUX chemins de promotion (Pending→Confirmed via le handler ET
+	# Rejected→Confirmed via la réconciliation « Promoted late ») → un webhook tardif sur un dossier
+	# désisté/refusé/rejeté/inscrit ne peut plus encaisser. L'argent ayant bougé chez le provider, on
+	# TRACE le refund (miroir orphelin), on NE confirme pas, et le webhook ne 500 jamais.
+	if applicant.status in PAYMENT_FORBIDDEN_STATES:
+		_refuse_terminal(existing, transaction_id, reference, applicant.status)
+		return False
 	fee = frappe.get_doc("Applicant Fee", existing.applicant_fee)
 	existing.payment_status = "Confirmed"
 	existing.paid_at = now_datetime()
@@ -114,6 +123,19 @@ def _promote_payment(existing, transaction_id, reference, reconciliation=None):
 		                 message=frappe.get_traceback())  # non-bloquant : paiement déjà commité
 	send_payment_receipt(existing, applicant=applicant, fee=fee)  # reçu online (non-bloquant)
 	log_event("webhook_payment", "success", dossier_id=applicant.name, ref=reference)
+	return True
+
+
+def _refuse_terminal(existing, transaction_id, reference, status):
+	"""D-CONF-01 : l'argent a bougé chez le provider mais le dossier est TERMINAL → refus de
+	promotion, tracé refund (JAMAIS de Confirmed sur dossier mort). Miroir de _orphan_trace ; le
+	webhook renvoie un _ok (promoted:false), jamais un 500 (retentatives KkiaPay sans effet)."""
+	frappe.db.set_value("Applicant Fee Payment", existing.name,
+	                    {"reconciliation": "Refused - terminal state (refund due)",
+	                     "provider_transaction_id": transaction_id}, update_modified=False)
+	frappe.db.commit()
+	log_event("webhook_payment", "refused_terminal_state",
+	          dossier_id=getattr(existing, "applicant", None), ref=reference, level="warning")
 
 
 def _orphan_trace(existing, transaction_id, reference):
@@ -236,9 +258,13 @@ def payment():
 	# Garant CONCURRENT prouvé par le harness 2-threads — jamais un mock.
 	try:
 		if st == "Pending":
-			_promote_payment(existing, transaction_id, reference)
+			if not _promote_payment(existing, transaction_id, reference):   # D-CONF-01 : dossier terminal
+				return _ok({"accepted": True, "payment_id": existing.name,
+				            "promoted": False, "refused_terminal": True})
 			return _ok({"accepted": True, "payment_id": existing.name, "transition": "BRO/SOP->SOU"})
-		_promote_payment(existing, transaction_id, reference, reconciliation="Promoted late")
+		if not _promote_payment(existing, transaction_id, reference, reconciliation="Promoted late"):
+			return _ok({"accepted": True, "payment_id": existing.name,
+			            "promoted": False, "refused_terminal": True})
 		return _ok({"accepted": True, "payment_id": existing.name,
 		            "transition": "BRO/SOP->SOU", "reconciled": True})
 	except frappe.UniqueValidationError:

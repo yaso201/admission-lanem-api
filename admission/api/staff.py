@@ -19,6 +19,7 @@ from admission.api.public import (
     _ok,
     _assert_fee_unpaid,
     apply_confirmed_payment_cascade,
+    PAYMENT_FORBIDDEN_STATES,
     prepare_enrollment_online_payment,
     prepare_online_payment,
     PIECES_FOURNIE_STATUSES,
@@ -77,10 +78,11 @@ def confirm_offline_payment(dossier_id=None, payment_mode=None, justificatif=Non
     frappe.only_for(CONFIRM_ROLES)
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
-    # AUDIT-RECETTE (F2) : pas d'encaissement sur dossier TERMINAL — un Pending qui traîne
-    # sur un dossier désisté/refusé/anonymisé ne doit pas devenir de l'argent confirmé.
+    # AUDIT-RECETTE (F2) + D-CONF-01 : pas d'encaissement sur dossier TERMINAL — un Pending qui traîne
+    # sur un dossier désisté/refusé/rejeté/inscrit ne doit pas devenir de l'argent confirmé. Aligné sur
+    # la constante partagée PAYMENT_FORBIDDEN_STATES (symétrie avec la garde webhook).
     current_status = frappe.db.get_value("Admission Applicant", dossier_id, "status")
-    if current_status in ("DES", "REF"):
+    if current_status in PAYMENT_FORBIDDEN_STATES:
         return _error("INVALID_STATE",
                       f"Confirmation impossible : dossier clos ({current_status}).", 409)
 
@@ -1207,15 +1209,16 @@ SESSION_CLOSE_MAP = {
 }
 
 
-def _reject_pending_offline_payments(dossier_id):
-    """AUDIT-RECETTE (F3) — passe en Rejected les Pending Cash/Bank d'un dossier qui se
-    clôt (DES/REF par withdraw ou close_session). Symétrique d'expire_stale_online_pending
-    (qui ne couvre que Online) : aucun paiement déclaré ne reste encaissable sur un dossier
-    clos. update_modified=False (fenêtres de rétention)."""
+def _reject_pending_payments(dossier_id):
+    """AUDIT-RECETTE (F3) + D-CONF-01 (verrou 2) — passe en Rejected TOUS les Pending d'un dossier
+    qui se clôt (DES/REF par withdraw ou close_session) : Cash/Bank ET **Online**. Verrou 1
+    (_promote_payment) reste le GARANT (la réconciliation « Promoted late » re-promouvrait sinon un
+    Rejected) ; ce rejet est l'hygiène qui ne laisse aucun Pending encaissable qui traîne.
+    update_modified=False (fenêtres de rétention)."""
     for name in frappe.get_all(
         "Applicant Fee Payment",
         filters={"applicant": dossier_id, "payment_status": "Pending",
-                 "payment_mode": ["in", ["Cash", "Bank"]]},
+                 "payment_mode": ["in", ["Cash", "Bank", "Online"]]},
         pluck="name",
     ):
         frappe.db.set_value("Applicant Fee Payment", name, "payment_status", "Rejected",
@@ -1241,7 +1244,7 @@ def withdraw(dossier_id=None, motif=None):
     _stamp_decision(applicant)
     applicant.status = "DES"
     applicant.save(ignore_permissions=True)
-    _reject_pending_offline_payments(applicant.name)  # F3 : pas de Pending orphelin encaissable
+    _reject_pending_payments(applicant.name)  # F3 : pas de Pending orphelin encaissable
     send_withdrawal_notification(applicant, applicant.motif_desistement)  # non-bloquant
     log_event("withdraw", "success", dossier_id=applicant.name)
     return _ok({"dossier_id": applicant.name, "status": "DES"})
@@ -1323,7 +1326,7 @@ def close_session(session=None, motif=None, dry_run=1):
                       "decision_date": now_datetime()}
             values["motif_refus" if target == "REF" else "motif_desistement"] = motif
             frappe.db.set_value("Admission Applicant", r.name, values)
-            _reject_pending_offline_payments(r.name)  # F3 : clôture = plus rien d'encaissable
+            _reject_pending_payments(r.name)  # F3 : clôture = plus rien d'encaissable
             write_transition_log(r.name, r.status, target, actor=frappe.session.user,
                                  source="staff_api", action="Session Close")
             applicant = frappe.get_doc("Admission Applicant", r.name)

@@ -379,6 +379,13 @@ def _resolve_frais1_fee_type(session):
 # Les deux fee_type "frais 1" (Licence/Prépa) — périmètre de la capture promo DEC-228.
 FRAIS1_FEE_TYPES = {"application", "competition"}
 
+# D-CONF-01 : états où le dossier est CLOS/FINI — un paiement ne peut JAMAIS y devenir Confirmed
+# (dossier mort → l'argent encaissé est un refund OPS). Blacklist fail-safe (jamais de whitelist
+# devinée) : complément des WITHDRAW_STATES, moins INC (réversible, frais 1 déjà réglé). Garde
+# PARTAGÉE : promotion webhook (garant — _promote_payment, couvre Pending ET Rejected), initiation
+# (submit_payment_online), confirmation offline (staff.confirm_offline_payment).
+PAYMENT_FORBIDDEN_STATES = frozenset({"DES", "REF", "REJ", "INS"})
+
 
 # ── PERF-1 : cache couche catalogue (frappe.cache natif) + invalidation anti-périmé ──
 
@@ -1580,6 +1587,10 @@ def submit_payment_online(dossier_id=None, token=None, idempotency_key=None, con
 	otp_err = _require_otp_verified(applicant)
 	if otp_err:
 		return otp_err
+	# D-CONF-01 (verrou 3, défense en profondeur) : pas d'INITIATION de paiement sur un dossier clos
+	# (symétrique de la garde BRO de declare_payment_offline ; le garant reste _promote_payment).
+	if applicant.status in PAYMENT_FORBIDDEN_STATES:
+		return _error("INVALID_STATE", f"Paiement impossible : dossier clos ({applicant.status}).", 409)
 	if not consent_refund:
 		return _error("REFUND_CONSENT_REQUIRED", "Le consentement au caractere non remboursable est requis.", 400)
 	from admission.api.legal import _get_active_legal_document, _record_consent
