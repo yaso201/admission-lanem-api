@@ -191,6 +191,22 @@ def _result(dossier, token):
 BRANCHES = ("REF", "REJ", "INC", "ATT", "DES", "ACO")
 
 
+def _aco_date_bac():
+    """date_bac produisant conditionnel=1 (bac_attente) : DÉRIVÉE du bac_results_date de la session
+    (jamais une date en dur = time-bomb). _classify_bac_date → bac_attente ⟺ année(bac)==année(today)
+    ET today < seuil. Échoue FORT si le seuil est déjà passé (année courante) → il faut alors une
+    session jetable à seuil futur (dette D-CONF-DURA, traitée en B-2). Pas de fixture ACO silencieuse."""
+    from frappe.utils import add_days, getdate, now_datetime
+    threshold = frappe.db.get_value("Admission Session", SESSION, "bac_results_date")
+    today = getdate(now_datetime())
+    if not threshold or getdate(threshold).year != today.year or getdate(threshold) <= today:
+        raise AssertionError(
+            f"ACO non constructible : session {SESSION} bac_results_date={threshold} n'est pas un seuil "
+            f"FUTUR année-courante → date_bac attente impossible. Utiliser une session jetable à seuil "
+            f"futur (dette D-CONF-DURA, B-2).")
+    return str(add_days(getdate(threshold), -1))   # veille du seuil, année courante → bac_attente
+
+
 def build_to(target, date_bac=None):
     """Construit un dossier fixture jusqu'à `target` PAR CHEMIN MÉTIER (vraies API + rôles réels).
 
@@ -204,8 +220,8 @@ def build_to(target, date_bac=None):
         raise ValueError(f"état cible inconnu: {target} (attendu {LADDER} ou {BRANCHES})")
     runid = frappe.generate_hash(length=8)
     suffix = frappe.generate_hash(length=4)
-    # ACO : conditionnel requis → date_bac année courante (bac non encore obtenu). Sinon défaut passé.
-    dbac = date_bac or ("2026-06-15" if target == "ACO" else "2024-06-01")
+    # ACO : conditionnel requis → date_bac attente DÉRIVÉE du seuil de session (pas de date en dur).
+    dbac = date_bac or (_aco_date_bac() if target == "ACO" else "2024-06-01")
 
     if target == "BRO":                                     # brouillon : create seul, avant paiement
         dossier, token = _create(runid, suffix, dbac)

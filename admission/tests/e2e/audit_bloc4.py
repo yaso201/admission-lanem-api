@@ -89,9 +89,15 @@ def _accept_worker(dossier, site, out, barrier):
 
 
 def d_conf_02_double_frais2():
-    """2 `accept_admission` concurrents sur le même ADM : les deux passent la garde `!= ADM` avant
-    commit → 2× `_on_accepted` → `_ensure_enrollment_fee` (check-then-insert SANS contrainte unique)
-    → 2 fees enrollment possibles. Seul filet = TimestampMismatch (non fiable)."""
+    """VRAI FINDING (structurel, NON exercé par ce test) : `_ensure_enrollment_fee` (public.py:749) est
+    un check-then-insert SANS contrainte unique (applicant, fee_type) — le seul unique sur Applicant Fee
+    porte sur idempotency_key, passé None → NULLs non-collidants. Aucune protection DB contre 2 frais 2.
+
+    Ce test EXERCE la course 2×accept sur le même ADM : elle est PROTÉGÉE par le verrou optimiste Frappe
+    (load_doc_before_save FOR UPDATE → TimestampMismatch sur le 2e save applicant) → 1 seul frais 2.
+    La fenêtre latente RESTE ouverte hors même-doc (2 candidats submit_enrollment sur un ACC-sans-frais2,
+    cas ONACCEPTED-SILENT) : NON reproductible ici, à couvrir avec un ACC-sans-frais2. Reproduit=False ne
+    signifie donc PAS « corrigé » — l'index unique manque toujours (remédiation = contrainte DB)."""
     frappe.set_user("Administrator")
     site = frappe.local.site
     res = F.build_to("ADM")
