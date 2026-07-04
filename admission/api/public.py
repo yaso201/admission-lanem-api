@@ -1270,31 +1270,8 @@ def classify_bac(bac_date=None, session=None, dossier_id=None, token=None):
 	return _ok({"profil_bac": profile, "pieces": pieces, "conditionnel": profile == "bac_attente"})
 
 
-@frappe.whitelist(allow_guest=True, methods=["POST"])
-def upload_piece(dossier_id=None, token=None, piece_code=None, file_url=None):
-	dossier_id = dossier_id or _value("dossier_id")
-	token = token or _value("token")
-	piece_code = piece_code or _value("piece_code")
-	file_url = file_url or _value("file_url")
-	try:
-		applicant = _get_applicant(dossier_id, token)
-	except DossierTokenExpired:
-		return _error("TOKEN_EXPIRED", "Lien de dossier expiré. Demandez un nouveau code OTP.", 403)
-	except Exception:
-		return _error("INVALID_DOSSIER", "Identifiants de dossier invalides.", 403)
-	otp_err = _require_otp_verified(applicant)
-	if otp_err:
-		return otp_err
-	# SEC-5 : le File doit exister, appartenir à CE dossier (revendiqué sinon) et être d'un
-	# type/taille autorisé → ferme l'IDOR fichier + le phishing stocké.
-	file_docname, file_err = _validate_piece_file(file_url, applicant)
-	if file_err:
-		return file_err
-	return _mark_piece_uploaded(applicant, piece_code, file_docname)
-
-
 def _mark_piece_uploaded(applicant, piece_code, file_docname):
-	"""Pose le File sur la ligne pièce attendue (commun upload_piece / upload_piece_file)."""
+	"""Pose le File sur la ligne pièce attendue (dépôt binaire upload_piece_file). D-UPLOAD-LEGACY-27 : ancien endpoint upload_piece (file_url) retiré (0 consommateur)."""
 	for row in applicant.pieces:
 		if row.piece_code == piece_code:
 			# Lot 3c — une pièce déjà VALIDÉE par l'administration ne peut pas être remplacée
@@ -1371,6 +1348,34 @@ def upload_piece_file(dossier_id=None, token=None, piece_code=None):
 		"Admission Applicant", applicant.name, is_private=1,
 	)
 	return _mark_piece_uploaded(applicant, piece_code, file_doc.name)
+
+
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+@rate_limit(key="dossier_id", limit=60, seconds=60 * 60)
+def view_own_piece_file(dossier_id=None, token=None, piece_code=None):
+	"""D-UPLOAD-REVIEW-17 — re-visualisation candidat d'une pièce déposée. Miroir de
+	staff.download_piece_file, mais gardé côté candidat : token (SEC-1, anti-IDOR via hmac
+	temps-constant _get_applicant → un token ne sert QUE les pièces de SON dossier) + OTP
+	vérifié (SEC-4). Sert le File privé en RAW (response.type=download → guess_type pdf/jpg/png)."""
+	dossier_id = dossier_id or _value("dossier_id")
+	token = token or _value("token")
+	piece_code = piece_code or _value("piece_code")
+	try:
+		applicant = _get_applicant(dossier_id, token)
+	except DossierTokenExpired:
+		return _error("TOKEN_EXPIRED", "Lien de dossier expiré. Demandez un nouveau code OTP.", 403)
+	except Exception:
+		return _error("INVALID_DOSSIER", "Identifiants de dossier invalides.", 403)
+	otp_err = _require_otp_verified(applicant)
+	if otp_err:
+		return otp_err
+	row = next((p for p in (applicant.pieces or []) if p.piece_code == piece_code), None)
+	if not row or not row.file:
+		return _error("PIECE_FILE_NOT_FOUND", "Aucun fichier pour cette pièce.", 404)
+	file_doc = frappe.get_doc("File", row.file)
+	frappe.local.response.filename = file_doc.file_name
+	frappe.local.response.filecontent = file_doc.get_content()
+	frappe.local.response.type = "download"  # as_raw → Content-Type réel via guess_type (pas de JSON)
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])

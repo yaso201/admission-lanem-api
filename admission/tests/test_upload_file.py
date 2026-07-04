@@ -113,3 +113,64 @@ class TestUploadPieceFile(TestCase):
         res, _ = self._call(mock_frappe, _applicant(), _storage("releve.pdf", PDF),
                             piece_code="diplome-bac")
         self.assertTrue(res["ok"])
+
+
+class TestViewOwnPieceFile(TestCase):
+    """UPLOAD-3G A4 — le candidat re-voit ses pièces déposées, gardé token+OTP, File privé en RAW.
+    L'anti-IDOR runtime (token→dossier via hmac) est prouvé en E2E live (Phase 4)."""
+
+    @patch(f"{PUB}._require_otp_verified", return_value={"ok": False, "error": {"code": "OTP_REQUIRED"}})
+    @patch(f"{PUB}._get_applicant")
+    @patch(f"{PUB}.frappe")
+    def test_requires_otp(self, mf, mget, _otp):
+        mget.return_value = types.SimpleNamespace(name="CAN-1", pieces=[])
+        from admission.api.public import view_own_piece_file
+        res = view_own_piece_file(dossier_id="CAN-1", token="tok", piece_code="cni")
+        self.assertFalse(res["ok"])
+        self.assertEqual(res["error"]["code"], "OTP_REQUIRED")
+
+    @patch(f"{PUB}._get_applicant", side_effect=Exception("token mismatch"))
+    @patch(f"{PUB}.frappe")
+    def test_anti_idor_bad_token_refused(self, mf, _mget):
+        # token ne correspondant pas au dossier → _get_applicant lève (hmac) → refus, jamais de fichier
+        from admission.api.public import view_own_piece_file
+        res = view_own_piece_file(dossier_id="CAN-999", token="tok-autre", piece_code="cni")
+        self.assertFalse(res["ok"])
+        self.assertEqual(res["error"]["code"], "INVALID_DOSSIER")
+
+    @patch(f"{PUB}._require_otp_verified", return_value=None)
+    @patch(f"{PUB}._get_applicant")
+    @patch(f"{PUB}.frappe")
+    def test_serves_file_raw(self, mf, mget, _otp):
+        row = types.SimpleNamespace(piece_code="cni", file="FILE-1")
+        mget.return_value = types.SimpleNamespace(name="CAN-1", pieces=[row])
+        file_doc = MagicMock(file_name="cni.pdf")
+        file_doc.get_content.return_value = b"%PDF-1.4 ..."
+        mf.get_doc.return_value = file_doc
+        mf.local.response = types.SimpleNamespace()
+        from admission.api.public import view_own_piece_file
+        view_own_piece_file(dossier_id="CAN-1", token="tok", piece_code="cni")
+        self.assertEqual(mf.local.response.filename, "cni.pdf")
+        self.assertEqual(mf.local.response.filecontent, b"%PDF-1.4 ...")
+        self.assertEqual(mf.local.response.type, "download")   # RAW (guess_type), pas de JSON
+
+    @patch(f"{PUB}._require_otp_verified", return_value=None)
+    @patch(f"{PUB}._get_applicant")
+    @patch(f"{PUB}.frappe")
+    def test_piece_without_file_404(self, mf, mget, _otp):
+        mget.return_value = types.SimpleNamespace(
+            name="CAN-1", pieces=[types.SimpleNamespace(piece_code="cni", file=None)])
+        from admission.api.public import view_own_piece_file
+        res = view_own_piece_file(dossier_id="CAN-1", token="tok", piece_code="cni")
+        self.assertFalse(res["ok"])
+        self.assertEqual(res["error"]["code"], "PIECE_FILE_NOT_FOUND")
+
+
+class TestLegacyUploadPieceRemoved(TestCase):
+    """UPLOAD-3G A5 — l'endpoint legacy upload_piece (file_url) est retiré ; le binaire reste."""
+
+    def test_upload_piece_removed_binary_intact(self):
+        import admission.api.public as pub
+        self.assertFalse(hasattr(pub, "upload_piece"), "upload_piece legacy doit être retiré")
+        self.assertTrue(hasattr(pub, "upload_piece_file"), "upload_piece_file (binaire) doit rester")
+        self.assertTrue(hasattr(pub, "_mark_piece_uploaded"), "helper partagé conservé")

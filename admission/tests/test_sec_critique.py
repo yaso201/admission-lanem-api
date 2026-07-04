@@ -426,21 +426,6 @@ class TestSec4OtpEnforce(TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"]["code"], "OTP_REQUIRED")
 
-    @patch(f"{PUB}._get_applicant")
-    @patch(f"{PUB}.frappe")
-    def test_upload_piece_without_otp_403(self, mock_frappe, mock_get):
-        mock_frappe.local.response = {}
-        mock_frappe.form_dict = {}
-        mock_frappe.request = None
-        applicant = MagicMock()
-        applicant.otp_verified = 0
-        applicant.pieces = []
-        mock_get.return_value = applicant
-        from admission.api.public import upload_piece
-        result = upload_piece(dossier_id="CAN-001", token="tok", piece_code="x", file_url="y")
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["error"]["code"], "OTP_REQUIRED")
-
     @patch(f"{PUB}._serialize_dossier", return_value={"dossier_id": "CAN-001"})
     @patch(f"{PUB}._get_applicant")
     @patch(f"{PUB}.frappe")
@@ -659,28 +644,6 @@ class TestSec5Integration(TestCase):
         )
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"]["code"], "AMOUNT_INVALID")
-
-    @patch(f"{PUB}._get_applicant")
-    @patch(f"{PUB}.frappe")
-    def test_upload_piece_foreign_file_rejected(self, mock_frappe, mock_get):
-        mock_frappe.local.response = {}
-        mock_frappe.form_dict = {}
-        mock_frappe.request = None
-        mock_frappe.db.get_value.return_value = {
-            "name": "FILE-1", "file_name": "x.pdf", "file_size": 1000,
-            "attached_to_doctype": "Admission Applicant", "attached_to_name": "CAN-999",
-        }
-        applicant = MagicMock()
-        applicant.name = "CAN-001"
-        applicant.otp_verified = 1
-        mock_get.return_value = applicant
-        from admission.api.public import upload_piece
-        result = upload_piece(
-            dossier_id="CAN-001", token="tok", piece_code="diplome_bac",
-            file_url="/private/files/x.pdf",
-        )
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["error"]["code"], "PIECE_FILE_FORBIDDEN")
 
     @patch(f"{PUB}._resolve_person_from_campus", return_value="PERS-1")
     @patch(f"{PUB}._session_doc")
