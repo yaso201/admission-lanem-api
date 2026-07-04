@@ -38,6 +38,7 @@ _REFLETS = {
 }
 
 
+@F.purge_after
 def d_conf_reflets_menteurs():
     frappe.set_user("Administrator")
     out = []
@@ -60,6 +61,7 @@ def d_conf_reflets_menteurs():
 
 # ── (B) Jonction fonctionnelle bout-en-bout ───────────────────────────────────────────────────
 
+@F.purge_after
 def junction_reject_resubmit_admit():
     """Le seul reflet croisé fonctionnel, prouvé HTTP réel + staff réels."""
     from admission.api import staff
@@ -124,7 +126,6 @@ def junction_reject_resubmit_admit():
     data2 = _candidate_dossier(d, tok)
     r.append(("candidat voit statut ADM", data2["statut"] == "ADM", f"statut={data2['statut']}"))
 
-    F.purge()
     ok = all(p for _, p, _ in r)
     for label, p, detail in r:
         print(f"JONCTION:: [{'OK' if p else 'FAIL'}] {label} :: {detail}")

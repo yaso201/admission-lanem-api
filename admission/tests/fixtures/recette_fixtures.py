@@ -104,15 +104,32 @@ def _otp_for(dossier):
 
 # ── étapes du chemin métier ───────────────────────────────────────────────────
 
+def _reset_create_ratelimit():
+    """Test-infra : purge le compteur d'ANTI-ABUS (rate limit) de create_dossier. Les fixtures
+    partagent l'IP loopback → le plafond 20/h s'épuise en un run exhaustif. On efface une clé de
+    CACHE (garde infra), JAMAIS une donnée métier : le décorateur @rate_limit reste en place en
+    prod, la logique applicative est inchangée. Sans effet hors harnais de preuve."""
+    try:
+        frappe.cache.delete_keys("*create_dossier*")
+    except Exception:
+        pass
+
+
 def _create(runid, suffix, date_bac="2024-06-01", session=None):
-    """create_dossier seul (HTTP candidat) → dossier BRO (brouillon, avant paiement)."""
+    """create_dossier seul (HTTP candidat) → dossier BRO (brouillon, avant paiement). Retry unique
+    après purge du rate-limit : l'anti-abus infra (IP loopback partagée, 20/h) ne doit pas faire
+    échouer la CONSTRUCTION de la preuve — la validation métier, elle, reste intégralement jouée."""
     email = f"fixture-{runid}-{suffix}@{TAG_DOMAIN}"
-    r = _payload(http.post(BASE + "create_dossier", json={
+    body = {
         "session": session or SESSION, "level_code": LEVEL,
         "identite": {"prenom": "Fixture", "nom": suffix.upper(), "email": email,
                      "tel": "+22990000000", "date_bac": date_bac},
         "consent_data_processing": 1, "consent_cgv": 1,
-        "idempotency_key": f"fixture-{runid}-{suffix}"}))
+        "idempotency_key": f"fixture-{runid}-{suffix}"}
+    r = _payload(http.post(BASE + "create_dossier", json=body))
+    if not r.get("ok") and "RateLimit" in str(r):
+        _reset_create_ratelimit()
+        r = _payload(http.post(BASE + "create_dossier", json=body))
     assert r.get("ok"), f"create_dossier: {r}"
     dossier, token = r["data"]["dossier_id"], r["data"]["token"]
     CREATED.append(dossier)   # enregistré DÈS création → purge garantie même sur abort
@@ -191,30 +208,38 @@ def _result(dossier, token):
 BRANCHES = ("REF", "REJ", "INC", "ATT", "DES", "ACO")
 
 
-DISPOSABLE_SESSION = "SES-AUDIT-DISPOSABLE"
+DISPOSABLE_PREFIX = "SES-AUDIT-DISPOSABLE"
 
 
-def _ensure_disposable_session():
+def _ensure_disposable_session(runid=None):
     """Session JETABLE isolée (copie de SESSION) à bac_results_date FUTUR (+400 j) → ACO durable
     (toujours conditionnel, plus de time-bomb 07-31) ET close_session sans jamais détruire les
-    fixtures partagées. Idempotent. Purgée par _teardown_disposable_session. Résout D-CONF-DURA."""
+    fixtures partagées. Nom SUFFIXÉ par runid (`SES-AUDIT-DISPOSABLE-<runid>`) → concurrence-safe :
+    deux runs ne partagent plus la même session (durcissement B-2 LOW-2). Idempotent. Purgée par
+    _teardown_disposable_session (balayage par PRÉFIXE). Résout D-CONF-DURA."""
     from frappe.utils import add_days, now_datetime
-    if not frappe.db.exists("Admission Session", DISPOSABLE_SESSION):
+    runid = runid or frappe.generate_hash(length=8)
+    name = f"{DISPOSABLE_PREFIX}-{runid}"
+    if not frappe.db.exists("Admission Session", name):
         src = frappe.get_doc("Admission Session", SESSION)          # copie BACH-ASRC (même programme/level)
         sess = frappe.copy_doc(src)
-        sess.session_code = DISPOSABLE_SESSION                      # autoname:field:session_code → name
+        sess.session_code = name                                    # autoname:field:session_code → name
         sess.label = "Session jetable audit CONFORMITÉ-E2E"
         sess.bac_results_date = add_days(now_datetime(), 400)      # seuil TOUJOURS futur → bac_attente durable
         sess.is_open = 1
         sess.insert(ignore_permissions=True)
         frappe.db.commit()
-    return DISPOSABLE_SESSION
+    return name
 
 
 def _teardown_disposable_session():
-    if frappe.db.exists("Admission Session", DISPOSABLE_SESSION):
-        frappe.delete_doc("Admission Session", DISPOSABLE_SESSION, force=True, ignore_permissions=True)
-        frappe.db.commit()
+    """Balaye TOUTES les sessions jetables par PRÉFIXE — concurrence-safe : un run nettoie ses
+    propres sessions ET tout résidu d'un run interrompu, sans nom partagé fragile ni force-delete
+    aveugle d'une session non-jetable (durcissement B-2 LOW-2)."""
+    for name in frappe.get_all("Admission Session",
+                               filters={"name": ["like", f"{DISPOSABLE_PREFIX}-%"]}, pluck="name"):
+        frappe.delete_doc("Admission Session", name, force=True, ignore_permissions=True)
+    frappe.db.commit()
 
 
 def _aco_date_bac(session):
@@ -246,7 +271,7 @@ def build_to(target, date_bac=None):
     runid = frappe.generate_hash(length=8)
     suffix = frappe.generate_hash(length=4)
     # ACO : conditionnel requis → session JETABLE à seuil futur (durable) + date_bac attente dérivée.
-    aco_session = _ensure_disposable_session() if target == "ACO" else None
+    aco_session = _ensure_disposable_session(runid) if target == "ACO" else None
     dbac = date_bac or (_aco_date_bac(aco_session) if target == "ACO" else "2024-06-01")
 
     if target == "BRO":                                     # brouillon : create seul, avant paiement
@@ -367,6 +392,169 @@ def build_states(targets=("ETU", "ADM", "REF")):
     return out
 
 
+# ── B-3 : entrées UI (E2E navigateur, bundle live) ────────────────────────────
+# Ces points d'entrée AMORCENT les scénarios navigateur (candidat + management). Ils restent
+# 100 % chemin métier (aucun db.set_value de statut/flag) et lisibles server-side par l'E2E.
+
+def emit_otp(dossier):
+    """Imprime le code OTP courant du dossier — lu server-side depuis l'Email Queue (HMAC vérifié),
+    pour saisie par le tunnel candidat E2E. Read-only (aucune écriture applicative)."""
+    frappe.set_user("Administrator")
+    code = _otp_for(dossier)
+    print(f"OTP::{code}")
+    return code
+
+
+def ui_context():
+    """Contexte d'amorçage du tunnel candidat (create via le VRAI formulaire) : session ouverte,
+    niveau, date bac (profil standard, non conditionnel), domaine de tag. Read-only.
+    Sortie une-ligne-par-champ → parsing robuste côté E2E navigateur."""
+    frappe.set_user("Administrator")
+    print(f"UICTX_SESSION::{SESSION}")
+    print(f"UICTX_LEVEL::{LEVEL}")
+    print(f"UICTX_DATEBAC::2024-06")
+    print(f"UICTX_TAGDOMAIN::{TAG_DOMAIN}")
+    return {"session": SESSION, "level": LEVEL, "datebac": "2024-06", "tag_domain": TAG_DOMAIN}
+
+
+def build_ui(kind):
+    """Préconditions E2E UI management au-delà de build_to. Imprime FIXTURE_ID + statut.
+    Toujours par chemin métier (vraies API + rôles réels) :
+      ACC_F2_PENDING : ACC + frais 2 déclaré offline (Pending) → prouver « confirmer frais 2 ».
+      ACC_F2_PAID    : ACC + frais 2 déclaré + confirmé (Paid, NON inscrit) → prouver « inscrire ».
+      ACO_DIPLOMA    : ACO + diplôme DÉPOSÉ (non vérifié) → prouver « vérifier le diplôme ».
+      ACO_VERIF      : ACO + diplôme déposé ET vérifié (bac_verified) → prouver « lever la condition ».
+      SOP_PENDING    : SOP (frais 1 Pending offline) → prouver « confirmer frais 1 ».
+      autre          : délègue à build_to(kind)."""
+    from admission.api import staff
+    frappe.set_user("Administrator")
+    kind = (kind or "").upper()
+    if kind in ("ACC_F2_PENDING", "ACC_F2_PAID"):
+        runid = frappe.generate_hash(length=8)
+        suffix = frappe.generate_hash(length=4)
+        res = build_to("ACC")                                  # ACC par chemin métier (frais 2 ÉMIS)
+        d, tok = res["dossier_id"], res["token"]
+        _declare_enrollment(d, tok, runid, suffix)             # candidat déclare frais 2 offline → Pending
+        if kind == "ACC_F2_PAID":
+            _confirm(d, label="frais 2")                       # staff confirme → Paid (prêt à inscrire)
+        out = _result(d, tok)
+    elif kind in ("ACO_DIPLOMA", "ACO_VERIF"):
+        res = build_to("ACO")
+        d, tok = res["dossier_id"], res["token"]
+        frappe.db.commit()
+        # Chemin métier réel : le bac est arrivé → le candidat DÉPOSE le diplôme (diplome_bac).
+        # verify_bac_diploma exige la pièce uploaded (DIPLOMA_MISSING sinon).
+        png = _png()
+        rr = _payload(http.post(BASE + "upload_piece_file",
+                                data={"dossier_id": d, "token": tok, "piece_code": "diplome_bac"},
+                                files={"file": ("diplome_bac.png", png, "image/png")}))
+        assert rr.get("ok"), f"upload diplome_bac: {rr}"
+        frappe.db.commit()
+        if kind == "ACO_VERIF":                                # + l'Administratif vérifie (bac_verified=1)
+            _as_staff("admin"); r = staff.verify_bac_diploma(dossier_id=d); _admin()
+            assert r.get("ok"), f"verify_bac_diploma: {r}"
+        out = _result(d, tok)
+    elif kind == "SOU_VERIFIED":
+        # SOU avec TOUTES les requises vérifiées (contrôle documentaire fait) → garde de start_review
+        # levée (PIECES_NON_VERIFIEES sinon). Chemin métier : verify_piece réel par l'Administratif.
+        res = build_to("SOU")
+        d = res["dossier_id"]
+        _verify_required(d)
+        out = _result(d, res["token"])
+    elif kind == "SOP_PENDING":
+        out = build_to("SOP")                                  # SOP = frais 1 Pending offline
+    elif kind == "ETU_COND":
+        # ETU CONDITIONNEL (bac en attente) — précondition de conditional_admission via UI.
+        # Session jetable (seuil futur) + date_bac attente → conditionnel=1, arrêt AVANT ACO.
+        runid = frappe.generate_hash(length=8)
+        suffix = frappe.generate_hash(length=4)
+        sess = _ensure_disposable_session(runid)
+        d, tok = _tunnel_to_sop(runid, suffix, _aco_date_bac(sess), session=sess)   # SOP conditionnel
+        _confirm(d)                                            # SOP → SOU
+        _verify_required(d)                                    # garde start_review
+        _as_staff("admin"); staff.start_review(dossier_id=d); _admin()   # SOU → ETU (conditionnel)
+        out = _result(d, tok)
+    else:
+        out = build_to(kind)
+    # MVCC : les états terminaux du tunnel (SOP/BRO) sont écrits par le PROCESSUS HTTP ; le snapshot
+    # REPEATABLE-READ du process bench est figé avant. commit() ferme la transaction → la relecture
+    # suivante ouvre un snapshot FRAIS qui voit l'état réel (sinon SOP se lit BRO).
+    frappe.db.commit()
+    status = frappe.db.get_value("Admission Applicant", out["dossier_id"], "status")
+    print(f"FIXTURE_ID::{out['dossier_id']}")
+    print(f"FIXTURE_STATUS::{status}")
+    return {**out, "status": status}
+
+
+def session_state(session):
+    """Read-only : état d'une session après clôture UI — is_open + comptes de dossiers par statut.
+    Preuve robuste de close_session (l'effet définitif = is_open passe à 0), indépendante du reflet
+    du toast. Imprime SESSION_OPEN + les statuts des dossiers de la session."""
+    is_open = frappe.db.get_value("Admission Session", session, "is_open")
+    rows = frappe.get_all("Admission Applicant", filters={"session": session},
+                          fields=["status"], limit_page_length=0)
+    c = dict(Counter(r.status for r in rows))
+    print(f"SESSION_OPEN::{int(is_open or 0)}")
+    print(f"SESSION_DOSSIERS::{c}")
+    return {"is_open": int(is_open or 0), "dossiers": c}
+
+
+def debug_close_scope(session):
+    """Diagnostic close_session : nombre de dossiers basculables d'une `session` vus par Administrator
+    (bypass) vs par le rôle Direction (get_permission_query_conditions appliqué). Un écart = la bascule
+    de masse est SCOPÉE par l'acteur → des dossiers hors périmètre resteraient dans la session clôturée.
+    Read-only (dry_run=1). Ne modifie rien."""
+    from admission.api import staff
+    frappe.set_user("Administrator")
+    a = staff.close_session(session=session, dry_run=1)
+    frappe.set_user(STAFF["dir"])
+    d = staff.close_session(session=session, dry_run=1)
+    frappe.set_user("Administrator")
+    at = (a.get("data") or {}).get("total")
+    dt = (d.get("data") or {}).get("total")
+    print(f"CLOSE_SCOPE::admin_total={at}::dir_total={dt}::ecart={'OUI' if at != dt else 'non'}")
+    return {"admin": a.get("data"), "dir": d.get("data")}
+
+
+def stage_reject(dossier):
+    """B-3 « resubmit » E2E : depuis un SOP créé par le NAVIGATEUR, confirme le frais 1 (SOP→SOU)
+    puis rejette la 1re pièce requise (Administratif) → le candidat verra le motif et pourra
+    re-déposer via l'UI. Imprime le code de pièce rejetée + le motif. 100 % chemin métier."""
+    from admission.api import staff
+    from admission.api.public import requise_effective
+    frappe.set_user("Administrator")
+    _confirm(dossier)                                          # SOP → SOU (voir le declare navigateur : MVCC dans _confirm)
+    app = frappe.get_doc("Admission Applicant", dossier)
+    codes = [p.piece_code for p in app.pieces if requise_effective(p)]
+    assert codes, f"aucune pièce requise à rejeter sur {dossier}"
+    cible, reason = codes[0], "Illisible / floue"
+    _as_staff("admin")
+    r = staff.reject_piece(dossier_id=dossier, piece_code=cible, reason=reason, comment="photo floue (E2E)")
+    _admin()
+    assert r.get("ok"), f"reject_piece: {r}"
+    frappe.db.commit()
+    print(f"REJECTED_PIECE::{cible}")
+    print(f"REJECT_REASON::{reason}")
+    return {"piece_code": cible, "reason": reason}
+
+
+def open_disposable():
+    """close_session E2E : crée une session JETABLE ouverte + 1 dossier SOP (non-abouti) taggé
+    DEDANS → la clôture UI (Direction) doit le basculer en DES. Imprime le nom de session + le
+    dossier. Session purgée par _teardown (préfixe) ; dossier par tag. Isole close_session des
+    fixtures partagées (jamais la session recette réelle)."""
+    frappe.set_user("Administrator")
+    runid = frappe.generate_hash(length=8)
+    suffix = frappe.generate_hash(length=4)
+    name = _ensure_disposable_session(runid)
+    d, tok = _tunnel_to_sop(runid, suffix, "2024-06-01", session=name)   # SOP dans la session jetable
+    frappe.db.commit()
+    print(f"DISPOSABLE::{name}")
+    print(f"FIXTURE_ID::{d}")
+    print(f"FIXTURE_STATUS::{frappe.db.get_value('Admission Applicant', d, 'status')}")
+    return {"session": name, "dossier_id": d, "token": tok}
+
+
 def build_recap_rejected():
     """Fixture RAPPELS-J4J6 (vague 3) : dossier SOU avec ≥1 pièce REJETÉE + récap envoyé (ancre posée).
     100 % chemin métier : build_to(SOU) → verify requises SAUF une → reject la dernière → notify_pieces_recap.
@@ -445,3 +633,18 @@ def purge():
     print(f"PURGED::{len(ids)}")
     print(f"LEFT::{left}")
     return {"purged": len(ids), "left": left}
+
+
+def purge_after(fn):
+    """Décorateur d'audit : garantit `purge()` en `finally` → baseline restaurée MÊME sur exception
+    mid-run (durcissement B-2 LOW-1). La purge par tag étant idempotente, un run réussi qui a déjà
+    tout nettoyé voit un `finally` sans effet (PURGED::0). Aucun résidu transitoire ne subsiste."""
+    import functools
+
+    @functools.wraps(fn)
+    def _wrapped(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            purge()
+    return _wrapped

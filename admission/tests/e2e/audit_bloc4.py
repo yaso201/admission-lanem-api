@@ -39,6 +39,7 @@ def _online_pending(dossier, token, runid):
 
 # ── D-CONF-01 : argent confirmé sur dossier TERMINAL (webhook sans garde d'état) ──────────────
 
+@F.purge_after
 def d_conf_01_argent_terminal():
     """Un Pending ONLINE survit au désistement (withdraw ne rejette que Cash/Bank) ; le webhook
     `_promote_payment` le passe Confirmed SANS vérifier applicant.status → argent encaissé sur DES."""
@@ -67,7 +68,6 @@ def d_conf_01_argent_terminal():
           f"statut_apres={status_apres} pay_apres={pay_apres}")
     print(f"D-CONF-01:: [{'FINDING REPRODUIT' if trou else 'NON reproduit (corrigé ?)'}] "
           f"argent Confirmed sur dossier terminal DES")
-    F.purge()
     return {"finding": "D-CONF-01", "reproduit": trou}
 
 
@@ -88,6 +88,7 @@ def _accept_worker(dossier, site, out, barrier):
         frappe.destroy()
 
 
+@F.purge_after
 def d_conf_02_double_frais2():
     """VRAI FINDING (structurel, NON exercé par ce test) : `_ensure_enrollment_fee` (public.py:749) est
     un check-then-insert SANS contrainte unique (applicant, fee_type) — le seul unique sur Applicant Fee
@@ -114,7 +115,6 @@ def d_conf_02_double_frais2():
     print(f"D-CONF-02:: workers={out} fees_enrollment={n_fee2}")
     print(f"D-CONF-02:: [{'FINDING REPRODUIT' if trou else 'protégé (TimestampMismatch a filtré)'}] "
           f"double frais 2 (n={n_fee2})")
-    F.purge()
     return {"finding": "D-CONF-02", "reproduit": trou, "n_fee2": n_fee2}
 
 
@@ -139,6 +139,7 @@ def _decision_worker(dossier, kind, site, out, barrier):
         frappe.destroy()
 
 
+@F.purge_after
 def d_conf_03_decision_race():
     """`accept_admission` ∥ `refuse` sur le même ADM : les deux lisent ADM avant commit. Si les DEUX
     réussissent → décision contradictoire (last-write-wins) : l'invariant « une seule décision » est
@@ -162,12 +163,12 @@ def d_conf_03_decision_race():
     print(f"D-CONF-03:: workers={out} statut_final={final}")
     print(f"D-CONF-03:: [{'FINDING REPRODUIT (2 décisions ok)' if both_ok else 'une seule décision a gagné'}] "
           f"statut final={final}")
-    F.purge()
     return {"finding": "D-CONF-03", "reproduit": both_ok, "final": final}
 
 
 # ── D-CONF-04 : IDOR écriture — les mutations save(ignore_permissions) ignorent le cloisonnement ──
 
+@F.purge_after
 def d_conf_04_idor_write():
     """Les 24 endpoints de mutation font `save(ignore_permissions=True)` → le hook `has_permission`
     n'est JAMAIS consulté sur écriture. Donc même cloisonnement ACTIVÉ (mode ON planifié prod), un
@@ -222,5 +223,4 @@ def d_conf_04_idor_write():
     print(f"D-CONF-04:: cloisonnement_off_par_defaut={off_defaut} · {out}")
     print(f"D-CONF-04:: [{'FINDING REPRODUIT' if trou else 'non reproduit'}] cloisonnement ON : "
           f"has_permission bloque mais save(ignore_permissions) contourne → IDOR écriture")
-    F.purge()
     return {"finding": "D-CONF-04", "reproduit": trou, "off_defaut": off_defaut, **out}
