@@ -104,11 +104,11 @@ def _otp_for(dossier):
 
 # ── étapes du chemin métier ───────────────────────────────────────────────────
 
-def _create(runid, suffix, date_bac="2024-06-01"):
+def _create(runid, suffix, date_bac="2024-06-01", session=None):
     """create_dossier seul (HTTP candidat) → dossier BRO (brouillon, avant paiement)."""
     email = f"fixture-{runid}-{suffix}@{TAG_DOMAIN}"
     r = _payload(http.post(BASE + "create_dossier", json={
-        "session": SESSION, "level_code": LEVEL,
+        "session": session or SESSION, "level_code": LEVEL,
         "identite": {"prenom": "Fixture", "nom": suffix.upper(), "email": email,
                      "tel": "+22990000000", "date_bac": date_bac},
         "consent_data_processing": 1, "consent_cgv": 1,
@@ -119,9 +119,9 @@ def _create(runid, suffix, date_bac="2024-06-01"):
     return dossier, token
 
 
-def _tunnel_to_sop(runid, suffix, date_bac="2024-06-01"):
+def _tunnel_to_sop(runid, suffix, date_bac="2024-06-01", session=None):
     """create → OTP → verify → pièces requises → declare virement → SOP (HTTP réel candidat)."""
-    dossier, token = _create(runid, suffix, date_bac)
+    dossier, token = _create(runid, suffix, date_bac, session)
     r = _payload(http.post(BASE + "request_otp", json={"dossier_id": dossier, "token": token}))
     assert r.get("ok"), f"request_otp: {r}"
     code = _otp_for(dossier)
@@ -191,20 +191,45 @@ def _result(dossier, token):
 BRANCHES = ("REF", "REJ", "INC", "ATT", "DES", "ACO")
 
 
-def _aco_date_bac():
-    """date_bac produisant conditionnel=1 (bac_attente) : DÉRIVÉE du bac_results_date de la session
-    (jamais une date en dur = time-bomb). _classify_bac_date → bac_attente ⟺ année(bac)==année(today)
-    ET today < seuil. Échoue FORT si le seuil est déjà passé (année courante) → il faut alors une
-    session jetable à seuil futur (dette D-CONF-DURA, traitée en B-2). Pas de fixture ACO silencieuse."""
-    from frappe.utils import add_days, getdate, now_datetime
-    threshold = frappe.db.get_value("Admission Session", SESSION, "bac_results_date")
+DISPOSABLE_SESSION = "SES-AUDIT-DISPOSABLE"
+
+
+def _ensure_disposable_session():
+    """Session JETABLE isolée (copie de SESSION) à bac_results_date FUTUR (+400 j) → ACO durable
+    (toujours conditionnel, plus de time-bomb 07-31) ET close_session sans jamais détruire les
+    fixtures partagées. Idempotent. Purgée par _teardown_disposable_session. Résout D-CONF-DURA."""
+    from frappe.utils import add_days, now_datetime
+    if not frappe.db.exists("Admission Session", DISPOSABLE_SESSION):
+        src = frappe.get_doc("Admission Session", SESSION)          # copie BACH-ASRC (même programme/level)
+        sess = frappe.copy_doc(src)
+        sess.session_code = DISPOSABLE_SESSION                      # autoname:field:session_code → name
+        sess.label = "Session jetable audit CONFORMITÉ-E2E"
+        sess.bac_results_date = add_days(now_datetime(), 400)      # seuil TOUJOURS futur → bac_attente durable
+        sess.is_open = 1
+        sess.insert(ignore_permissions=True)
+        frappe.db.commit()
+    return DISPOSABLE_SESSION
+
+
+def _teardown_disposable_session():
+    if frappe.db.exists("Admission Session", DISPOSABLE_SESSION):
+        frappe.delete_doc("Admission Session", DISPOSABLE_SESSION, force=True, ignore_permissions=True)
+        frappe.db.commit()
+
+
+def _aco_date_bac(session):
+    """date_bac produisant conditionnel=1 (bac_attente) : _classify_bac_date → bac_attente ⟺
+    année(bac)==année(today) ET today < seuil de session. On renvoie une date ANNÉE COURANTE (15 jan) ;
+    valable tant que le seuil de `session` est futur. Échoue FORT sinon (jamais de fixture ACO silencieuse
+    — utiliser la session jetable à seuil +400 j)."""
+    from frappe.utils import getdate, now_datetime
+    threshold = frappe.db.get_value("Admission Session", session, "bac_results_date")
     today = getdate(now_datetime())
-    if not threshold or getdate(threshold).year != today.year or getdate(threshold) <= today:
+    if not threshold or getdate(threshold) <= today:
         raise AssertionError(
-            f"ACO non constructible : session {SESSION} bac_results_date={threshold} n'est pas un seuil "
-            f"FUTUR année-courante → date_bac attente impossible. Utiliser une session jetable à seuil "
-            f"futur (dette D-CONF-DURA, B-2).")
-    return str(add_days(getdate(threshold), -1))   # veille du seuil, année courante → bac_attente
+            f"ACO non constructible : session {session} bac_results_date={threshold} n'est pas FUTUR → "
+            f"utiliser la session jetable (_ensure_disposable_session, seuil +400 j).")
+    return str(today.replace(month=1, day=15))   # date année courante → year(bac)==year(today), today<seuil
 
 
 def build_to(target, date_bac=None):
@@ -220,8 +245,9 @@ def build_to(target, date_bac=None):
         raise ValueError(f"état cible inconnu: {target} (attendu {LADDER} ou {BRANCHES})")
     runid = frappe.generate_hash(length=8)
     suffix = frappe.generate_hash(length=4)
-    # ACO : conditionnel requis → date_bac attente DÉRIVÉE du seuil de session (pas de date en dur).
-    dbac = date_bac or (_aco_date_bac() if target == "ACO" else "2024-06-01")
+    # ACO : conditionnel requis → session JETABLE à seuil futur (durable) + date_bac attente dérivée.
+    aco_session = _ensure_disposable_session() if target == "ACO" else None
+    dbac = date_bac or (_aco_date_bac(aco_session) if target == "ACO" else "2024-06-01")
 
     if target == "BRO":                                     # brouillon : create seul, avant paiement
         dossier, token = _create(runid, suffix, dbac)
@@ -235,7 +261,7 @@ def build_to(target, date_bac=None):
         assert r.get("ok"), f"withdraw: {r}"
         return _result(dossier, token)
 
-    dossier, token = _tunnel_to_sop(runid, suffix, dbac)    # → SOP
+    dossier, token = _tunnel_to_sop(runid, suffix, dbac, session=aco_session)   # → SOP (session jetable si ACO)
     if target == "SOP":
         return _result(dossier, token)
 
@@ -412,6 +438,7 @@ def purge():
         if frappe.db.exists("Admission Applicant", n):
             _purge_dossier(n)
     _purge_email_queue()
+    _teardown_disposable_session()   # dossiers ACO purgés ci-dessus → session jetable vidée puis supprimée
     frappe.db.commit()
     left = frappe.get_all("Admission Applicant",
                           filters={"email": ["like", f"fixture-%@{TAG_DOMAIN}"]}, pluck="name")
