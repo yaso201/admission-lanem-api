@@ -100,6 +100,8 @@ async function waitStatus(page, target, timeout = 15000) {
 
 // ── Table des transitions (rôle × précondition × bouton × modale × toast × statut cible) ────────
 // toastSrc : source d'une regex (motifModal → « Action effectuée. » ; sinon message d'action inline).
+// proof (revue B-3 F1/F2) : corroboration HORS-BANDE (dossier_state server-side) pour les
+// transitions à ÉTAT CONSTANT (from==target) — le toast seul ne prouve pas l'effet DB.
 const T = [
   { n: 1,  role: 'admin', kind: 'SOU_VERIFIED',   name: 'start_review',         label: 'Mettre en étude',        from: 'SOU', target: 'ETU', toast: 'mis en étude' },
   { n: 2,  role: 'admin', kind: 'SOU',            name: 'reject_dossier',       label: 'Rejeter le dossier',     from: 'SOU', target: 'REJ', toast: 'Action effectuée', modal: { motif: 'Audit B-3 — rejet contrôle documentaire.' } },
@@ -107,18 +109,21 @@ const T = [
   { n: 4,  role: 'admin', kind: 'SOU',            name: 'request_complement',   label: 'Demander un complément', from: 'SOU', target: 'INC', toast: 'Action effectuée', modal: { motif: 'Audit B-3 — complément requis.' } },
   { n: 5,  role: 'admin', kind: 'ETU',            name: 'withdraw',             label: 'Désister le dossier',    from: 'ETU', target: 'DES', toast: 'Action effectuée', modal: { motif: 'Audit B-3 — désistement candidat.' } },
   { n: 6,  role: 'admin', kind: 'SOP_PENDING',    name: 'confirm_frais1',       pay: true,                        from: 'SOP', target: 'SOU', toast: 'Paiement confirmé' },
-  { n: 7,  role: 'admin', kind: 'ACO_DIPLOMA',    name: 'verify_bac_diploma',   label: 'Vérifier le diplôme',    from: 'ACO', target: 'ACO', toast: 'Diplôme vérifié' },
+  { n: 7,  role: 'admin', kind: 'ACO_DIPLOMA',    name: 'verify_bac_diploma',   label: 'Vérifier le diplôme',    from: 'ACO', target: 'ACO', toast: 'Diplôme vérifié',
+    proof: { key: 'DSTATE_BACVERIF', want: '1', label: 'bac_verified=1' } },
   { n: 8,  role: 'resp',  kind: 'ETU',            name: 'waitlist',             label: "Liste d.attente",        from: 'ETU', target: 'ATT', toast: "liste d.attente", modal: {} },
-  { n: 9,  role: 'resp',  kind: 'ATT',            name: 'set_waitlist_rank',    label: 'rang d.attente',         from: 'ATT', target: 'ATT', toast: 'Rang mis à jour', modal: { rang: 3 } },
-  { n: 10, role: 'resp',  kind: 'ETU',            name: 'mark_admissible',      label: 'Admettre',               from: 'ETU', target: 'ADM', toast: 'admis' },
+  { n: 9,  role: 'resp',  kind: 'ATT',            name: 'set_waitlist_rank',    label: 'rang d.attente',         from: 'ATT', target: 'ATT', toast: 'Rang mis à jour', modal: { rang: 3 },
+    proof: { key: 'DSTATE_RANG', want: '3', label: 'rang=3' } },
+  { n: 10, role: 'resp',  kind: 'ETU',            name: 'mark_admissible',      label: 'Admettre',               from: 'ETU', target: 'ADM', toast: 'Dossier admis \\(ADM\\)' },
   { n: 11, role: 'resp',  kind: 'ETU',            name: 'refuse_etu',           label: 'Refuser',                from: 'ETU', target: 'REF', toast: 'Action effectuée', modal: { motif: 'Audit B-3 — refus (Responsable).' } },
   { n: 12, role: 'resp',  kind: 'ETU_COND',       name: 'conditional_admission', label: 'Admission conditionnelle', from: 'ETU', target: 'ACO', toast: 'conditionnelle' },
-  { n: 13, role: 'resp',  kind: 'ATT',            name: 'mark_admissible_att',  label: 'Admettre',               from: 'ATT', target: 'ADM', toast: 'admis' },
+  { n: 13, role: 'resp',  kind: 'ATT',            name: 'mark_admissible_att',  label: 'Admettre',               from: 'ATT', target: 'ADM', toast: 'Dossier admis \\(ADM\\)' },
   { n: 14, role: 'dir',   kind: 'ADM',            name: 'accept_admission',     label: 'Accepter l.admission',   from: 'ADM', target: 'ACC', toast: 'acceptée', modal: {} },
   { n: 15, role: 'dir',   kind: 'ADM',            name: 'refuse_adm',           label: 'Refuser \\(ADM\\)',       from: 'ADM', target: 'REF', toast: 'Action effectuée', modal: { motif: 'Audit B-3 — refus admissible (Direction).' } },
   { n: 16, role: 'dir',   kind: 'ACO_VERIF',      name: 'lift_condition',       label: 'Lever la condition',     from: 'ACO', target: 'ACC', toast: 'Condition levée', modal: {} },
   { n: 17, role: 'dir',   kind: 'ACO_DIPLOMA',    name: 'refuse_condition',     label: 'Refuser \\(échec bac\\)', from: 'ACO', target: 'REF', toast: 'Action effectuée', modal: { motif: 'Audit B-3 — échec au bac.' } },
-  { n: 18, role: 'admin', kind: 'ACC_F2_PENDING', name: 'confirm_frais2',       pay: true,                        from: 'ACC', target: 'ACC', toast: 'Paiement confirmé' },
+  { n: 18, role: 'admin', kind: 'ACC_F2_PENDING', name: 'confirm_frais2',       pay: true,                        from: 'ACC', target: 'ACC', toast: 'Paiement confirmé',
+    proof: { key: 'DSTATE_FEE2', want: 'Paid', label: 'frais2=Paid (ARGENT)' } },
   { n: 19, role: 'dir',   kind: 'ACC_F2_PAID',    name: 'enroll',               label: 'Inscrire',               from: 'ACC', target: 'INS', toast: 'inscrit', modal: {} },
 ];
 
@@ -146,14 +151,23 @@ async function driveTransition(t) {
   const toastOk = new RegExp(t.toast, 'i').test(toast);
   let after = before, statusOk = true;
   if (t.target) { after = await waitStatus(page, t.target); statusOk = after === t.target; }
+  // Corroboration HORS-BANDE (F1/F2) : sur les transitions from==target, l'effet DB réel fait foi.
+  let proofOk = true, proofDetail = '';
+  if (t.proof) {
+    await sleep(1000);
+    let got = '?';
+    try { got = pick(benchExec('dossier_state', { dossier: fx.id }), t.proof.key); } catch (e) { /* ignore */ }
+    proofOk = got === t.proof.want;
+    proofDetail = ` preuve[${t.proof.label}]=${got}${proofOk ? '' : ' ATTENDU=' + t.proof.want}`;
+  }
   let err = '';
-  if (!(toastOk && statusOk)) {
+  if (!(toastOk && statusOk && proofOk)) {
     err = await page.evaluate(() => {
       const e = [...document.querySelectorAll('div[role="alert"]')].map((t2) => t2.textContent).filter(Boolean);
       return e.length ? e[e.length - 1] : '';
     });
   }
-  rec(label, toastOk && statusOk, `toast="${(toast || 'none').slice(0, 44)}" statut ${before}→${after} (cible ${t.target})${err ? ' ERR="' + err.slice(0, 60) + '"' : ''}`);
+  rec(label, toastOk && statusOk && proofOk, `toast="${(toast || 'none').slice(0, 44)}" statut ${before}→${after} (cible ${t.target})${proofDetail}${err ? ' ERR="' + err.slice(0, 60) + '"' : ''}`);
 }
 
 async function driveCloseSession(n) {

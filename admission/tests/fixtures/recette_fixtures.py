@@ -486,6 +486,25 @@ def build_ui(kind):
     return {**out, "status": status}
 
 
+def dossier_state(dossier):
+    """Read-only : corroboration HORS-BANDE des transitions UI à état constant (revue B-3 F1/F2) —
+    le toast seul ne prouve pas l'effet. Imprime les effets DB réels : statut, rang d'attente,
+    bac_verified, statut du frais 2 (enrollment) et nombre de paiements Confirmed/Paid."""
+    st = frappe.db.get_value("Admission Applicant", dossier,
+                             ["status", "rang_liste_attente", "bac_verified"], as_dict=True) or {}
+    fee2 = frappe.db.get_value("Applicant Fee", {"applicant": dossier, "fee_type": "enrollment"},
+                               "status")
+    n_conf = frappe.db.count("Applicant Fee Payment",
+                             {"applicant": dossier, "payment_status": ["in", ["Confirmed", "Paid"]]})
+    print(f"DSTATE_STATUS::{st.get('status')}")
+    print(f"DSTATE_RANG::{st.get('rang_liste_attente') or 0}")
+    print(f"DSTATE_BACVERIF::{int(st.get('bac_verified') or 0)}")
+    print(f"DSTATE_FEE2::{fee2 or 'none'}")
+    print(f"DSTATE_NCONF::{n_conf}")
+    return {"status": st.get("status"), "rang": st.get("rang_liste_attente"),
+            "bac_verified": st.get("bac_verified"), "fee2": fee2, "n_confirmed": n_conf}
+
+
 def session_state(session):
     """Read-only : état d'une session après clôture UI — is_open + comptes de dossiers par statut.
     Preuve robuste de close_session (l'effet définitif = is_open passe à 0), indépendante du reflet
