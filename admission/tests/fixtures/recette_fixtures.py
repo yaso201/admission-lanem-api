@@ -186,23 +186,40 @@ def _result(dossier, token):
 
 # ── constructeur par état cible ───────────────────────────────────────────────
 
-def build_to(target):
-    """Construit un dossier fixture jusqu'à `target` par chemin métier. Renvoie {dossier_id, token, status}.
+# États atteignables par le builder. Branches (REF/REJ/INC/ATT/DES/ACO) = CHEMIN MÉTIER RÉEL
+# (jamais db.set_value de statut/bac_verified/notes_validated — une fixture qui triche ne prouve rien).
+BRANCHES = ("REF", "REJ", "INC", "ATT", "DES", "ACO")
 
-    target ∈ {BRO, SOP, SOU, ETU, ADM, ACC, INS, REF}. REF = branche depuis ETU (refuse Responsable).
+
+def build_to(target, date_bac=None):
+    """Construit un dossier fixture jusqu'à `target` PAR CHEMIN MÉTIER (vraies API + rôles réels).
+
+    target ∈ LADDER {BRO,SOP,SOU,ETU,ADM,ACC,INS} ou BRANCHES {REF,REJ,INC,ATT,DES,ACO}.
+    ACO exige un dossier CONDITIONNEL (bac en attente) : construit via un date_bac année-courante <
+    seuil de session (_classify_bac_date → bac_attente → conditionnel=1). Aucun statut/flag n'est seedé.
     """
     from admission.api import staff
     target = (target or "ETU").upper()
-    if target not in set(LADDER) | {"REF"}:
-        raise ValueError(f"état cible inconnu: {target} (attendu {LADDER} ou REF)")
+    if target not in set(LADDER) | set(BRANCHES):
+        raise ValueError(f"état cible inconnu: {target} (attendu {LADDER} ou {BRANCHES})")
     runid = frappe.generate_hash(length=8)
     suffix = frappe.generate_hash(length=4)
+    # ACO : conditionnel requis → date_bac année courante (bac non encore obtenu). Sinon défaut passé.
+    dbac = date_bac or ("2026-06-15" if target == "ACO" else "2024-06-01")
 
     if target == "BRO":                                     # brouillon : create seul, avant paiement
-        dossier, token = _create(runid, suffix)
+        dossier, token = _create(runid, suffix, dbac)
         return _result(dossier, token)
 
-    dossier, token = _tunnel_to_sop(runid, suffix)          # → SOP
+    if target == "DES":                                     # désistement depuis SOP (Pending offline → F3)
+        dossier, token = _tunnel_to_sop(runid, suffix, dbac)
+        frappe.db.commit()                                  # MVCC : voir les écritures HTTP du tunnel
+        _as_staff("admin"); r = staff.withdraw(dossier_id=dossier, motif="Fixture E2E — désistement candidat.")
+        _admin()
+        assert r.get("ok"), f"withdraw: {r}"
+        return _result(dossier, token)
+
+    dossier, token = _tunnel_to_sop(runid, suffix, dbac)    # → SOP
     if target == "SOP":
         return _result(dossier, token)
 
@@ -210,9 +227,33 @@ def build_to(target):
     if target == "SOU":
         return _result(dossier, token)
 
+    if target == "REJ":                                     # SOU → REJ (contrôle documentaire, Admin)
+        _as_staff("admin"); r = staff.reject_dossier(dossier_id=dossier, motif="Fixture E2E — dossier rejeté.")
+        _admin()
+        assert r.get("ok"), f"reject_dossier: {r}"
+        return _result(dossier, token)
+
+    if target == "INC":                                     # SOU → INC (complément requis, Admin)
+        _as_staff("admin"); r = staff.request_complement(dossier_id=dossier, motif="Fixture E2E — pièce à compléter.")
+        _admin()
+        assert r.get("ok"), f"request_complement: {r}"
+        return _result(dossier, token)
+
     _verify_required(dossier)                               # garde 3c-1
     _as_staff("admin"); staff.start_review(dossier_id=dossier); _admin()   # SOU → ETU
     if target == "ETU":
+        return _result(dossier, token)
+
+    if target == "ATT":                                     # ETU → ATT (liste d'attente, rang≥1, Resp)
+        _as_staff("resp"); r = staff.waitlist(dossier_id=dossier, rang=1)
+        _admin()
+        assert r.get("ok"), f"waitlist: {r}"
+        return _result(dossier, token)
+
+    if target == "ACO":                                     # ETU → ACO (conditionnel, Resp)
+        _as_staff("resp"); r = staff.conditional_admission(dossier_id=dossier)
+        _admin()
+        assert r.get("ok"), f"conditional_admission (dossier conditionnel requis — date_bac attente): {r}"
         return _result(dossier, token)
 
     if target == "REF":                                     # branche ETU → REF (Responsable)
@@ -236,6 +277,24 @@ def build_to(target):
 
 
 # ── points d'entrée (bench execute) ───────────────────────────────────────────
+
+def verify_branches(targets=("REJ", "INC", "ATT", "DES", "ACO", "REF")):
+    """CONFORMITÉ-E2E Bloc F — prouve que chaque état branche est atteint PAR CHEMIN MÉTIER
+    (status DB == cible). Garde-fou : aucune fixture ne triche par db.set_value."""
+    frappe.set_user("Administrator")
+    out = []
+    for t in targets:
+        res = build_to(t)
+        real = frappe.db.get_value("Admission Applicant", res["dossier_id"], "status")
+        cond = frappe.db.get_value("Admission Applicant", res["dossier_id"], "conditionnel")
+        ok = real == t
+        out.append((t, real, ok))
+        extra = f" conditionnel={cond}" if t == "ACO" else ""
+        print(f"BRANCH::{t}::real={real}::{'OK' if ok else 'MISMATCH'}{extra}")
+    frappe.db.commit()
+    print(f"BRANCHES_TOTAL::{sum(1 for _, _, o in out if o)}/{len(out)}")
+    return out
+
 
 def status_counts():
     rows = frappe.get_all("Admission Applicant", fields=["status"], limit_page_length=0)
