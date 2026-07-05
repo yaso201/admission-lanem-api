@@ -46,6 +46,24 @@ CONFIRM_ROLES = ("Admission Administratif", "System Manager")
 OFFLINE_MODES = {"cash": "Cash", "bank": "Bank"}
 
 
+def _guard_write_scope(applicant):
+    """FIX-D-CONF-04 — applique le cloisonnement (permissions.has_permission) à l'ÉCRITURE. Les mutations
+    font save(ignore_permissions=True) qui court-circuite le hook has_permission → on le CONSULTE
+    explicitement, avant la mutation, avec la MÊME règle et la MÊME source que la lecture.
+
+    OFF / bypass (SM, Admin) / in-scope → has_permission renvoie None (défère) → autorisé : le mode OFF
+    est strictement préservé (aucune régression). ON + hors périmètre → False → refus 403 typé (jamais
+    de 500, jamais de silence). Ne sur-bloque pas : un acteur DANS son périmètre mute normalement."""
+    from admission.api import permissions as _perm
+    # user NON passé explicitement : has_permission le résout depuis frappe.session (même source réelle).
+    # Identique en prod ; évite tout couplage au frappe mocké dans les tests unitaires (défère au vrai
+    # utilisateur du runner = Administrator → bypass → None → OFF strictement préservé).
+    if _perm.has_permission(doc=applicant, ptype="write") is False:
+        return _error("FORBIDDEN_SCOPE",
+                      "Action hors de votre périmètre de consultation (cloisonnement activé).", 403)
+    return None
+
+
 def _resolve_pending_payment(dossier_id, payment_id=None):
     """Retourne l'Applicant Fee Payment à confirmer pour ce dossier, ou None si aucun en attente."""
     if payment_id:
@@ -85,6 +103,10 @@ def confirm_offline_payment(dossier_id=None, payment_mode=None, justificatif=Non
     if current_status in PAYMENT_FORBIDDEN_STATES:
         return _error("INVALID_STATE",
                       f"Confirmation impossible : dossier clos ({current_status}).", 409)
+    # FIX-D-CONF-04 : garde de périmètre AVANT toute confirmation (l'argent est un effet fort).
+    scope_err = _guard_write_scope(frappe.get_doc("Admission Applicant", dossier_id))
+    if scope_err:
+        return scope_err
 
     payment = _resolve_pending_payment(dossier_id, payment_id)
     if not payment:
@@ -145,6 +167,9 @@ def request_complement(dossier_id=None, motif=None):
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)
+    if scope_err:
+        return scope_err
     state = applicant.status
     if state == "SOU":
         frappe.only_for(("Admission Administratif", "System Manager"))
@@ -173,6 +198,9 @@ def start_review(dossier_id=None):
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)
+    if scope_err:
+        return scope_err
     if applicant.status != "SOU":
         return _error("INVALID_STATE", "Mise en étude possible seulement depuis Soumis (SOU).", 409)
     # Lot 3c — garde contrôle documentaire : toutes les requises EFFECTIVES doivent être 'verified'
@@ -202,6 +230,9 @@ def mark_admissible(dossier_id=None):
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)
+    if scope_err:
+        return scope_err
     if applicant.status not in ("ETU", "ATT"):
         return _error("INVALID_STATE", "Décision admissible possible depuis En étude (ETU) ou Liste d'attente (ATT).", 409)
     notes_gate = _require_validated_notes_if_prepa(applicant)
@@ -225,6 +256,9 @@ def waitlist(dossier_id=None, rang=None):
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)
+    if scope_err:
+        return scope_err
     if applicant.status != "ETU":
         return _error("INVALID_STATE", "Mise en liste d'attente possible seulement depuis En étude (ETU).", 409)
     notes_gate = _require_validated_notes_if_prepa(applicant)
@@ -254,6 +288,9 @@ def refuse(dossier_id=None, motif=None):
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)
+    if scope_err:
+        return scope_err
     if applicant.status == "ETU":
         frappe.only_for(("Admission Responsable", "System Manager"))
     elif applicant.status == "ADM":
@@ -294,6 +331,9 @@ def accept_admission(dossier_id=None, bourses_validees=None):
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)
+    if scope_err:
+        return scope_err
     if applicant.status != "ADM":
         return _error("INVALID_STATE", "Acceptation possible seulement depuis Admissible (ADM).", 409)
     if bourses_validees is not None:
@@ -592,6 +632,9 @@ def enroll(dossier_id=None):
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)
+    if scope_err:
+        return scope_err
     if applicant.status != "INS" and applicant.status != "ACC":
         return _error("INVALID_STATE", "Inscription possible seulement depuis Accepté (ACC).", 409)
     if applicant.status == "INS":
@@ -707,6 +750,9 @@ def propose_scholarships(dossier_id=None, bourses=None):
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)
+    if scope_err:
+        return scope_err
     if applicant.status not in ("ETU", "ATT"):
         return _error("INVALID_STATE", "Proposition de bourses possible seulement en étude (ETU) ou liste d'attente (ATT).", 409)
     keys, parse_err = _parse_scholarship_keys(bourses)
@@ -764,6 +810,9 @@ def verify_bac_diploma(dossier_id=None):
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)
+    if scope_err:
+        return scope_err
     if applicant.status != "ACO":
         return _error("INVALID_STATE", "Vérification du diplôme possible seulement en admission conditionnelle (ACO).", 409)
     if not applicant.conditionnel:
@@ -790,6 +839,9 @@ def _resolve_piece_sou(dossier_id, piece_code):
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return None, None, _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)   # FIX-D-CONF-04 : couvre verify/reject/require/waive/reset_piece
+    if scope_err:
+        return None, None, scope_err
     if applicant.status != "SOU":
         return None, None, _error("INVALID_STATE", "Contrôle documentaire possible seulement en Soumis (SOU).", 409)
     row = next((p for p in (applicant.pieces or []) if p.piece_code == piece_code), None)
@@ -898,6 +950,9 @@ def reject_dossier(dossier_id=None, motif=None):
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)
+    if scope_err:
+        return scope_err
     if applicant.status != "SOU":
         return _error("INVALID_STATE", "Rejet documentaire possible seulement depuis Soumis (SOU).", 409)
     if not motif or not str(motif).strip():
@@ -918,6 +973,9 @@ def reopen_dossier(dossier_id=None):
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)
+    if scope_err:
+        return scope_err
     if applicant.status != "REJ":
         return _error("INVALID_STATE", "Réouverture possible seulement depuis Rejeté (REJ).", 409)
     applicant.motif_rejet = None
@@ -935,6 +993,9 @@ def notify_pieces_recap(dossier_id=None):
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)
+    if scope_err:
+        return scope_err
     if applicant.status != "SOU":
         return _error("INVALID_STATE", "Notification possible seulement en Soumis (SOU).", 409)
     if notify_pieces_blocked(applicant):
@@ -993,6 +1054,9 @@ def conditional_admission(dossier_id=None):
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)
+    if scope_err:
+        return scope_err
     if applicant.status != "ETU":
         return _error("INVALID_STATE", "Admission conditionnelle possible seulement depuis En étude (ETU).", 409)
     if not applicant.conditionnel:
@@ -1027,6 +1091,9 @@ def lift_condition(dossier_id=None, bourses_validees=None):
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)
+    if scope_err:
+        return scope_err
     if applicant.status != "ACO":
         return _error("INVALID_STATE", "Levée de condition possible seulement depuis admission conditionnelle (ACO).", 409)
     if not applicant.bac_verified:
@@ -1054,6 +1121,9 @@ def refuse_condition(dossier_id=None, motif=None):
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)
+    if scope_err:
+        return scope_err
     if applicant.status != "ACO":
         return _error("INVALID_STATE", "Refus de condition possible seulement depuis admission conditionnelle (ACO).", 409)
     if not motif or not str(motif).strip():
@@ -1117,6 +1187,9 @@ def saisir_note_concours(dossier_id=None, notes=None):
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)
+    if scope_err:
+        return scope_err
     if not _is_prepa(applicant):
         return _error("NOT_PREPA", "Saisie de notes réservée aux dossiers Prépa (concours).", 409)
     if applicant.status != "ETU":
@@ -1144,6 +1217,9 @@ def valider_notes_concours(dossier_id=None):
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)
+    if scope_err:
+        return scope_err
     if not _is_prepa(applicant):
         return _error("NOT_PREPA", "Validation de notes réservée aux dossiers Prépa.", 409)
     if applicant.status != "ETU":  # W6 : validation bornée à l'étude (comme la saisie)
@@ -1172,6 +1248,9 @@ def initiate_online_payment(dossier_id=None, idempotency_key=None, fee_type="app
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)
+    if scope_err:
+        return scope_err
     # W3/B0.5 (AUDIT-MANAGEMENT-BACK #4, ASVS 11.1.5) : garde d'état — miroir des règles
     # candidat. Avant : initiation possible sur dossier REF/DES, et création du frais 2
     # AVANT toute acceptation (incohérence argent/états).
@@ -1235,6 +1314,9 @@ def withdraw(dossier_id=None, motif=None):
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)
+    if scope_err:
+        return scope_err
     if applicant.status not in WITHDRAW_STATES:
         return _error("INVALID_STATE",
                       f"Désistement possible depuis {', '.join(WITHDRAW_STATES)}.", 409)
@@ -1258,6 +1340,9 @@ def set_waitlist_rank(dossier_id=None, rang=None):
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)
+    if scope_err:
+        return scope_err
     if applicant.status != "ATT":
         return _error("INVALID_STATE", "Rang éditable seulement en liste d'attente (ATT).", 409)
     if rang in (None, ""):
@@ -1298,6 +1383,10 @@ def close_session(session=None, motif=None, dry_run=1):
     frappe.only_for(("Admission Direction", "System Manager"))
     if not session or not frappe.db.exists("Admission Session", session):
         return _error("INVALID_SESSION", "Session inconnue.", 404)
+    # FIX-D-CONF-04 (granularité session) : une Direction scopée ne clôture pas une session hors périmètre.
+    from admission.api import permissions as _perm
+    if not _perm.value_in_scope(session, axis_required="session"):
+        return _error("FORBIDDEN_SCOPE", "Session hors de votre périmètre (cloisonnement activé).", 403)
     sess = frappe.get_doc("Admission Session", session)
     rows = frappe.get_all(
         "Admission Applicant",

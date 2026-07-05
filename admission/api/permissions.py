@@ -92,7 +92,11 @@ def get_permission_query_conditions(user=None, doctype=None):
 
 
 def has_permission(doc=None, ptype=None, user=None, debug=False):
-    """Garde par document, tous ptypes. None = défère aux perms normales ; False = refuse."""
+    """Garde par document, tous ptypes. None = défère aux perms normales ; False = refuse.
+
+    FIX-D-CONF-04 : cette même garde (mêmes règle et source que la lecture) est désormais consultée
+    EXPLICITEMENT sur l'écriture (staff._guard_write_scope), car save(ignore_permissions=True)
+    court-circuite le hook. `ptype` reste indifférent : le périmètre lecture == périmètre écriture."""
     user = user or frappe.session.user
     if _is_bypass(user):
         return None
@@ -108,3 +112,22 @@ def has_permission(doc=None, ptype=None, user=None, debug=False):
     if doc is None:
         return None
     return None if str(doc.get(axis)) in allowed else False
+
+
+def value_in_scope(value, axis_required=None, user=None):
+    """FIX-D-CONF-04 (granularité NON-document, ex. close_session au niveau session) : True si `value`
+    est dans le périmètre de `user` pour l'axe courant. Même source que has_permission.
+
+    OFF / bypass → True (aucune restriction : non-régression du mode OFF). Si `axis_required` est fourni
+    et que le cloisonnement porte sur un AUTRE axe → True (pas de sur-blocage : on ne restreint une
+    session que si l'axe actif est bien 'session'). ON + axe concerné + hors périmètre → False."""
+    user = user or frappe.session.user
+    if _is_bypass(user):
+        return True
+    settings = _get_settings()
+    if not settings:
+        return True  # OFF
+    if axis_required and settings["axis"] != axis_required:
+        return True  # cloisonnement sur un autre axe → pas de scoping sur cette valeur
+    matched, allowed = _allowed_values(user, settings["scopes"])
+    return bool(matched and str(value) in allowed)

@@ -183,11 +183,15 @@ def d_conf_03_decision_race():
 
 @F.purge_after
 def d_conf_04_idor_write():
-    """Les 24 endpoints de mutation font `save(ignore_permissions=True)` → le hook `has_permission`
-    n'est JAMAIS consulté sur écriture. Donc même cloisonnement ACTIVÉ (mode ON planifié prod), un
-    Responsable scopé session X peut muter un dossier session Y. Mode OFF (défaut) = tout staff agit
-    sur tout (assumé DEC-262). Le réglage ON est posé en transaction NON commitée puis rollback →
-    aucune config recette partagée n'est modifiée."""
+    """FIX-D-CONF-04 (test-preuve INVERSÉ → gardien du fix). Les mutations consultent désormais le
+    cloisonnement en ÉCRITURE (`_guard_write_scope` → `has_permission`) AVANT `save(ignore_permissions)`.
+
+    Cloisonnement ON (posé NON commité, rollback en finally → config recette JAMAIS modifiée) : un
+    Responsable scopé sur une session ÉTRANGÈRE qui appelle une MUTATION RÉELLE (`waitlist`) est
+    REFUSÉ (`FORBIDDEN_SCOPE` 403) et le dossier n'est PAS muté (reste ETU).
+    Mode OFF (défaut) : la MÊME mutation RÉUSSIT (non-régression stricte : tout le staff agit sur tout).
+    Prouvé real-DB + rôles réels, jamais un mock."""
+    from admission.api import staff
     from admission.api import permissions as PERM
     frappe.set_user("Administrator")
     SETTINGS = "Admission Settings"
@@ -198,42 +202,37 @@ def d_conf_04_idor_write():
     off_defaut = not frappe.db.get_single_value(SETTINGS, "consultation_cloisonnee")
     out = {}
     try:
-        # Cloisonnement ON transitoire : Responsable scopé sur une session ÉTRANGÈRE (NON commité)
+        # Cloisonnement ON transitoire (NON commité) : Responsable scopé sur une session ÉTRANGÈRE.
         frappe.db.set_single_value(SETTINGS, "consultation_cloisonnee", 1)
         frappe.db.set_single_value(SETTINGS, "consultation_axis", "session")
         frappe.db.set_single_value(SETTINGS, "consultation_role_scopes",
                                    frappe.as_json({"Admission Responsable": ["SES-INEXISTANTE-AUDIT"]}))
         frappe.clear_cache()
         doc = frappe.get_doc("Admission Applicant", d)
-        # (a) le hook has_permission BLOQUERAIT bien un accès hors périmètre (il fonctionne)
-        out["has_permission_bloque"] = not PERM.has_permission(doc=doc, ptype="write", user=resp)
+        out["has_permission_bloque"] = (PERM.has_permission(doc=doc, ptype="write", user=resp) is False)
+        # ENDPOINT réel appelé par un acteur HORS périmètre → doit être REFUSÉ (la garde refuse AVANT
+        # tout save/commit → l'ON non-commité est proprement annulé par le rollback).
         frappe.set_user(resp)
-        # (b) save() SANS ignore → has_permission consulté → PermissionError (le cloisonnement protège)
-        doc_check = frappe.get_doc("Admission Applicant", d)
-        doc_check.rang_liste_attente = 41
-        bloque_sans_ignore = False
-        try:
-            doc_check.save()
-        except frappe.PermissionError:
-            bloque_sans_ignore = True
-        out["save_normal_bloque"] = bloque_sans_ignore
-        # (c) MAIS save(ignore_permissions=True) — ce que font TOUTES les 24 mutations — contourne
-        doc2 = frappe.get_doc("Admission Applicant", d)
-        doc2.rang_liste_attente = 42
-        contourne = True
-        try:
-            doc2.save(ignore_permissions=True)
-        except frappe.PermissionError:
-            contourne = False
+        r_on = staff.waitlist(dossier_id=d, rang=7)
         frappe.set_user("Administrator")
-        out["save_ignore_permissions_reussit"] = contourne
+        out["endpoint_refuse"] = (not r_on.get("ok")) and (r_on.get("error") or {}).get("code") == "FORBIDDEN_SCOPE"
+        out["statut_apres_refus"] = frappe.db.get_value("Admission Applicant", d, "status")  # attendu ETU
     finally:
-        frappe.db.rollback()          # réglages cloisonnement JAMAIS commités
+        frappe.db.rollback()          # réglages cloisonnement JAMAIS commités → recette intacte
         frappe.clear_cache()
     frappe.set_user("Administrator")
-    trou = (out.get("has_permission_bloque") and out.get("save_normal_bloque")
-            and out.get("save_ignore_permissions_reussit"))
-    print(f"D-CONF-04:: cloisonnement_off_par_defaut={off_defaut} · {out}")
-    print(f"D-CONF-04:: [{'FINDING REPRODUIT' if trou else 'non reproduit'}] cloisonnement ON : "
-          f"has_permission bloque mais save(ignore_permissions) contourne → IDOR écriture")
-    return {"finding": "D-CONF-04", "reproduit": trou, "off_defaut": off_defaut, **out}
+    # Non-régression OFF (défaut) : la MÊME mutation, même acteur, RÉUSSIT (tout le staff agit sur tout).
+    off_ok = None
+    if off_defaut:
+        frappe.set_user(resp)
+        r_off = staff.waitlist(dossier_id=d, rang=7)
+        frappe.set_user("Administrator")
+        off_ok = bool(r_off.get("ok")) and frappe.db.get_value("Admission Applicant", d, "status") == "ATT"
+    ferme = (out.get("has_permission_bloque") and out.get("endpoint_refuse")
+             and out.get("statut_apres_refus") == "ETU" and (off_ok if off_defaut else True))
+    print(f"D-CONF-04:: off_defaut={off_defaut} · {out} · off_nonregression={off_ok}")
+    print(f"D-CONF-04:: [{'FERMÉ — écriture cloisonnée' if ferme else 'NON fermé'}] "
+          f"ON hors périmètre → {'REFUSÉ (FORBIDDEN_SCOPE), dossier non muté' if out.get('endpoint_refuse') else 'NON refusé'} ; "
+          f"OFF → mutation nominale ({'ok' if off_ok else 'KO'})")
+    return {"finding": "D-CONF-04", "reproduit": (not ferme), "ferme": ferme,
+            "off_defaut": off_defaut, "off_ok": off_ok, **out}
