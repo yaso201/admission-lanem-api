@@ -1,6 +1,7 @@
 """FIX-D-CONF-02 — gestion gracieuse du perdant de la course à la création du frais.
 
-La contrainte unique `(applicant, fee_type)` (patch v1_2) garantit l'invariant EN BASE ; le perdant
+La contrainte unique `(applicant, fee_type)` (patch v1_1 add_applicant_fee_type_unique) garantit
+l'invariant EN BASE ; le perdant
 d'une course concurrente voit son insert lever `UniqueValidationError`. `_ensure_fee` et
 `_ensure_enrollment_fee` doivent alors `rollback()` (REPEATABLE READ : voir le commit du gagnant) puis
 retomber sur le fee existant (idempotence : « garantir qu'il existe » réussit toujours). Miroir R3.

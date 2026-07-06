@@ -764,7 +764,11 @@ def _ensure_fee(applicant, idempotency_key=None):
 			filters={"applicant": applicant.name, "fee_type": fee_type},
 			pluck="name", limit=1,
 		)
-		return frappe.get_doc("Applicant Fee", won[0]) if won else None
+		if not won:
+			# Impossible (un 1062 implique un gagnant DÉJÀ commité → visible après rollback) : fail-loud
+			# plutôt que renvoyer None (que les appelants frais 1 ne null-check pas). Revue D-CONF-02 LOW-1.
+			raise
+		return frappe.get_doc("Applicant Fee", won[0])
 
 
 def _ensure_enrollment_fee(applicant, idempotency_key=None):
@@ -808,7 +812,9 @@ def _ensure_enrollment_fee(applicant, idempotency_key=None):
 			filters={"applicant": applicant.name, "fee_type": "enrollment"},
 			pluck="name", limit=1,
 		)
-		return frappe.get_doc("Applicant Fee", won[0]) if won else None
+		if not won:
+			raise  # cf. _ensure_fee : impossible (1062 ⟹ gagnant visible) → fail-loud, jamais None ici
+		return frappe.get_doc("Applicant Fee", won[0])
 
 
 def _check_enrollment_fee_paid(applicant_name):
