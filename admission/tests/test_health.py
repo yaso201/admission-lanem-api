@@ -41,12 +41,22 @@ class TestHealthCheck(TestCase):
 
     def test_degraded_config_missing_returns_503(self):
         # une clé de config critique manquante → dégradé + HTTP 503 (casse le « 200 trompeur »)
-        res, response = self._run(conf=lambda k: None if k == "uf_backoffice_url" else "x")
+        res, response = self._run(conf=lambda k: None if k == "campus_base_url" else "x")
         self.assertEqual(res["status"], "degraded")
         self.assertFalse(res["ok"])
         self.assertEqual(response["http_status_code"], 503)
         self.assertFalse(res["checks"]["config"]["ok"])
-        self.assertIn("uf_backoffice_url", res["checks"]["config"]["detail"])
+        self.assertIn("campus_base_url", res["checks"]["config"]["detail"])
+
+    def test_uf_absent_is_pending_not_critical(self):
+        # uf_backoffice_url ABSENT = normal tant qu'UF n'est pas en recette → SAIN (200),
+        # mais visible dans le détail (« en attente »). Rebascule critique à l'arrivée d'UF.
+        res, response = self._run(conf=lambda k: None if k == "uf_backoffice_url" else "x")
+        self.assertEqual(res["status"], "healthy")
+        self.assertTrue(res["ok"])
+        self.assertNotIn("http_status_code", response)
+        self.assertTrue(res["checks"]["config"]["ok"])
+        self.assertIn("uf_backoffice_url", res["checks"]["config"]["detail"])   # visibilité conservée
 
     def test_degraded_catalog_empty_returns_503(self):
         res, response = self._run(catalog=(0, 0))

@@ -21,10 +21,12 @@ from admission.api.public import _error, _ok
 _HEALTH_TZ = "Africa/Porto-Novo"
 _CRITICAL_CONF = (
     "campus_base_url",
-    "uf_backoffice_url",
     "candidate_portal_url",
     "admission_payment_webhook_secret",
 )
+# En attente : absent = NORMAL tant que la dépendance n'est pas en recette (visible dans le
+# détail, sans dégrader). ⚠️ Rebasculer dans _CRITICAL_CONF quand UF arrivera en recette.
+_PENDING_CONF = ("uf_backoffice_url",)
 _CLIENT_ERR_MAX_BYTES = 2048
 _CAPS = {"message": 500, "source": 200, "page": 200, "ua": 200, "front": 24}
 
@@ -50,9 +52,14 @@ def _probe_catalog():
 
 
 def _probe_config():
-    """Config critique POSÉE — noms de clés manquantes seulement, JAMAIS les valeurs (0 secret)."""
+    """Config critique POSÉE — noms de clés manquantes seulement, JAMAIS les valeurs (0 secret).
+    Les clés « en attente » (dépendance pas encore en recette) restent VISIBLES sans dégrader."""
     missing = [k for k in _CRITICAL_CONF if not frappe.conf.get(k)]
-    return (not missing), ("complète" if not missing else "manquant: " + ",".join(missing))
+    pending = [k for k in _PENDING_CONF if not frappe.conf.get(k)]
+    detail = "complète" if not missing else "manquant: " + ",".join(missing)
+    if pending:
+        detail += " (en attente: " + ",".join(pending) + ")"
+    return (not missing), detail
 
 
 def _probe_timezone():
