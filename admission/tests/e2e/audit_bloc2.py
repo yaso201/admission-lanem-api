@@ -39,7 +39,35 @@ _REFLETS = {
 
 
 @F.purge_after
+def d_conf_reflets_inproc():
+    """FIX-D-CONF-05/07/08 — preuve real-DB PRE-MERGE (serializer IN-PROCESS : code frais du bench execute,
+    sans restart gunicorn → recette pristine). Chaque état à décision (chemin métier) → _serialize_dossier
+    expose le champ FIDÈLE à la DB. La variante HTTP (`d_conf_reflets_menteurs`) est le gardien LIVE."""
+    from admission.api.public import _serialize_dossier
+    frappe.set_user("Administrator")
+    out = []
+    for etat, champ in _REFLETS.items():
+        res = F.build_to(etat)
+        d = res["dossier_id"]
+        frappe.db.commit()
+        db_val = frappe.db.get_value("Admission Applicant", d, champ)
+        data = _serialize_dossier(frappe.get_doc("Admission Applicant", d))
+        fidele = (champ in data) and bool(db_val) and str(data.get(champ)) == str(db_val)
+        out.append((etat, champ, fidele))
+        print(f"REFLET_INPROC::{etat}::champ={champ} db={db_val!r} serialized={data.get(champ)!r} "
+              f"[{'FIDÈLE' if fidele else 'MENTEUR'}]")
+        F.purge()
+    n = sum(1 for *_, f in out if f)
+    print(f"REFLETS_INPROC::{n}/{len(out)}  (D-CONF-05/07/08 serializer FERMÉ)")
+    return {"fideles": n, "ferme": n == len(out), "detail": out}
+
+
+@F.purge_after
 def d_conf_reflets_menteurs():
+    """FIX-D-CONF-05/07/08 (test-preuve INVERSÉ → gardien du fix). Le staff pose une décision motivée
+    (motif rejet/refus/désistement, rang) ; le serializer candidat l'expose désormais FIDÈLEMENT au
+    candidat concerné. Chemin métier réel pour chaque état. reflet FIDÈLE = champ présent ET == valeur DB
+    (avant : champ ABSENT = reflet menteur)."""
     frappe.set_user("Administrator")
     out = []
     for etat, champ in _REFLETS.items():
@@ -48,15 +76,16 @@ def d_conf_reflets_menteurs():
         frappe.db.commit()
         db_val = frappe.db.get_value("Admission Applicant", d, champ)
         data = _candidate_dossier(d, tok)
-        absent = champ not in data                                # le candidat ne le voit PAS
-        menteur = bool(db_val) and absent                         # posé en DB MAIS invisible candidat
-        out.append((etat, champ, db_val, absent, menteur))
-        print(f"REFLET::{etat}::champ={champ} db={db_val!r} absent_serialisation={absent} "
-              f"[{'MENTEUR' if menteur else 'ok'}]")
+        vu = data.get(champ)                                       # ce que VOIT le candidat
+        fidele = (champ in data) and bool(db_val) and str(vu) == str(db_val)   # présent ET fidèle à la DB
+        out.append((etat, champ, db_val, vu, fidele))
+        print(f"REFLET::{etat}::champ={champ} db={db_val!r} candidat={vu!r} "
+              f"[{'FIDÈLE' if fidele else 'MENTEUR'}]")
         F.purge()
-    n_menteurs = sum(1 for *_, m in out if m)
-    print(f"REFLETS_MENTEURS::{n_menteurs}/{len(out)}  (expected_finding D-CONF-05/07/08)")
-    return {"findings": ["D-CONF-05", "D-CONF-07", "D-CONF-08"], "reflets_menteurs": n_menteurs, "detail": out}
+    n_fideles = sum(1 for *_, f in out if f)
+    print(f"REFLETS_FIDELES::{n_fideles}/{len(out)}  (D-CONF-05/07/08 FERMÉ)")
+    return {"findings": ["D-CONF-05", "D-CONF-07", "D-CONF-08"],
+            "reflets_fideles": n_fideles, "ferme": n_fideles == len(out), "detail": out}
 
 
 # ── (B) Jonction fonctionnelle bout-en-bout ───────────────────────────────────────────────────

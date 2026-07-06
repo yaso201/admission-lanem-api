@@ -891,6 +891,13 @@ def _serialize_dossier(applicant):
 		"conditionnel": bool(applicant.conditionnel),
 		# LOT F (F6) : motif affiché par le front pour la reprise INC (resubmit_complement).
 		"motif_incompletude": applicant.motif_incompletude if applicant.status == "INC" else None,
+		# FIX-D-CONF-05/07/08 : décisions motivées re-consultables par le candidat concerné. ADDITIF +
+		# CONDITIONNEL par statut (même patron que motif_incompletude) → aucune fuite d'un motif hors-état,
+		# aucun accès croisé (get_dossier sert le seul dossier du token). Texte staff fidèle (pas de reformulation).
+		"motif_rejet": applicant.motif_rejet if applicant.status == "REJ" else None,          # D-CONF-05 (HAUT)
+		"motif_refus": applicant.motif_refus if applicant.status == "REF" else None,          # D-CONF-07
+		"motif_desistement": applicant.motif_desistement if applicant.status == "DES" else None,  # D-CONF-07
+		"rang_liste_attente": applicant.rang_liste_attente if applicant.status == "ATT" else None,  # D-CONF-08
 	}
 
 

@@ -535,6 +535,20 @@ def debug_close_scope(session):
     return {"admin": a.get("data"), "dir": d.get("data")}
 
 
+def build_reflet(etat):
+    """FIX-D-CONF-05/07/08 E2E : construit un état à décision motivée (REJ/REF/DES/ATT) par CHEMIN
+    MÉTIER (reject_dossier/refuse/withdraw/waitlist réels) et imprime id + token pour l'ancrage du
+    navigateur (page /suivi candidat). Le motif/rang est posé par le staff — jamais db.set_value."""
+    frappe.set_user("Administrator")
+    res = build_to(etat)
+    frappe.db.commit()
+    d = res["dossier_id"]
+    print(f"FIXTURE_ID::{d}")
+    print(f"FIXTURE_TOKEN::{res['token']}")
+    print(f"FIXTURE_STATUS::{frappe.db.get_value('Admission Applicant', d, 'status')}")
+    return res
+
+
 def stage_reject(dossier):
     """B-3 « resubmit » E2E : depuis un SOP créé par le NAVIGATEUR, confirme le frais 1 (SOP→SOU)
     puis rejette la 1re pièce requise (Administratif) → le candidat verra le motif et pourra
