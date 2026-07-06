@@ -749,8 +749,22 @@ def _ensure_fee(applicant, idempotency_key=None):
 			"idempotency_key": idempotency_key,
 		}
 	)
-	fee.insert(ignore_permissions=True)
-	return fee
+	try:
+		fee.insert(ignore_permissions=True)
+		return fee
+	except frappe.UniqueValidationError:
+		# FIX-D-CONF-02 : perdant de la course à l'index unique (applicant, fee_type) → retombe sur le
+		# fee du gagnant (idempotence). rollback() OBLIGATOIRE : sous REPEATABLE READ, re-lire sans finir
+		# la transaction ne verrait pas le commit concurrent. Miroir R3. (Ce site est appelé AVANT toute
+		# écriture critique — cf. vérif call-sites D-CONF-02 ; sauf create_dossier où la collision est
+		# impossible, applicant fraîchement inséré → handler inatteignable.)
+		frappe.db.rollback()
+		won = frappe.get_all(
+			"Applicant Fee",
+			filters={"applicant": applicant.name, "fee_type": fee_type},
+			pluck="name", limit=1,
+		)
+		return frappe.get_doc("Applicant Fee", won[0]) if won else None
 
 
 def _ensure_enrollment_fee(applicant, idempotency_key=None):
@@ -781,8 +795,20 @@ def _ensure_enrollment_fee(applicant, idempotency_key=None):
 			"idempotency_key": idempotency_key,
 		}
 	)
-	fee.insert(ignore_permissions=True)
-	return fee
+	try:
+		fee.insert(ignore_permissions=True)
+		return fee
+	except frappe.UniqueValidationError:
+		# FIX-D-CONF-02 : perdant de la course à l'index unique (applicant, fee_type) → retombe sur le
+		# fee du gagnant (idempotence). rollback() OBLIGATOIRE (REPEATABLE READ). Tous les call-sites
+		# enrollment appellent cette fonction AVANT toute écriture (cf. vérif D-CONF-02) → rollback sûr.
+		frappe.db.rollback()
+		won = frappe.get_all(
+			"Applicant Fee",
+			filters={"applicant": applicant.name, "fee_type": "enrollment"},
+			pluck="name", limit=1,
+		)
+		return frappe.get_doc("Applicant Fee", won[0]) if won else None
 
 
 def _check_enrollment_fee_paid(applicant_name):

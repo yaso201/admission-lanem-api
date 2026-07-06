@@ -86,49 +86,54 @@ def d_conf_01_argent_terminal():
 
 # ── D-CONF-02 : double frais 2 (pas de contrainte unique applicant+enrollment) ────────────────
 
-def _accept_worker(dossier, site, out, barrier):
+def _ensure_enroll_worker(dossier, site, out, barrier):
+    """Thread réel : chacun ouvre SA connexion/transaction et tente de créer le frais d'inscription
+    du MÊME dossier — la course LATENTE réelle (celle que 2×accept ne reproduisait pas, protégée par
+    le verrou optimiste applicant). Sans contrainte unique → 2 fees ; avec → 1, le perdant retombe."""
+    import admission.api.public as P
     frappe.init(site=site)
     frappe.connect()
     try:
-        barrier.wait(timeout=20)
-        frappe.set_user(F.STAFF["dir"])
-        r = frappe.get_attr("admission.api.staff.accept_admission")(dossier_id=dossier)
-        out.append(("accept", bool(r.get("ok")), (r.get("error") or {}).get("code")))
+        applicant = frappe.get_doc("Admission Applicant", dossier)
+        barrier.wait(timeout=20)                       # départ synchronisé → collision maximale
+        fee = P._ensure_enrollment_fee(applicant)
         frappe.db.commit()
+        out.append(("ensure", fee.name if fee else None, None))
     except Exception as e:
-        out.append(("accept", False, type(e).__name__))
+        out.append(("ensure", None, type(e).__name__))
     finally:
         frappe.destroy()
 
 
 @F.purge_after
 def d_conf_02_double_frais2():
-    """VRAI FINDING (structurel, NON exercé par ce test) : `_ensure_enrollment_fee` (public.py:749) est
-    un check-then-insert SANS contrainte unique (applicant, fee_type) — le seul unique sur Applicant Fee
-    porte sur idempotency_key, passé None → NULLs non-collidants. Aucune protection DB contre 2 frais 2.
-
-    Ce test EXERCE la course 2×accept sur le même ADM : elle est PROTÉGÉE par le verrou optimiste Frappe
-    (load_doc_before_save FOR UPDATE → TimestampMismatch sur le 2e save applicant) → 1 seul frais 2.
-    La fenêtre latente RESTE ouverte hors même-doc (2 candidats submit_enrollment sur un ACC-sans-frais2,
-    cas ONACCEPTED-SILENT) : NON reproductible ici, à couvrir avec un ACC-sans-frais2. Reproduit=False ne
-    signifie donc PAS « corrigé » — l'index unique manque toujours (remédiation = contrainte DB)."""
+    """FIX-D-CONF-02 (test-preuve INVERSÉ → gardien). La contrainte unique `(applicant, fee_type)` sur
+    Applicant Fee garantit STRUCTURELLEMENT « au plus un frais par type ». 2 threads RÉELS créent le
+    frais d'inscription du même dossier EN CONCURRENCE (la course latente réelle, pas 2×accept protégé
+    par le verrou optimiste) → 1 SEUL fee ; le perdant (UniqueValidationError) retombe gracieusement
+    dessus (0 crash). Miroir R3 (l'index est le garant, le code gère le perdant). ≥1 run ici ; le harnais
+    ≥5 runs est joué en Phase 4."""
     frappe.set_user("Administrator")
     site = frappe.local.site
-    res = F.build_to("ADM")
+    res = F.build_to("ADM")                            # ADM = pas encore de frais 2 (créé à l'accept)
     d = res["dossier_id"]
     frappe.db.commit()
     out, barrier = [], threading.Barrier(2)
-    threads = [threading.Thread(target=_accept_worker, args=(d, site, out, barrier)) for _ in range(2)]
+    threads = [threading.Thread(target=_ensure_enroll_worker, args=(d, site, out, barrier)) for _ in range(2)]
     for t in threads:
         t.start()
     for t in threads:
         t.join(timeout=40)
     n_fee2 = frappe.db.count("Applicant Fee", {"applicant": d, "fee_type": "enrollment"})
-    trou = n_fee2 > 1
-    print(f"D-CONF-02:: workers={out} fees_enrollment={n_fee2}")
-    print(f"D-CONF-02:: [{'FINDING REPRODUIT' if trou else 'protégé (TimestampMismatch a filtré)'}] "
-          f"double frais 2 (n={n_fee2})")
-    return {"finding": "D-CONF-02", "reproduit": trou, "n_fee2": n_fee2}
+    fee_names = set(n for _, n, _ in out if n)
+    crashes = [e for *_, e in out if e]
+    index_ok = bool(frappe.db.sql(
+        "SHOW INDEX FROM `tabApplicant Fee` WHERE Key_name='unique_applicant_fee_type'"))
+    ferme = (n_fee2 == 1) and (len(fee_names) == 1) and (not crashes) and index_ok
+    print(f"D-CONF-02:: workers={out} n_fee2={n_fee2} fee_names={fee_names} index={index_ok} crashes={crashes}")
+    print(f"D-CONF-02:: [{'FERMÉ — 1 seul frais, perdant gracieux, index présent' if ferme else 'NON fermé'}]")
+    return {"finding": "D-CONF-02", "reproduit": (not ferme), "ferme": ferme, "n_fee2": n_fee2,
+            "fee_names": list(fee_names), "index": index_ok, "crashes": crashes}
 
 
 # ── D-CONF-03 : décision concurrente (accept ∥ refuse sur le même ADM) ─────────────────────────
