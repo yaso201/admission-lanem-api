@@ -70,7 +70,8 @@ def notify_uf_payment(
             title="UF payment notification failed",
             message=f"payment={_get(payment, 'name')} error={exc}\n{frappe.get_traceback()}",
         )
-        log_event("notify_uf_payment", "failed", dossier_id=_get(applicant, "name"), ref=_get(payment, "name"), error=str(exc), level="error")
+        log_event("notify_uf_payment", "failed", dossier_id=_get(applicant, "name"), ref=_get(payment, "name"), error=str(exc), level="error",
+                  alert_type="uf_payment")  # OBS-2 HIGH : argent commité, UF pas notifié
         return None
 
 
@@ -169,6 +170,9 @@ def on_payment_update(doc, method):
         frappe.logger("notify_uf").error(
             f"UF notification on_update failed (non-blocking): {frappe.get_traceback()}"
         )
+        # OBS-2 HIGH : trace corrélée + alerte (le chemin Desk échouait sans log_event)
+        log_event("notify_uf_payment", "failed_hook", dossier_id=_get(doc, "applicant"),
+                  ref=_get(doc, "name"), level="error", alert_type="uf_payment")
     finally:
         frappe.flags._notifying_uf_payment = False
 
@@ -218,6 +222,9 @@ def on_applicant_abandon(doc, method):
         frappe.logger("notify_uf").error(
             f"UF abandon notification failed (non-blocking): {frappe.get_traceback()}"
         )
+        # OBS-2 HIGH : trace corrélée + alerte (hook abandon)
+        log_event("notify_uf_abandon", "failed_hook", dossier_id=_get(doc, "name"),
+                  level="error", alert_type="uf_abandon")
     finally:
         frappe.flags._notifying_uf_abandon = False
 
@@ -260,7 +267,8 @@ def notify_uf_applicant_abandon(applicant):
             title="UF abandon notification failed",
             message=f"applicant={applicant.name} error={exc}\n{frappe.get_traceback()}",
         )
-        log_event("notify_uf_abandon", "failed", dossier_id=_get(applicant, "name"), error=str(exc), level="error")
+        log_event("notify_uf_abandon", "failed", dossier_id=_get(applicant, "name"), error=str(exc), level="error",
+                  alert_type="uf_abandon")  # OBS-2 HIGH : abandon pas répercuté à UF
         return None
 
 

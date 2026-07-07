@@ -30,6 +30,7 @@ SCHEDULER_JOBS = (  # hooks.py scheduler_events.daily — garde anti-dérive
     "admission.api.notifications.remind_dormant_sop_dossiers",
     "admission.api.retention.notify_expiring_drafts",
     "admission.api.bridge.redrive_bridge_notifications",  # LOT P4
+    "admission.api.alerting.send_daily_digest",  # OBS-2 : digest opérationnel quotidien
 )
 
 

@@ -16,6 +16,8 @@ Fail-closed : clés absentes, réseau en échec ou réponse non-2xx → None (NO
 
 import frappe
 
+from admission.api._log import log_event
+
 BASE_URL = "https://api.kkiapay.me"
 SANDBOX_URL = "https://api-sandbox.kkiapay.me"
 
@@ -69,11 +71,19 @@ def verify_transaction(transaction_id):
 		if not r.ok:
 			frappe.logger("webhook").warning(
 				f"kkiapay verify {transaction_id}: HTTP {r.status_code} {r.text[:200]}")
+			# OBS-2 HIGH : vérification impossible sur un paiement RÉEL (le webhook n'appelle
+			# verify qu'après signature valide + Pending connu) → fail-closed, 0 promotion.
+			log_event("kkiapay_verify", "failed", ref=str(transaction_id),
+			          http_status=r.status_code, level="error", alert_type="kkiapay_verify")
 			return None
 		return r.json()
 	except Exception:
 		frappe.logger("webhook").warning(
 			f"kkiapay verify {transaction_id} failed: {frappe.get_traceback()}")
+		# OBS-2 HIGH : provider injoignable → si KkiaPay tombe, chaque webhook échoue ici
+		# (rafale) — le cooldown produit 1 message, pas N.
+		log_event("kkiapay_verify", "failed", ref=str(transaction_id), level="error",
+		          alert_type="kkiapay_verify")
 		return None
 
 

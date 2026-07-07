@@ -17,23 +17,38 @@ SM_ROLES = ("Admission SM", "System Manager")
 PENDING_STALE_HOURS = 48
 
 
+def _ops_counters():
+    """Compteurs d'exploitation partagés (endpoint SM + digest quotidien OBS-2 — zéro recalcul).
+    Mêmes filtres que les redrive + métriques jusqu'ici invisibles (réconciliation paiement,
+    Email Queue en erreur)."""
+    cutoff = add_to_date(now_datetime(), hours=-PENDING_STALE_HOURS)
+    return {
+        "uf_unreplicated": frappe.db.count(
+            "Applicant Fee Payment", {"payment_status": "Confirmed", "uf_notified": 0}),
+        "bridge_pending": frappe.db.count(
+            "Admission Applicant",
+            {"status": "INS", "anonymized": ["!=", 1], "bridge_notified": ["!=", 1]}),
+        "pending_online_stale": frappe.db.count(
+            "Applicant Fee Payment",
+            {"payment_status": "Pending", "payment_mode": "Online", "creation": ["<", cutoff]}),
+        # OBS-2 : file de réconciliation argent (DEC-4 « jamais de drop » → chaque trace compte)
+        "orphan_refund_due": frappe.db.count(
+            "Applicant Fee Payment", {"reconciliation": "Orphan - refund due"}),
+        "underpaid_review": frappe.db.count(
+            "Applicant Fee Payment", {"reconciliation": "Underpaid - review"}),
+        "refused_terminal": frappe.db.count(
+            "Applicant Fee Payment", {"reconciliation": "Refused - terminal state (refund due)"}),
+        # OBS-2 : mails en échec (natif Frappe) — un digest qui ne part pas se voit ici demain
+        "email_queue_error": frappe.db.count("Email Queue", {"status": "Error"}),
+    }
+
+
 @frappe.whitelist(methods=["GET"])
 def get_ops_health():
-    """Compteurs d'exploitation (mêmes filtres que les redrive) — aide à la décision SM."""
+    """Compteurs d'exploitation (mêmes filtres que les redrive) — aide à la décision SM.
+    OBS-2 : clés additionnelles (additif — le front ignore les clés inconnues)."""
     frappe.only_for(SM_ROLES)
-    uf_unreplicated = frappe.db.count(
-        "Applicant Fee Payment", {"payment_status": "Confirmed", "uf_notified": 0})
-    bridge_pending = frappe.db.count(
-        "Admission Applicant", {"status": "INS", "anonymized": ["!=", 1], "bridge_notified": ["!=", 1]})
-    cutoff = add_to_date(now_datetime(), hours=-PENDING_STALE_HOURS)
-    pending_online_stale = frappe.db.count(
-        "Applicant Fee Payment",
-        {"payment_status": "Pending", "payment_mode": "Online", "creation": ["<", cutoff]})
-    return _ok({
-        "uf_unreplicated": uf_unreplicated,
-        "bridge_pending": bridge_pending,
-        "pending_online_stale": pending_online_stale,
-    })
+    return _ok(_ops_counters())
 
 
 @frappe.whitelist()

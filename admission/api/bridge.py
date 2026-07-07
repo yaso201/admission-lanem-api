@@ -66,7 +66,8 @@ def _check_business_status(result, success_statuses, *, step, dossier_id):
     status = _business_status(result)
     if status in success_statuses:
         return status
-    log_event(step, "failed", dossier_id=dossier_id, error=f"business_status={status!r}", level="error")
+    log_event(step, "failed", dossier_id=dossier_id, error=f"business_status={status!r}", level="error",
+              alert_type=step)  # OBS-2 HIGH : step ∈ {bridge_inscription, uf_double_check} = types curés
     raise BridgeRejected(f"{step}: statut métier d'échec reçu du récepteur: {status!r}")
 
 
@@ -179,7 +180,8 @@ def _send_bridge_notification(applicant_name):
         frappe.db.commit()
         return result
     except requests.RequestException as exc:
-        log_event("bridge_inscription", "failed", dossier_id=applicant_name, error=str(exc), level="error")
+        log_event("bridge_inscription", "failed", dossier_id=applicant_name, error=str(exc), level="error",
+                  alert_type="bridge_inscription")  # OBS-2 HIGH : étudiant pas créé côté campus
         _mark_bridge(applicant_name, ok=False, error=exc)
         frappe.db.commit()
         raise
@@ -229,7 +231,8 @@ def _send_double_check(applicant_name):
         log_event("uf_double_check", "success", dossier_id=applicant_name, business_status=status)
         return result
     except requests.RequestException as exc:
-        log_event("uf_double_check", "failed", dossier_id=applicant_name, error=str(exc), level="error")
+        log_event("uf_double_check", "failed", dossier_id=applicant_name, error=str(exc), level="error",
+                  alert_type="uf_double_check")  # OBS-2 HIGH : réconciliation UF cassée
         raise
 
 

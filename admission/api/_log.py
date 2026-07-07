@@ -14,7 +14,7 @@ import json
 import frappe
 
 
-def log_event(step, status, *, dossier_id=None, ref=None, level="info", **fields):
+def log_event(step, status, *, dossier_id=None, ref=None, level="info", alert_type=None, **fields):
     """Émet un log applicatif structuré et corrélable.
 
     Args:
@@ -24,6 +24,9 @@ def log_event(step, status, *, dossier_id=None, ref=None, level="info", **fields
         ref: clé non-PII alternative (idempotency_key / provider_reference) quand dossier_id
              n'existe pas encore (pré-insert) ou hors contexte dossier (webhook).
         level: "info" | "warning" | "error" (défaut "info").
+        alert_type: OBS-2 — marque un point HIGH curé : route l'événement vers l'alerte
+             temps réel (Telegram) EN PLUS du log. Réservé à l'ensemble curé (~8 types) —
+             ne pas poser sur tout (garantie anti-volume, le reste va au digest).
         **fields: champs additionnels NON-PII uniquement.
 
     Non-bloquant : un échec de logging ne doit jamais interrompre le flux métier.
@@ -41,3 +44,12 @@ def log_event(step, status, *, dossier_id=None, ref=None, level="info", **fields
     except Exception:
         # Le logging ne casse jamais le métier (cohérent OBS-1 : non-bloquant).
         pass
+    if alert_type:
+        # OBS-2 : import paresseux (acyclique — alerting n'importe jamais _log) ; allowlist
+        # STRICTE dossier_id/ref (identifiants internes) — le texte libre (error, fields)
+        # n'est JAMAIS transmis à l'alerte (anti-PII). L'échec d'alerte ne casse rien.
+        try:
+            from admission.api.alerting import send_high_alert
+            send_high_alert(alert_type, dossier_id=dossier_id, ref=ref)
+        except Exception:
+            pass

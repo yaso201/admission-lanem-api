@@ -1739,6 +1739,9 @@ def _notify_uf_safe(applicant, fee, payment):
 		frappe.logger("public").error(
 			f"UF notification failed (non-blocking): {frappe.get_traceback()}"
 		)
+		# OBS-2 HIGH : trace corrélée + alerte (chemin public — argent commité, UF pas notifié)
+		log_event("notify_uf_payment", "failed_wrapper", dossier_id=getattr(applicant, "name", None),
+		          ref=getattr(payment, "name", None), level="error", alert_type="uf_payment")
 
 
 def apply_confirmed_payment_cascade(applicant, fee):

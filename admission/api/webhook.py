@@ -121,6 +121,9 @@ def _promote_payment(existing, transaction_id, reference, reconciliation=None):
 	except Exception:
 		frappe.log_error(title="UF payment notification (webhook post-commit) failed",
 		                 message=frappe.get_traceback())  # non-bloquant : paiement déjà commité
+		# OBS-2 HIGH : argent commité, UF pas notifié — trace corrélée + alerte temps réel
+		log_event("webhook_payment", "uf_notify_failed", dossier_id=applicant.name, ref=reference,
+		          level="error", alert_type="uf_payment")
 	send_payment_receipt(existing, applicant=applicant, fee=fee)  # reçu online (non-bloquant)
 	log_event("webhook_payment", "success", dossier_id=applicant.name, ref=reference)
 	return True
@@ -135,7 +138,8 @@ def _refuse_terminal(existing, transaction_id, reference, status):
 	                     "provider_transaction_id": transaction_id}, update_modified=False)
 	frappe.db.commit()
 	log_event("webhook_payment", "refused_terminal_state",
-	          dossier_id=getattr(existing, "applicant", None), ref=reference, level="warning")
+	          dossier_id=getattr(existing, "applicant", None), ref=reference, level="warning",
+	          alert_type="payment_refused_terminal")  # OBS-2 HIGH : argent bougé sur dossier mort
 
 
 def _orphan_trace(existing, transaction_id, reference):
@@ -147,7 +151,8 @@ def _orphan_trace(existing, transaction_id, reference):
 	                     "provider_transaction_id": transaction_id}, update_modified=False)
 	frappe.db.commit()
 	log_event("webhook_payment", "orphan_refund_due",
-	          dossier_id=getattr(existing, "applicant", None), ref=reference, level="warning")
+	          dossier_id=getattr(existing, "applicant", None), ref=reference, level="warning",
+	          alert_type="payment_orphan")  # OBS-2 HIGH : argent bougé, refund OPS dû
 	return _ok({"accepted": True, "transition": None, "promoted": False, "orphan": True})
 
 
@@ -235,7 +240,8 @@ def payment():
 		                     "provider_transaction_id": transaction_id}, update_modified=False)
 		frappe.db.commit()
 		log_event("webhook_payment", "underpaid",
-		          dossier_id=getattr(existing, "applicant", None), ref=reference, level="warning")
+		          dossier_id=getattr(existing, "applicant", None), ref=reference, level="warning",
+		          alert_type="payment_underpaid")  # OBS-2 HIGH : argent bougé, montant insuffisant
 		return _error("AMOUNT_MISMATCH", "Montant verifie inferieur au montant attendu.", 409)
 
 	# (4) verify=SUCCESS + montant OK.

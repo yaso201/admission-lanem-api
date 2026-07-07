@@ -128,4 +128,11 @@ def log_client_error():
         col=_cap_int(data.get("col")),
         ua=str(data.get("ua") or "")[:_CAPS["ua"]],
     )
+    # OBS-2 : compteur de pic — le SEUIL franchi déclenche UNE alerte (pas une par erreur).
+    # Import paresseux + try/except : l'endpoint public ne peut jamais 500 à cause de l'alerte.
+    try:
+        from admission.api.alerting import note_client_error
+        note_client_error()
+    except Exception:
+        pass
     return _ok({"logged": True})

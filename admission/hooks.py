@@ -175,6 +175,8 @@ scheduler_events = {
 		"admission.api.notifications.send_pieces_reminders",
 		# LOT P4 : rattrapage du pont INS (un étudiant non créé côté campus n'est plus un silence).
 		"admission.api.bridge.redrive_bridge_notifications",
+		# OBS-2 : bilan opérationnel quotidien (compteurs _ops_counters → mail + copie Telegram).
+		"admission.api.alerting.send_daily_digest",
 	],
 }
 
