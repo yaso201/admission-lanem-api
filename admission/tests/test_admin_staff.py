@@ -42,7 +42,9 @@ class TestAdminStaff(FrappeTestCase):
         with patch("frappe.sendmail"):
             res = A.create_staff(full_name="Test Staff", email=EMAIL, role="Admission Administratif")
         self.assertTrue(res["ok"])
-        self.assertEqual(frappe.db.get_value("User", EMAIL, "user_type"), "System User")
+        # FIX-STAFF-DESK-LOCK : le staff naît Website User (rôles desk_access=0 → recompute Frappe),
+        # PAS System User — il n'atteint jamais le desk /app.
+        self.assertEqual(frappe.db.get_value("User", EMAIL, "user_type"), "Website User")
         self.assertIn("Admission Administratif", frappe.get_roles(EMAIL))
 
         res = A.set_staff_role(email=EMAIL, role="Admission Responsable")
@@ -85,9 +87,40 @@ class TestAdminStaff(FrappeTestCase):
 
     # ── liste ──
     def test_list_staff_includes_created(self):
+        # FIX-STAFF-DESK-LOCK (Test 5 basculé) : le staff Website User doit être VISIBLE
+        # (le filtre user_type==System User l'excluait → 0). Devient le gardien du fix.
         with patch("frappe.sendmail"):
             A.create_staff(full_name="Test Staff", email=EMAIL, role="Admission Direction")
         res = A.list_staff()
         self.assertTrue(res["ok"])
         emails = {s["email"] for s in res["data"]["staff"]}
         self.assertIn(EMAIL, emails)
+
+    # ── FIX-STAFF-DESK-LOCK : cohérence de la triade (sécurité) ──
+    def test_created_staff_is_desk_locked(self):
+        # GS1/GS4 : cœur sécurité — un staff créé n'atteint JAMAIS le desk /app.
+        with patch("frappe.sendmail"):
+            A.create_staff(full_name="Test Staff", email=EMAIL, role="Admission Administratif")
+        user = frappe.get_doc("User", EMAIL)
+        self.assertFalse(user.has_desk_access())                  # 0 accès /app
+        self.assertEqual(user.user_type, "Website User")
+
+    def test_staff_roles_are_desk_locked(self):
+        # Garde-invariant : le desk-lock repose sur desk_access=0 des 4 rôles. Si un rôle
+        # renaît desk_access=1 (dérive), le staff redeviendrait System User = /app → ce test tombe.
+        for role in A.ASSIGNABLE_ROLES:
+            self.assertEqual(int(frappe.db.get_value("Role", role, "desk_access") or 0), 0,
+                             f"{role} doit rester desk_access=0 (invariant desk-lock)")
+
+    def test_create_staff_alerts_on_desk_access_drift(self):
+        # Défense en profondeur (post-check) : si un compte créé a malgré tout l'accès desk
+        # (rôle mal configuré desk_access=1), create_staff alerte ops (OBS-2), sans bloquer.
+        with patch("frappe.sendmail"), \
+             patch("frappe.core.doctype.user.user.User.has_desk_access", return_value=True), \
+             patch.object(A, "log_event") as mlog:
+            res = A.create_staff(full_name="Test Staff", email=EMAIL, role="Admission Finance")
+        self.assertTrue(res["ok"])                                # non-bloquant : compte créé
+        drift = [c for c in mlog.call_args_list if c.args and c.args[0] == "staff_desk_access"]
+        self.assertTrue(drift, "un drift desk_access doit émettre une alerte OBS-2")
+        self.assertEqual(drift[0].kwargs.get("alert_type"), "staff_desk_access")
+        self.assertEqual(drift[0].kwargs.get("level"), "error")

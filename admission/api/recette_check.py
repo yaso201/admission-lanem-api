@@ -205,6 +205,20 @@ def _check_staff_roles():
     return PASS, "3 rôles + ≥1 utilisateur actif chacun"
 
 
+def _check_staff_desk_lock():
+    """FIX-STAFF-DESK-LOCK — filet anti-drift : les 4 rôles staff DOIVENT rester desk_access=0
+    (staff hors du Desk Frappe /app). Un rôle à desk_access=1 = staff avec accès Desk brut →
+    trou de sécurité. Le desk-lock est posé par un patch one-shot ; cette gate le VÉRIFIE à
+    chaque déploiement (anti-dérive : ré-import, edit manuel, nouveau rôle)."""
+    from admission.api.admin_staff import ASSIGNABLE_ROLES
+    leaky = [r for r in ASSIGNABLE_ROLES
+             if frappe.db.exists("Role", r)
+             and int(frappe.db.get_value("Role", r, "desk_access") or 0) == 1]
+    if leaky:
+        return FAIL, "rôles staff avec accès Desk (desk_access=1) : " + ", ".join(leaky) + " — staff atteindrait /app"
+    return PASS, f"{len(ASSIGNABLE_ROLES)} rôles staff desk-lockés (desk_access=0)"
+
+
 def _check_scheduler():
     from frappe.utils.scheduler import is_scheduler_disabled
     if is_scheduler_disabled(verbose=False):
@@ -278,6 +292,7 @@ CHECKS = [
     ("MODE-dev", "developer_mode désactivé", _check_dev_mode),
     ("MODE-otp", "expose_dev_otp absent", _check_expose_dev_otp),
     ("MODE-tests", "allow_tests absent", _check_allow_tests),
+    ("SEC-desk-lock", "Staff hors Desk Frappe (desk_access=0)", _check_staff_desk_lock),
     ("MODE-cors", "allow_cors = origine(s) prod", _check_cors),
     # ── Mails ──
     ("MAIL-smtp", "Email Account sortant par défaut", _check_outgoing_email),

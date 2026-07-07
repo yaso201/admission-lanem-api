@@ -66,9 +66,15 @@ def list_staff():
         by_user.setdefault(r.parent, []).append(r.role)
     staff = []
     for user, roles in by_user.items():
+        # FIX-STAFF-DESK-LOCK : le staff est DÉFINI par la détention d'un rôle assignable
+        # (déjà filtré dans by_user), PAS par user_type. L'ancien filtre `!= "System User"`
+        # excluait tout le staff (Website User par desk-lock) → liste vide. On liste les
+        # porteurs de rôle et on écarte seulement les comptes protégés (SM/SysMgr/Admin).
+        if _is_protected(user):
+            continue
         u = frappe.db.get_value(
             "User", user, ["enabled", "full_name", "last_login", "user_type"], as_dict=True)
-        if not u or u.user_type != "System User":
+        if not u:
             continue
         staff.append({
             "email": user,
@@ -76,6 +82,7 @@ def list_staff():
             "roles": sorted(roles),
             "enabled": bool(u.enabled),
             "last_login": str(u.last_login or ""),
+            "user_type": u.user_type,          # exposé pour info, jamais critère de filtrage
         })
     staff.sort(key=lambda x: x["full_name"].lower())
     return _ok({"staff": staff, "total": len(staff)})
@@ -101,12 +108,21 @@ def create_staff(full_name=None, email=None, role=None):
         "email": email,
         "first_name": parts[0],
         "last_name": parts[1] if len(parts) > 1 else "",
-        "user_type": "System User",
+        # FIX-STAFF-DESK-LOCK : intention explicite = staff HORS desk. Frappe recompute de toute
+        # façon user_type depuis has_desk_access() (rôles desk_access=0) → Website User ; on aligne
+        # le doc sur la réalité (fin de l'ancien "System User" trompeur).
+        "user_type": "Website User",
         "send_welcome_email": 1,
         "enabled": 1,
     })
     user.insert(ignore_permissions=True)
     user.add_roles(role)
+    # Défense en profondeur (post-check) : le staff NE DOIT PAS atteindre le desk /app.
+    # has_desk_access()=True ⟹ un rôle staff a desk_access=1 (dérive de config systémique) →
+    # invariant desk-lock rompu → alerte ops OBS-2 (non-bloquant : le compte reste créé).
+    if frappe.get_doc("User", email).has_desk_access():
+        log_event("staff_desk_access", "invariant_broken", ref=_ref(email), role=role,
+                  level="error", alert_type="staff_desk_access")
     log_event("admin_create_staff", "success", ref=_ref(email), role=role)
     return _ok({"email": email, "role": role, "enabled": True})
 
