@@ -129,7 +129,7 @@
    "fieldname": "reconciliation",
    "fieldtype": "Select",
    "label": "Reconciliation (D-OBS-01)",
-   "options": "\nPromoted late\nOrphan - refund due\nStale - awaiting webhook\nUnderpaid - review",
+   "options": "\nPromoted late\nOrphan - refund due\nStale - awaiting webhook\nUnderpaid - review\nRefused - terminal state (refund due)",
    "in_standard_filter": 1,
    "read_only": 1
   },

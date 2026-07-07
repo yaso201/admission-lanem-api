@@ -15,6 +15,8 @@ import json
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
+import frappe
+
 A = "admission.api.alerting"
 L = "admission.api._log"
 O = "admission.api.admin_ops"
@@ -203,6 +205,19 @@ class TestOpsCounters(TestCase):
             self.assertIn("Underpaid - review", flat)
             self.assertIn("Refused - terminal state (refund due)", flat)
             self.assertIn("Email Queue", flat)
+
+
+class TestReconciliationOption(TestCase):
+    def test_refused_terminal_is_valid_select_option(self):
+        # GA8 / D-RECONCILE-OPTION : la valeur écrite par _refuse_terminal (webhook, db.set_value)
+        # doit être une option Select VALIDE → un save() ORM ultérieur ne lève plus.
+        doc = frappe.new_doc("Applicant Fee Payment")
+        doc.reconciliation = "Refused - terminal state (refund due)"
+        doc._validate_selects()                         # lèverait si l'option manquait au Select
+        # sanity négatif : une valeur hors options lève bien (la garde fonctionne)
+        doc.reconciliation = "Valeur inexistante xyz"
+        with self.assertRaises(frappe.exceptions.ValidationError):
+            doc._validate_selects()
 
 
 class TestDailyDigest(TestCase):
