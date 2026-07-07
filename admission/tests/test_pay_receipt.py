@@ -81,8 +81,12 @@ class TestConfirmWiresReceipt(TestCase):
     def test_confirm_offline_payment_sends_receipt(self):
         pay = MagicMock(); pay.payment_status = "Pending"; pay.name = "REC-1"; pay.applicant_fee = "AFF-1"
         applicant = MagicMock(); fee = MagicMock()
+        # TEST-HYGIENE : mock aligné sur la garde amont B1 (_assert_fee_unpaid, 02/07 — le mock
+        # antérieur laissait courir la VRAIE garde avec un fee.name MagicMock → erreur SQL).
+        # autospec=True (V-LEARN-MOCK-FIDELITY-25) ; None = fee libre → chemin nominal préservé.
         with patch(f"{STAFF}.frappe") as mf, \
              patch(f"{STAFF}._resolve_pending_payment", return_value=pay), \
+             patch(f"{STAFF}._assert_fee_unpaid", autospec=True, return_value=None), \
              patch(f"{STAFF}.apply_confirmed_payment_cascade"), \
              patch(f"{STAFF}.send_payment_receipt") as send, \
              patch(f"{STAFF}._ok", side_effect=lambda d: {"ok": True, **d}), \

@@ -31,6 +31,10 @@ SCHEDULER_JOBS = (  # hooks.py scheduler_events.daily — garde anti-dérive
     "admission.api.retention.notify_expiring_drafts",
     "admission.api.bridge.redrive_bridge_notifications",  # LOT P4
     "admission.api.alerting.send_daily_digest",  # OBS-2 : digest opérationnel quotidien
+    # TEST-HYGIENE (D-SCHEDULER-DRIFT) : 2 jobs qui TOURNAIENT déjà mais absents de la liste —
+    # le gate anti-drift était aveugle sur eux (il ne vérifiait que 10/12).
+    "admission.api.catalogue_sync.sync_catalogue",
+    "admission.api.notifications.send_pieces_reminders",
 )
 
 

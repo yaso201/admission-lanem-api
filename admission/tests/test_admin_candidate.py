@@ -18,6 +18,17 @@ from admission.api import admin_candidate as C
 EMAIL = "lb-cand@lanem.test"
 
 
+def _redis_up():
+    """TEST-HYGIENE — probe runtime : les tests throttle/reissue touchent le VRAI redis-cache
+    (setex/keys). Redis down (dev sans bench start) → skip PROPRE, pas fail ; redis up
+    (recette/CI) → les tests s'exécutent réellement. Skip ≠ suppression."""
+    try:
+        frappe.cache.ping()
+        return True
+    except Exception:
+        return False
+
+
 class TestAdminCandidate(FrappeTestCase):
 
     def setUp(self):
@@ -46,6 +57,8 @@ class TestAdminCandidate(FrappeTestCase):
             C.clear_candidate_throttle(dossier_id=self.name)["error"]["code"], "MOTIF_REQUIRED")
 
     def test_clear_throttle_purges_rl_keys(self):
+        if not _redis_up():
+            self.skipTest("redis cache indisponible (env dev) — test valide seulement redis up")
         raw = frappe.cache.make_key(f"rl:admission.api.public.request_otp:1.2.3.4:{self.name}")
         frappe.cache.setex(raw, 120, 1)
         self.assertTrue(frappe.cache.keys(frappe.cache.make_key(f"rl:*{self.name}")))
@@ -56,6 +69,8 @@ class TestAdminCandidate(FrappeTestCase):
 
     # ── reissue ──
     def test_reissue_rotates_token_and_resets_otp_no_token_leak(self):
+        if not _redis_up():
+            self.skipTest("redis cache indisponible (env dev) — test valide seulement redis up")
         old_hash = frappe.db.get_value("Admission Applicant", self.name, "dossier_token_hash")
         with patch("admission.api.notifications.send_recovery_link") as send:
             res = C.reissue_candidate_access(dossier_id=self.name, motif="boîte mail récupérée")
