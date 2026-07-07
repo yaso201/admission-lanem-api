@@ -36,7 +36,9 @@ class TestItem1ScheduledJobFailed(TestCase):
 class TestItem2ExpireStaleHeartbeat(TestCase):
     def test_run_summary_logged_at_error_level(self):
         P = "admission.api.public"
-        with patch(f"{P}.frappe") as mf, patch(f"{P}.log_event") as mlog, \
+        # autospec=True : le mock respecte la VRAIE signature de log_event → une collision de
+        # nom de champ (ex. step=, qui heurte le 1er positionnel) lève au test (leçon Phase 4).
+        with patch(f"{P}.frappe") as mf, patch(f"{P}.log_event", autospec=True) as mlog, \
              patch(f"{P}.add_to_date", return_value="CUT"), patch(f"{P}.now_datetime", return_value="NOW"):
             mf.get_all.return_value = ["P1", "P2", "P3"]
             from admission.api.public import expire_stale_online_pending
@@ -52,7 +54,7 @@ class TestItem3RetentionStepError(TestCase):
         R = "admission.api.retention"
         boom = MagicMock(side_effect=Exception("purge boom"))
         boom.__name__ = "purge_expired_otp"                            # en prod = vraie fonction
-        with patch(f"{R}.frappe") as mf, patch(f"{R}.log_event") as mlog, \
+        with patch(f"{R}.frappe") as mf, patch(f"{R}.log_event", autospec=True) as mlog, \
              patch(f"{R}.purge_expired_otp", boom), \
              patch(f"{R}.purge_abandoned_dossiers", return_value={}), \
              patch(f"{R}.purge_terminal_dossiers", return_value={}):
@@ -61,14 +63,14 @@ class TestItem3RetentionStepError(TestCase):
             call = next(c for c in mlog.call_args_list if c.args[0] == "retention_run")
             self.assertEqual(call.args[1], "step_failed")
             self.assertEqual(call.kwargs["level"], "error")
-            self.assertEqual(call.kwargs["step"], "purge_expired_otp")
+            self.assertEqual(call.kwargs["job_step"], "purge_expired_otp")  # job_step, pas step (collision)
 
 
 class TestItem4TransitionLogError(TestCase):
     def test_transition_log_failure_logged_at_error(self):
         P = "admission.api.public"
         D = "admission.admission.doctype.admission_applicant.admission_applicant"
-        with patch(f"{P}.frappe") as mf, patch(f"{P}.log_event") as mlog, \
+        with patch(f"{P}.frappe") as mf, patch(f"{P}.log_event", autospec=True) as mlog, \
              patch(f"{D}._detect_transition_context", return_value=("src", "act")), \
              patch(f"{D}.write_transition_log", side_effect=Exception("audit boom")):
             from admission.api.public import _record_candidate_transition

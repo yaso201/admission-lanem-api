@@ -212,7 +212,9 @@ def scheduled_retention_run():
 			)
 			# OBS-3 item 3 : conformité rétention — une étape de purge qui casse cesse d'être
 			# avalée ; trace corrélée/structurée en error (à côté du logger texte).
-			log_event("retention_run", "step_failed", step=step.__name__, error=str(exc), level="error")
+			# NB : champ `job_step` (PAS `step`) — `step` est le 1er param positionnel de log_event
+			# (collision → TypeError, invisible au mock, attrapé en preuve recette réelle).
+			log_event("retention_run", "step_failed", job_step=step.__name__, error=str(exc), level="error")
 	frappe.db.commit()
 	frappe.logger("retention").info(f"Retention run complete: {summary}")
 	return summary
