@@ -1475,6 +1475,10 @@ def _record_candidate_transition(applicant_name, from_status, to_status):
 		)
 	except Exception:
 		frappe.logger("public").warning(f"Transition log (candidate) failed: {frappe.get_traceback()}")
+		# OBS-3 item 4 : la piste d'audit d'une re-soumission ne doit pas disparaître en silence
+		# (warning = invisible au niveau logger). Trace corrélée en error.
+		log_event("transition_log", "failed", dossier_id=applicant_name,
+		          from_status=from_status, to_status=to_status, level="error")
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
@@ -1854,6 +1858,11 @@ def expire_stale_online_pending(older_than_hours=48):
 	for name in names:
 		frappe.db.set_value("Applicant Fee Payment", name, "reconciliation",
 		                    "Stale - awaiting webhook", update_modified=False)
+	# OBS-3 item 2 : ce job ARGENT tournait sans aucune trace. Battement de cœur en error
+	# (V-LEARN-LOGLEVEL-23 : info serait invisible) — 1 ligne/jour, exception assumée pour un
+	# job argent muet (ne PAS généraliser aux autres jobs). Un échec, lui, propage → Scheduled
+	# Job Log = Failed, capté par scheduled_job_failed_24h (item 1).
+	log_event("expire_stale_run", "done", marked=len(names), level="error")
 	return len(names)
 
 

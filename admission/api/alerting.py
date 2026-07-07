@@ -174,6 +174,19 @@ def send_daily_digest():
             if over:
                 alerts += 1
             lines.append(f"- {key}: {value}" + (f" ⚠️ (seuil {seuil})" if over else ""))
+        # OBS-3 item 6 : ligne santé — rejoue les 4 sondes health (0 recalcul, import lazy
+        # acyclique) → borne la dérive config à 24h MÊME sans uptime souscrit.
+        try:
+            from admission.api.health import _run_checks
+            hz_ok, hz_checks = _run_checks()
+            ko = [k for k, v in hz_checks.items() if not v.get("ok")]
+            # précédence explicite (revue L1) : le suffixe « sondes ko » est indépendant du
+            # verdict — robuste même si un jour healthy≠(ko vide).
+            suffix = f" (sondes ko: {','.join(ko)})" if ko else ""
+            lines.append("Santé: " + ("healthy" if hz_ok else "degraded") + suffix)
+        except Exception:
+            lines.append("Santé: indisponible")
+
         site = getattr(frappe.local, "site", "") or ""
         subject = (f"[admission {site}] Bilan opérationnel quotidien — "
                    + (f"{alerts} point(s) d'attention" if alerts else "RAS"))

@@ -20,6 +20,8 @@ from __future__ import annotations
 import frappe
 from frappe.utils import add_days, now_datetime
 
+from admission.api._log import log_event
+
 
 ANON_PLACEHOLDER = "[REDACTED]"
 
@@ -204,10 +206,13 @@ def scheduled_retention_run():
 	for step in (purge_expired_otp, purge_abandoned_dossiers, purge_terminal_dossiers):
 		try:
 			summary.update(step())
-		except Exception:
+		except Exception as exc:
 			frappe.logger("retention").error(
 				f"Retention step {step.__name__} failed: {frappe.get_traceback()}"
 			)
+			# OBS-3 item 3 : conformité rétention — une étape de purge qui casse cesse d'être
+			# avalée ; trace corrélée/structurée en error (à côté du logger texte).
+			log_event("retention_run", "step_failed", step=step.__name__, error=str(exc), level="error")
 	frappe.db.commit()
 	frappe.logger("retention").info(f"Retention run complete: {summary}")
 	return summary

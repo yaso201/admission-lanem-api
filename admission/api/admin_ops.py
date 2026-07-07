@@ -40,6 +40,10 @@ def _ops_counters():
             "Applicant Fee Payment", {"reconciliation": "Refused - terminal state (refund due)"}),
         # OBS-2 : mails en échec (natif Frappe) — un digest qui ne part pas se voit ici demain
         "email_queue_error": frappe.db.count("Email Queue", {"status": "Error"}),
+        # OBS-3 : jobs scheduler en échec sur 24h (statut Failed natif) — couvre les 11 jobs
+        # d'un coup ; un job argent/état qui plante n'est plus un « Complete » trompeur invisible.
+        "scheduled_job_failed_24h": frappe.db.count(
+            "Scheduled Job Log", {"status": "Failed", "creation": [">", add_to_date(now_datetime(), hours=-24)]}),
     }
 
 

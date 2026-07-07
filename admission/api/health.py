@@ -23,6 +23,12 @@ _CRITICAL_CONF = (
     "campus_base_url",
     "candidate_portal_url",
     "admission_payment_webhook_secret",
+    # OBS-3 : clés marchand KkiaPay — absentes = tous les paiements échouent fail-closed
+    # EN SILENCE (verify_transaction → None). Angle mort classe A : sans ça, health « ment »
+    # (healthy) pendant que l'encaissement est mort. Recette les a (3/3) → 0 fausse alarme.
+    "kkiapay_public_key",
+    "kkiapay_private_key",
+    "kkiapay_secret_key",
 )
 # En attente : absent = NORMAL tant que la dépendance n'est pas en recette (visible dans le
 # détail, sans dégrader). ⚠️ Rebasculer dans _CRITICAL_CONF quand UF arrivera en recette.
@@ -72,10 +78,9 @@ _PROBES = (("db", _probe_db), ("catalog", _probe_catalog),
            ("config", _probe_config), ("timezone", _probe_timezone))
 
 
-@frappe.whitelist(allow_guest=True, methods=["GET"])
-def check():
-    """Bilan de santé RÉEL. `healthy` seulement si TOUTES les vraies dépendances répondent ; sinon
-    `degraded` + **HTTP 503** (détectable par un uptime bête — le 200 par défaut ne prouve rien)."""
+def _run_checks():
+    """Rejoue les 4 sondes → (healthy, checks). Partagé par l'endpoint check() ET le digest OBS-3
+    (0 recalcul, sans effet de bord HTTP). Chaque sonde try/except → ne peut pas lever."""
     checks = {}
     for name, probe in _PROBES:
         try:
@@ -83,7 +88,14 @@ def check():
         except Exception:
             ok, detail = False, "sonde en erreur"
         checks[name] = {"ok": bool(ok), "detail": detail}
-    healthy = all(c["ok"] for c in checks.values())
+    return all(c["ok"] for c in checks.values()), checks
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET"])
+def check():
+    """Bilan de santé RÉEL. `healthy` seulement si TOUTES les vraies dépendances répondent ; sinon
+    `degraded` + **HTTP 503** (détectable par un uptime bête — le 200 par défaut ne prouve rien)."""
+    healthy, checks = _run_checks()
     if not healthy:
         frappe.local.response["http_status_code"] = 503
     return {"ok": healthy, "status": "healthy" if healthy else "degraded", "checks": checks}
