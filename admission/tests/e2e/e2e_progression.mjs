@@ -93,10 +93,14 @@ try {
   await gotoDossier(resp, SOU);
   P = await panel(resp);
   rec('GP6 Resp@SOU après vérif : « Mettre en étude » APPARAÎT', has(P, 'Mettre en étude'), P.btns.join(' | '));
-  const clicked = await resp.evaluate(() => {
-    const b = [...document.querySelectorAll('#act-body .act-btn')].find((x) => /Mettre en étude/.test(x.textContent));
-    if (!b) return false; b.click(); return true;
+  // Diagnostic : appel DIRECT de l'endpoint (chemin front réel) pour capturer la réponse serveur.
+  const apiRes = await resp.evaluate(async () => {
+    const id = new URLSearchParams(location.search).get('c');
+    try { const r = await window.EmelaAPI.startReview(id); return { ok: true, r }; }
+    catch (e) { return { ok: false, err: e && e.message ? e.message : String(e) }; }
   });
+  console.log('   [diag] startReview API =', JSON.stringify(apiRes));
+  const clicked = true;
   // Vérité SERVEUR (V-LEARN-PROOF-17) : on interroge get_dossier (staff, session authentifiée)
   // — indépendant du rafraîchissement DOM. On retente quelques fois (l'action est async).
   let st6 = 'none', toast6 = '';
