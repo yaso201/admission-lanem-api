@@ -45,10 +45,34 @@ class TestAvailableActions(TestCase):
         self.assertIn("start_review", acts)          # ascendant : Resp ⊇ Admin
         self.assertTrue(can_control_pieces(_a(status="SOU"), RESP))
 
-    def test_directeur_at_etu_sees_resp_decisions(self):
+    # FIX-ROLES-HYBRIDE — makers EXACT (Direction EXCLUE) : le Directeur ne DÉCIDE pas (SoD).
+    def test_directeur_at_etu_no_maker_decisions(self):
         acts = available_actions(_a(status="ETU"), DIR, is_prepa=False)
-        self.assertIn("mark_admissible", acts)       # Dir ⊇ Resp
+        self.assertNotIn("mark_admissible", acts)    # maker exact Responsable — Dir EXCLU
+        self.assertNotIn("waitlist", acts)
+        self.assertIn("start_review", available_actions(_a(status="SOU"), DIR, is_prepa=False, ctx={"pieces_verified": True}))  # opérationnel ascendant : Dir OK
+
+    def test_responsable_makes_decisions(self):
+        acts = available_actions(_a(status="ETU"), RESP, is_prepa=False)
+        self.assertIn("mark_admissible", acts)
         self.assertIn("waitlist", acts)
+
+    def test_refuse_exact_by_state(self):
+        self.assertIn("refuse", available_actions(_a(status="ETU"), RESP, is_prepa=False))     # maker Resp exact
+        self.assertNotIn("refuse", available_actions(_a(status="ETU"), DIR, is_prepa=False))   # Dir PAS de refuse ETU
+        self.assertIn("refuse", available_actions(_a(status="ADM"), DIR, is_prepa=False))      # checker Dir exact
+        self.assertNotIn("refuse", available_actions(_a(status="ADM"), RESP, is_prepa=False))
+
+    def test_operational_ascending(self):
+        # start_review (opérationnel) : Admin + Resp + Dir (ascendant)
+        for r in (ADMIN, RESP, DIR):
+            self.assertIn("start_review", available_actions(_a(status="SOU"), r, is_prepa=False, ctx={"pieces_verified": True}))
+
+    def test_maker_non_transition_also_exact(self):
+        # propose_scholarships / valider_notes / set_waitlist_rank = maker exact (Dir exclu)
+        self.assertNotIn("propose_scholarships", available_actions(_a(status="ETU", requested_scholarships='["m1"]'), DIR, is_prepa=False))
+        self.assertIn("propose_scholarships", available_actions(_a(status="ETU", requested_scholarships='["m1"]'), RESP, is_prepa=False))
+        self.assertNotIn("set_waitlist_rank", available_actions(_a(status="ATT"), DIR, is_prepa=False))
 
     def test_adm_accept_dir_only_and_separation(self):
         self.assertIn("accept_admission", available_actions(_a(status="ADM"), DIR, is_prepa=False))
@@ -57,9 +81,7 @@ class TestAvailableActions(TestCase):
         self.assertIn("refuse", available_actions(_a(status="ADM"), DIR, is_prepa=False))
         self.assertNotIn("refuse", available_actions(_a(status="ADM"), RESP, is_prepa=False))
 
-    def test_refuse_etu_is_responsable(self):
-        self.assertIn("refuse", available_actions(_a(status="ETU"), RESP, is_prepa=False))
-        self.assertIn("refuse", available_actions(_a(status="ETU"), DIR, is_prepa=False))  # Dir ⊇ Resp
+    # (refuse : couvert par test_refuse_exact_by_state — hybride : maker Resp@ETU / checker Dir@ADM)
 
     def test_sm_pur_zero_workflow(self):
         self.assertEqual(available_actions(_a(status="ADM"), SM, is_prepa=False), [])

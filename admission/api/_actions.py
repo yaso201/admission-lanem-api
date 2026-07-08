@@ -34,43 +34,53 @@ def _has_requested(applicant):
         return False
 
 
-# Chaque règle : (applicant, is_prepa, ctx) -> rôle de BASE requis MAINTENANT, ou None si l'action
-# n'est pas applicable (statut / condition métier). Le rôle de base est étendu vers le HAUT par
-# roles_at_or_above (ascendant). Les clés = noms d'endpoint (vocabulaire canonique).
-# `ctx` porte les préconditions MÉTIER calculées (action_context) : pieces_verified, notify_ready,
-# enrollment_ready. Défaut permissif (True) si absent → sûr pour les tests unitaires ciblés.
+# FIX-ROLES-HYBRIDE-WORKFLOW — chaque règle : (applicant, is_prepa, ctx) -> (rôle_base, MODE) ou None.
+#   _ASC (opérationnel) : étendu vers le HAUT (roles_at_or_above) → continuité (un supérieur peut).
+#   _EXA (décision/validation) : rôle EXACT + SysMgr → maker-checker (SoD ; la Direction ne DÉCIDE pas).
+# Ce MÊME modèle est reflété par only_for (couche 1a) ET le Workflow (couche 1b) → concordance :
+# aucun bouton montré n'échoue au clic. Clés = noms d'endpoint. `ctx` = préconditions MÉTIER
+# (action_context : pieces_verified, notify_ready, enrollment_ready ; défaut True si absent).
 def _c(ctx, key):
     return (ctx or {}).get(key, True)
 
 
+_ASC, _EXA = "ascending", "exact"
+
 _ACTION_RULES = {
-    "start_review":          lambda a, p, c: "Admission Administratif" if a.status == "SOU" and _c(c, "pieces_verified") else None,
-    "notify_pieces_recap":   lambda a, p, c: "Admission Administratif" if a.status == "SOU" and _c(c, "notify_ready") else None,
-    "reject_dossier":        lambda a, p, c: "Admission Administratif" if a.status == "SOU" else None,
-    "reopen_dossier":        lambda a, p, c: "Admission Administratif" if a.status == "REJ" else None,
-    "request_complement":    lambda a, p, c: "Admission Administratif" if a.status == "SOU"
-                                             else ("Admission Responsable" if a.status == "ETU" else None),
-    "verify_bac_diploma":    lambda a, p, c: "Admission Administratif" if a.status == "ACO" and not a.bac_verified else None,
-    "saisir_note_concours":  lambda a, p, c: "Admission Administratif" if a.status == "ETU" and p and not a.notes_validated else None,
-    "valider_notes_concours":lambda a, p, c: "Admission Responsable" if a.status == "ETU" and p and a.notes_concours and not a.notes_validated else None,
-    "propose_scholarships":  lambda a, p, c: "Admission Responsable" if a.status in ("ETU", "ATT") and _has_requested(a) else None,
-    "set_waitlist_rank":     lambda a, p, c: "Admission Responsable" if a.status == "ATT" else None,
-    "mark_admissible":       lambda a, p, c: "Admission Responsable" if a.status in ("ETU", "ATT") else None,
-    "waitlist":              lambda a, p, c: "Admission Responsable" if a.status == "ETU" else None,
-    "refuse":                lambda a, p, c: "Admission Responsable" if a.status == "ETU"
-                                             else ("Admission Direction" if a.status == "ADM" else None),
-    "conditional_admission": lambda a, p, c: "Admission Responsable" if a.status == "ETU" and a.conditionnel else None,
-    "accept_admission":      lambda a, p, c: "Admission Direction" if a.status == "ADM" else None,
-    "lift_condition":        lambda a, p, c: "Admission Direction" if a.status == "ACO" and a.bac_verified else None,
-    "refuse_condition":      lambda a, p, c: "Admission Direction" if a.status == "ACO" else None,
-    "enroll":                lambda a, p, c: "Admission Direction" if a.status == "ACC" and _c(c, "enrollment_ready") else None,
-    "withdraw":              lambda a, p, c: "Admission Administratif" if a.status in _WITHDRAW_STATES else None,
+    # ── opérationnel : ASCENDANT (continuité — un supérieur peut) ──
+    "start_review":          lambda a, p, c: ("Admission Administratif", _ASC) if a.status == "SOU" and _c(c, "pieces_verified") else None,
+    "notify_pieces_recap":   lambda a, p, c: ("Admission Administratif", _ASC) if a.status == "SOU" and _c(c, "notify_ready") else None,
+    "reject_dossier":        lambda a, p, c: ("Admission Administratif", _ASC) if a.status == "SOU" else None,
+    "reopen_dossier":        lambda a, p, c: ("Admission Administratif", _ASC) if a.status == "REJ" else None,
+    "request_complement":    lambda a, p, c: ("Admission Administratif", _ASC) if a.status == "SOU"
+                                             else (("Admission Responsable", _ASC) if a.status == "ETU" else None),
+    "verify_bac_diploma":    lambda a, p, c: ("Admission Administratif", _ASC) if a.status == "ACO" and not a.bac_verified else None,
+    "saisir_note_concours":  lambda a, p, c: ("Admission Administratif", _ASC) if a.status == "ETU" and p and not a.notes_validated else None,
+    "withdraw":              lambda a, p, c: ("Admission Administratif", _ASC) if a.status in _WITHDRAW_STATES else None,
+    # ── décision « maker » : EXACT Responsable (Direction EXCLUE — SoD) ──
+    "valider_notes_concours":lambda a, p, c: ("Admission Responsable", _EXA) if a.status == "ETU" and p and a.notes_concours and not a.notes_validated else None,
+    "propose_scholarships":  lambda a, p, c: ("Admission Responsable", _EXA) if a.status in ("ETU", "ATT") and _has_requested(a) else None,
+    "set_waitlist_rank":     lambda a, p, c: ("Admission Responsable", _EXA) if a.status == "ATT" else None,
+    "mark_admissible":       lambda a, p, c: ("Admission Responsable", _EXA) if a.status in ("ETU", "ATT") else None,
+    "waitlist":              lambda a, p, c: ("Admission Responsable", _EXA) if a.status == "ETU" else None,
+    "conditional_admission": lambda a, p, c: ("Admission Responsable", _EXA) if a.status == "ETU" and a.conditionnel else None,
+    "refuse":                lambda a, p, c: ("Admission Responsable", _EXA) if a.status == "ETU"
+                                             else (("Admission Direction", _EXA) if a.status == "ADM" else None),
+    # ── validation « checker » : EXACT Direction ──
+    "accept_admission":      lambda a, p, c: ("Admission Direction", _EXA) if a.status == "ADM" else None,
+    "lift_condition":        lambda a, p, c: ("Admission Direction", _EXA) if a.status == "ACO" and a.bac_verified else None,
+    "refuse_condition":      lambda a, p, c: ("Admission Direction", _EXA) if a.status == "ACO" else None,
+    "enroll":                lambda a, p, c: ("Admission Direction", _EXA) if a.status == "ACC" and _c(c, "enrollment_ready") else None,
 }
 
 
-def _authorized(need, roles):
-    """Le jeu de rôles détenus couvre-t-il le rôle de base requis (ascendant) ?"""
-    return bool(need and set(roles) & set(roles_at_or_above(need)))
+def _authorized(rule_out, roles):
+    """Applique le MODE : ascendant (roles_at_or_above) OU exact ({base, SysMgr})."""
+    if not rule_out:
+        return False
+    base, mode = rule_out
+    allowed = roles_at_or_above(base) if mode == _ASC else (base, "System Manager")
+    return bool(set(roles) & set(allowed))
 
 
 def _enrollment_ready(applicant):
@@ -112,10 +122,10 @@ def can_control_pieces(applicant, roles):
     """Contrôle documentaire (verify/reject/require/waive/reset) : garde back `_resolve_piece_sou`
     = CONFIRM_ROLES (Administratif ⊆ ascendant) + statut SOU. Le front garde ses sous-conditions
     per-pièce (uploaded → vérifiable, verified → verrouillée)."""
-    return applicant.status == "SOU" and _authorized("Admission Administratif", roles or [])
+    return applicant.status == "SOU" and _authorized(("Admission Administratif", _ASC), roles or [])
 
 
 def can_manage_payments(applicant, roles):
     """Confirmation/initiation de paiement : garde back CONFIRM_ROLES + dossier non clos
     (PAYMENT_FORBIDDEN_STATES). Le front garde sa logique per-paiement (pending)."""
-    return applicant.status not in _PAYMENT_FORBIDDEN and _authorized("Admission Administratif", roles or [])
+    return applicant.status not in _PAYMENT_FORBIDDEN and _authorized(("Admission Administratif", _ASC), roles or [])
