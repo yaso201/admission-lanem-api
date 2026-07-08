@@ -114,9 +114,12 @@ def create_staff(full_name=None, email=None, role=None):
         "user_type": "Website User",
         "send_welcome_email": 1,
         "enabled": 1,
+        # FIX-SM-USER-MUTATIONS : rôle posé À L'INSERT (une seule écriture ignore_permissions)
+        # au lieu d'un add_roles séparé — qui fait un save() SANS ignore_permissions et ne
+        # passait que par hasard (if_owner : le SM possède le User qu'il crée). Robuste.
+        "roles": [{"role": role}],
     })
     user.insert(ignore_permissions=True)
-    user.add_roles(role)
     # Défense en profondeur (post-check) : le staff NE DOIT PAS atteindre le desk /app.
     # has_desk_access()=True ⟹ un rôle staff a desk_access=1 (dérive de config systémique) →
     # invariant desk-lock rompu → alerte ops OBS-2 (non-bloquant : le compte reste créé).
@@ -139,10 +142,14 @@ def set_staff_role(email=None, role=None):
         return _error("ROLE_NOT_ALLOWED",
                       f"Rôle non assignable. Autorisés : {', '.join(ASSIGNABLE_ROLES)}.", 400)
     user = frappe.get_doc("User", email)
-    current = [r for r in frappe.get_roles(email) if r in ASSIGNABLE_ROLES]
-    if current:
-        user.remove_roles(*current)
-    user.add_roles(role)
+    # FIX-SM-USER-MUTATIONS : remplacement DEC-022 (retire TOUS les rôles admission actuels +
+    # pose le nouveau) en UNE save() AUTORISÉE. La garde `only_for(SM_ROLES)` ci-dessus autorise ;
+    # `ignore_permissions` EXÉCUTE une action déjà autorisée (D-CONF-04) — un non-SM est bloqué
+    # avant d'arriver ici. remove_roles/add_roles natifs font un save() SANS ignore_permissions →
+    # échec pour un SM Website User (perte de perm implicite depuis le desk-lock).
+    user.set("roles", [r for r in user.roles if r.role not in ASSIGNABLE_ROLES])
+    user.append("roles", {"role": role})
+    user.save(ignore_permissions=True)
     log_event("admin_set_staff_role", "success", ref=_ref(email), role=role)
     return _ok({"email": email, "role": role})
 
