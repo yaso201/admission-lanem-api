@@ -579,6 +579,17 @@ def build_reflet(etat):
     return res
 
 
+def stage_verify_pieces(dossier):
+    """FIX-PROGRESSION E2E : vérifie TOUTES les pièces requises effectives d'un dossier SOU
+    (Administratif, chemin métier) → débloque start_review (garde PIECES_NON_VERIFIEES). Imprime
+    le nombre de pièces vérifiées. Sert à prouver « re-vérifier PUIS mettre en étude »."""
+    frappe.set_user("Administrator")
+    _verify_required(dossier)
+    frappe.db.commit()
+    n = len(frappe.get_doc("Admission Applicant", dossier).pieces or [])
+    print(f"VERIFIED_PIECES::{n}")
+
+
 def stage_reject(dossier):
     """B-3 « resubmit » E2E : depuis un SOP créé par le NAVIGATEUR, confirme le frais 1 (SOP→SOU)
     puis rejette la 1re pièce requise (Administratif) → le candidat verra le motif et pourra
