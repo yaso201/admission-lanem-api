@@ -1,9 +1,12 @@
-"""FIX-ROLES-HIERARCHIE — modele B ascendant : Direction ⊇ Responsable ⊇ Administratif.
+"""FIX-ROLES-HYBRIDE-WORKFLOW — modèle HYBRIDE (révise FIX-ROLES-HIERARCHIE) sur la couche 1a (only_for).
 
-Matrice AS CHAQUE VRAI ROLE (frappe.set_user + in_test=False → only_for actif). Invariant SACRE :
-ascendant seulement, 0 fuite descendante (un subordonne est REJETE sur les actions sensibles d'un
-superieur). Statut neutre 'REF' + refuse sans motif → les actions AUTORISEES echouent sur l'etat
-APRES only_for (PASSED, aucune mutation) ; les NON autorisees levent PermissionError (DENIED).
+Matrice AS CHAQUE VRAI ROLE (frappe.set_user + in_test=False → only_for actif) :
+  · OPÉRATIONNEL (start_review…) = ASCENDANT : Admin + Resp + Dir PASSED (continuité) ;
+  · DÉCISION « maker » (mark_admissible, refuse@ETU…) = EXACT Responsable : Resp PASSED, Admin ET
+    **Direction REJETÉS** (séparation maker-checker / SoD — la Direction ne DÉCIDE pas) ;
+  · VALIDATION « checker » (accept_admission, enroll…) = EXACT Direction : Dir PASSED, Admin/Resp rejetés.
+Les actions AUTORISÉES échouent plus loin sur l'état (PASSED, 0 mutation) ; les NON autorisées lèvent
+PermissionError (DENIED). La couche 1b (Workflow) est prouvée end-to-end par test_available_actions.
 """
 
 import frappe
@@ -80,34 +83,37 @@ class TestRolesHierarchyMatrix(FrappeTestCase):
             frappe.set_user("Administrator")
             frappe.db.rollback()
 
-    def test_GH1_direction_covers_admin_resp_dir(self):
-        self.assertEqual(self._gate(DIR, S.start_review, dossier_id=self.dossier), "PASSED")      # Admin
-        self.assertEqual(self._gate(DIR, S.mark_admissible, dossier_id=self.dossier), "PASSED")   # Resp
-        self.assertEqual(self._gate(DIR, S.accept_admission, dossier_id=self.dossier), "PASSED")  # Dir
-        self.assertEqual(self._gate(DIR, S.enroll, dossier_id=self.dossier), "PASSED")            # Dir
-        self.assertEqual(self._gate(DIR, S.close_session, session=self.session), "PASSED")        # Dir
+    def test_GH1_direction_operational_yes_maker_NO_checker_yes(self):
+        # opérationnel ascendant : Dir PASSED
+        self.assertEqual(self._gate(DIR, S.start_review, dossier_id=self.dossier), "PASSED")
+        # MAKER : la Direction ne DÉCIDE pas → REJETÉE (SoD — le cœur du modèle hybride)
+        self.assertEqual(self._gate(DIR, S.mark_admissible, dossier_id=self.dossier), "DENIED")
+        # checker : Dir PASSED
+        self.assertEqual(self._gate(DIR, S.accept_admission, dossier_id=self.dossier), "PASSED")
+        self.assertEqual(self._gate(DIR, S.enroll, dossier_id=self.dossier), "PASSED")
+        self.assertEqual(self._gate(DIR, S.close_session, session=self.session), "PASSED")
 
-    def test_GH2_responsable_admin_resp_denied_direction(self):
-        self.assertEqual(self._gate(RESP, S.start_review, dossier_id=self.dossier), "PASSED")     # Admin
-        self.assertEqual(self._gate(RESP, S.mark_admissible, dossier_id=self.dossier), "PASSED")  # Resp
+    def test_GH2_responsable_operational_yes_maker_yes_checker_NO(self):
+        self.assertEqual(self._gate(RESP, S.start_review, dossier_id=self.dossier), "PASSED")     # opérationnel
+        self.assertEqual(self._gate(RESP, S.mark_admissible, dossier_id=self.dossier), "PASSED")  # maker
         for fn in (S.accept_admission, S.enroll):
-            self.assertEqual(self._gate(RESP, fn, dossier_id=self.dossier), "DENIED", fn.__name__)  # Dir sensibles
+            self.assertEqual(self._gate(RESP, fn, dossier_id=self.dossier), "DENIED", fn.__name__)  # checker → refusé
         self.assertEqual(self._gate(RESP, S.close_session, session=self.session), "DENIED")
 
-    def test_GH3_administratif_only_admin_no_downward_leak(self):
-        self.assertEqual(self._gate(ADMIN, S.start_review, dossier_id=self.dossier), "PASSED")    # Admin
-        self.assertEqual(self._gate(ADMIN, S.mark_admissible, dossier_id=self.dossier), "DENIED") # Resp sensible
+    def test_GH3_administratif_operational_yes_no_maker_no_checker(self):
+        self.assertEqual(self._gate(ADMIN, S.start_review, dossier_id=self.dossier), "PASSED")    # opérationnel
+        self.assertEqual(self._gate(ADMIN, S.mark_admissible, dossier_id=self.dossier), "DENIED") # maker → refusé
         for fn in (S.accept_admission, S.enroll):
-            self.assertEqual(self._gate(ADMIN, fn, dossier_id=self.dossier), "DENIED", fn.__name__)  # Dir sensibles
+            self.assertEqual(self._gate(ADMIN, fn, dossier_id=self.dossier), "DENIED", fn.__name__)  # checker → refusé
         self.assertEqual(self._gate(ADMIN, S.close_session, session=self.session), "DENIED")
 
-    def test_GH4_refuse_branched_by_state(self):
-        # @ETU → RESP_UP : Resp/Dir passent, Admin rejete (refuse sans motif → 0 mutation, MOTIF_REQUIRED apres only_for)
+    def test_GH4_refuse_maker_checker_by_state(self):
+        # @ETU (maker EXACT Resp) : Resp PASSED ; Admin ET Direction REJETÉS (Dir ne décide pas — SoD)
         frappe.db.set_value("Admission Applicant", self.dossier, "status", "ETU"); frappe.db.commit()
         self.assertEqual(self._gate(ADMIN, S.refuse, dossier_id=self.dossier), "DENIED")
         self.assertEqual(self._gate(RESP, S.refuse, dossier_id=self.dossier), "PASSED")
-        self.assertEqual(self._gate(DIR, S.refuse, dossier_id=self.dossier), "PASSED")
-        # @ADM → DIR_UP : Dir passe, Resp/Admin rejetes
+        self.assertEqual(self._gate(DIR, S.refuse, dossier_id=self.dossier), "DENIED")   # ← hybride : Dir NE refuse PAS en ETU
+        # @ADM (checker EXACT Dir) : Dir PASSED ; Resp/Admin rejetés
         frappe.db.set_value("Admission Applicant", self.dossier, "status", "ADM"); frappe.db.commit()
         self.assertEqual(self._gate(ADMIN, S.refuse, dossier_id=self.dossier), "DENIED")
         self.assertEqual(self._gate(RESP, S.refuse, dossier_id=self.dossier), "DENIED")

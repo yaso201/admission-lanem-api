@@ -180,6 +180,7 @@ class TestGetDossierExposesActions(TestCase):
 
 import frappe                                            # noqa: E402
 from frappe.tests.utils import FrappeTestCase            # noqa: E402
+from frappe.model.workflow import WorkflowPermissionError  # noqa: E402
 from admission.api import staff as S                     # noqa: E402
 from admission.api._actions import _ACTION_RULES         # noqa: E402
 
@@ -189,7 +190,9 @@ _DIR_U = "prog-dir@lanem.test"
 _SM_U = "prog-sm@lanem.test"
 _ROLE_OF = {_ADMIN_U: "Admission Administratif", _RESP_U: "Admission Responsable",
             _DIR_U: "Admission Direction", _SM_U: "Admission SM"}
-_TOP = ["Admission Direction"]   # rôle sommet : authorise TOUTE action applicable (ascendant)
+# Union des rôles workflow : sous le modèle HYBRIDE, aucun rôle seul n'autorise TOUT (Direction ne
+# décide pas, Responsable ne valide pas) → l'ensemble applicable = ce qu'un porteur des 3 rôles verrait.
+_TOP = ["Admission Administratif", "Admission Responsable", "Admission Direction"]
 
 # Cas de statut + flags métier → exercent les conditions (verify_bac/is_prepa/bourses/conditionnel).
 _CASES = [
@@ -246,11 +249,14 @@ class TestCoherenceMatrix(FrappeTestCase):
                      "BAC_NOT_VERIFIED", "GATE_FAILED"}
 
     def _gate(self, user, fn):
-        """Garde RÉEL de l'endpoint AS `user` :
-          · DENIED  = only_for a rejeté (PermissionError) → rôle refusé ;
-          · REJECT  = garde statut/MÉTIER (_REJECT_CODES) → action inapplicable ici ;
-          · PASSED  = a franchi rôle + statut + métier (échoue plus loin : args/motif).
-        Scelle LES TROIS dimensions (rôle + statut + métier) contre le registre."""
+        """Garde RÉEL de l'endpoint AS `user`, LES 2 COUCHES exécutées END-TO-END :
+          · DENIED  = only_for a rejeté (PermissionError) → couche 1a rôle ;
+          · REJECT  = Workflow a rejeté (WorkflowPermissionError) OU garde statut/MÉTIER
+                      (_REJECT_CODES) → couche 1b / applicabilité ;
+          · PASSED  = a franchi rôle + statut + Workflow + métier (échoue plus loin : args/motif).
+        LA LEÇON : on EXÉCUTE la vraie transition (l'endpoint fait applicant.save() → validate_workflow) ;
+        WorkflowPermissionError n'est JAMAIS avalée en PASSED. `db.set_value` positionne l'état SOURCE
+        (ne masque pas : la validation Workflow se déclenche au save() vers l'état CIBLE)."""
         frappe.set_user(user)
         frappe.flags.in_test = False
         try:
@@ -261,9 +267,11 @@ class TestCoherenceMatrix(FrappeTestCase):
                     return "REJECT"
                 return "PASSED"
             except frappe.PermissionError:
-                return "DENIED"
+                return "DENIED"            # couche 1a — only_for
+            except WorkflowPermissionError:
+                return "REJECT"            # couche 1b — Workflow (plus JAMAIS PASSED — la leçon)
             except Exception:
-                return "PASSED"     # franchi rôle+statut+métier ; échoue plus loin (args/motif)
+                return "PASSED"            # franchi rôle+statut+Workflow ; échoue plus loin (args/motif)
         finally:
             frappe.flags.in_test = True
             frappe.set_user("Administrator")
