@@ -133,26 +133,43 @@ def send_high_alert(alert_type, *, dossier_id=None, ref=None, detail=None):
         return False
 
 
-def notify_new_application(dossier_id, programme=None, level=None):
-    """Notification MÉTIER (pas une alerte d'erreur) : une nouvelle candidature (brouillon) vient
-    d'être créée → message immédiat au groupe Telegram. À la DIFFÉRENCE de send_high_alert :
-    PAS de cooldown (chaque candidature compte ; le canal d'erreurs, lui, est bridé anti-flood).
-    Non-bloquant (ne lève jamais), 0 PII : référence dossier + codes, JAMAIS nom/e-mail/téléphone.
-    Appelée depuis un job d'arrière-plan (frappe.enqueue) → 0 latence sur le parcours candidat."""
+def _notify_application_event(dossier_id, *, emoji, title, programme=None, level=None, extra=None):
+    """Notification MÉTIER (pas une alerte d'erreur) : événement de candidature → message immédiat
+    au groupe Telegram. À la DIFFÉRENCE de send_high_alert : PAS de cooldown (chaque événement
+    compte ; le canal d'erreurs, lui, est bridé anti-flood). Non-bloquant (ne lève jamais), 0 PII :
+    référence dossier + codes, JAMAIS nom/e-mail/téléphone. Appelée depuis un job d'arrière-plan
+    (frappe.enqueue) → 0 latence sur le parcours candidat."""
     try:
-        lines = ["🆕 Nouvelle candidature (brouillon)", f"dossier: {dossier_id}"]
+        lines = [f"{emoji} {title}", f"dossier: {dossier_id}"]
         if programme:
             lines.append(f"programme: {programme}")
         if level:
             lines.append(f"niveau: {level}")
+        if extra:
+            lines.append(extra)
         sent = _send_telegram("\n".join(lines))
-        _trace({"step": "new_application", "status": "notified" if sent else "notify_failed",
-                "dossier_id": dossier_id}, level="info" if sent else "error")
+        _trace({"step": "application_event", "status": "notified" if sent else "notify_failed",
+                "title": title, "dossier_id": dossier_id}, level="info" if sent else "error")
         return sent
     except Exception:
-        _trace({"step": "new_application", "status": "internal_error", "dossier_id": dossier_id},
+        _trace({"step": "application_event", "status": "internal_error", "dossier_id": dossier_id},
                level="error")
         return False
+
+
+def notify_new_application(dossier_id, programme=None, level=None):
+    """Nouvelle candidature (brouillon) — create_dossier."""
+    return _notify_application_event(dossier_id, emoji="🆕",
+                                     title="Nouvelle candidature (brouillon)",
+                                     programme=programme, level=level)
+
+
+def notify_new_submission(dossier_id, programme=None, level=None, mode=None):
+    """Nouvelle soumission — le candidat finalise (paiement en ligne BRO→SOU, ou provisoire
+    sur place BRO→SOP). Une seule notif par candidat (dédup sur from_status=BRO au site d'appel)."""
+    return _notify_application_event(dossier_id, emoji="📩", title="Nouvelle soumission",
+                                     programme=programme, level=level,
+                                     extra=(f"mode: {mode}" if mode else None))
 
 
 def note_client_error():

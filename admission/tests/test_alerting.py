@@ -148,6 +148,35 @@ class TestNotifyNewApplication(TestCase):
             self.assertFalse(notify_new_application("CAN-2026-00042"))   # non-bloquant
 
 
+class TestNotifyNewSubmission(TestCase):
+    def test_message_has_soumission_mode_and_codes_no_cooldown(self):
+        with patch(f"{A}.frappe") as mf, patch(f"{A}.requests") as mr:
+            _mock_frappe(mf)
+            mr.post.return_value = MagicMock(ok=True)
+            from admission.api.alerting import notify_new_submission
+            self.assertTrue(notify_new_submission("26274090002", programme="DD-MI-CPI",
+                                                  level="DD-MI-CPI-L1", mode="payée en ligne"))
+            text = mr.post.call_args[1]["json"]["text"]
+            self.assertIn("soumission", text.lower())
+            self.assertIn("26274090002", text)
+            self.assertIn("DD-MI-CPI", text)
+            self.assertIn("payée en ligne", text)
+            mf.cache.get.assert_not_called()                 # PAS de cooldown
+
+    def test_no_pii_and_never_raises(self):
+        with patch(f"{A}.frappe") as mf, patch(f"{A}.requests") as mr:
+            _mock_frappe(mf)
+            mr.post.return_value = MagicMock(ok=True)
+            from admission.api.alerting import notify_new_submission
+            notify_new_submission("26274090002", programme="PREPA", level="PREPA-S1",
+                                  mode="sur place (provisoire)")
+            text = mr.post.call_args[1]["json"]["text"]
+            for pii in ("@", "nom", "email", "téléphone", "phone"):
+                self.assertNotIn(pii, text.lower())
+            mr.post.side_effect = Exception("down")
+            self.assertFalse(notify_new_submission("26274090002"))       # non-bloquant
+
+
 class TestLogEventDispatch(TestCase):
     def _log_event(self, mocked_alert, **kwargs):
         with patch(f"{L}.frappe") as mf:

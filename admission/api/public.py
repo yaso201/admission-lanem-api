@@ -1737,7 +1737,21 @@ def declare_payment_offline(dossier_id=None, token=None, mode=None, reference=No
 	from admission.api.notifications import send_offline_submission
 	send_offline_submission(applicant, fee, mode_norm)
 	log_event("payment_offline", "declared", dossier_id=applicant.name, mode=mode_norm)
+	# Notif métier temps réel : nouvelle soumission (provisoire, paiement sur place). BRO→SOP.
+	_enqueue_submission_notif(applicant, mode="sur place (provisoire)")
 	return _ok({"dossier_id": applicant.name, "statut": "SOP", "payment_id": payment.name})
+
+
+def _enqueue_submission_notif(applicant, mode):
+	"""Notif métier temps réel « nouvelle soumission » → groupe Telegram. ENFILÉE hors du chemin
+	candidat (0 latence, cf. V-LEARN-TIMING-ENUM), non-bloquante (une soumission ne doit jamais
+	échouer si Telegram est down), 0 PII (réf + codes + mode, jamais nom/e-mail)."""
+	try:
+		frappe.enqueue("admission.api.alerting.notify_new_submission", queue="short",
+		               dossier_id=applicant.name, programme=getattr(applicant, "programme_code", None),
+		               level=getattr(applicant, "level_code", None), mode=mode, enqueue_after_commit=True)
+	except Exception:
+		frappe.logger("public").warning("enqueue notify_new_submission échoué (non-bloquant)")
 
 
 def _notify_uf_safe(applicant, fee, payment):
@@ -1786,6 +1800,10 @@ def apply_confirmed_payment_cascade(applicant, fee):
 		else:
 			applicant.status = "SOU"
 			applicant.save(ignore_permissions=True)
+		# Notif « nouvelle soumission » UNIQUEMENT depuis BRO (paiement en ligne direct) : une
+		# provisoire (SOP→SOU) a DÉJÀ été notifiée au declare — pas de double compte.
+		if from_status == "BRO":
+			_enqueue_submission_notif(applicant, mode="payée en ligne")
 
 
 def _online_payment_exists(reference):
