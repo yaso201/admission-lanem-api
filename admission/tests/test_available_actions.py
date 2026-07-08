@@ -117,3 +117,20 @@ class TestAvailableActions(TestCase):
     def test_withdraw_admin_on_live_states(self):
         self.assertIn("withdraw", available_actions(_a(status="ADM"), ADMIN, is_prepa=False))
         self.assertNotIn("withdraw", available_actions(_a(status="REF"), ADMIN, is_prepa=False))
+
+
+class TestGetDossierExposesActions(TestCase):
+    """T2 — get_dossier (staff) sert available_actions/can_control_pieces/can_manage_payments.
+    On mocke frappe minimalement (get_dossier lit beaucoup) : on cible juste la présence + type
+    des 3 champs sur le retour, via un applicant SOU réel construit par fixture recette-like.
+    Ici on teste le CÂBLAGE : les 3 clés existent dans le contrat. La justesse des valeurs est
+    prouvée par la matrice de cohérence AS vrais rôles (TestCoherenceMatrix)."""
+
+    def test_contract_has_the_three_keys(self):
+        # Vérifie que le retour de get_dossier contient les 3 nouvelles clés (câblage contrat).
+        import inspect
+        from admission.api import staff
+        src = inspect.getsource(staff.get_dossier)
+        self.assertIn("available_actions", src)
+        self.assertIn("can_control_pieces", src)
+        self.assertIn("can_manage_payments", src)

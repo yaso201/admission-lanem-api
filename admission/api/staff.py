@@ -43,6 +43,7 @@ from admission.api.notifications import (
 from admission.api.receipt import send_payment_receipt
 
 from admission.api.permissions import roles_at_or_above
+from admission.api._actions import available_actions, can_control_pieces, can_manage_payments
 
 # FIX-ROLES-HIERARCHIE — modele B ascendant : chaque action declare son NIVEAU MIN ;
 # roles_at_or_above l'expanse vers le haut (+ System Manager). Un superieur couvre l'inferieur.
@@ -499,6 +500,7 @@ def get_dossier(dossier_id=None):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
     applicant.check_permission("read")
+    _viewer_roles = frappe.get_roles(frappe.session.user)   # FIX-PROGRESSION : disponibilité UX
 
     session_doc = frappe.get_doc("Admission Session", applicant.session) if applicant.session else None
     fees = frappe.get_all("Applicant Fee", filters={"applicant": dossier_id},
@@ -564,6 +566,13 @@ def get_dossier(dossier_id=None):
         "acompte_xof": float(applicant.acompte_xof or 0),
         "transitions": transitions,
         "soumis_le": str(applicant.creation),
+        # FIX-PROGRESSION — disponibilité (UX) dérivée des gardes (source unique _actions).
+        # Le front devient pur renderer : il rend ce que le back autorise, il ne devine plus.
+        "available_actions": available_actions(
+            applicant, _viewer_roles,
+            is_prepa=bool(session_doc.is_prepa_session) if session_doc else False),
+        "can_control_pieces": can_control_pieces(applicant, _viewer_roles),
+        "can_manage_payments": can_manage_payments(applicant, _viewer_roles),
     })
 
 
