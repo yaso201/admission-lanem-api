@@ -102,6 +102,34 @@ def _otp_for(dossier):
     raise AssertionError(f"OTP introuvable en file pour {dossier}")
 
 
+def _token_from_mail(dossier):
+    """Token CLAIR extrait du dernier mail portant un lien /reprise tokenisé pour ce dossier —
+    même technique éprouvée que _otp_for (Email Queue + validation contre le hash stocké).
+    FIX-RETOUR-DOSSIER : request_complement ROTE le token (mail INC tokenisé) → le token capturé
+    plus tôt par le tunnel est périmé ; la fixture rend celui du mail (= ce que le candidat reçoit)."""
+    from admission.api.public import _hash
+    frappe.db.commit()  # snapshot MVCC : voir le mail posé par le serveur
+    stored = frappe.get_value("Admission Applicant", dossier, "dossier_token_hash")
+    for q in frappe.get_all("Email Queue", fields=["name", "message"],
+                            order_by="creation desc", limit=15):
+        mime = email_mod.message_from_string(q.message or "")
+        bodies = []
+        for part in mime.walk():
+            if part.get_content_type() in ("text/html", "text/plain"):
+                pl = part.get_payload(decode=True)
+                if pl:
+                    bodies.append(pl.decode("utf-8", errors="replace"))
+        body = "\n".join(bodies)
+        if dossier not in body:
+            continue
+        # le HTML du mail peut encoder & en &amp; ; token urlsafe = [A-Za-z0-9_-]
+        # (get_payload(decode=True) a déjà décodé le quoted-printable)
+        for tok in set(re.findall(r"[?&](?:amp;)?token=([A-Za-z0-9_\-]+)", body)):
+            if _hash(tok) == stored:
+                return tok
+    raise AssertionError(f"token introuvable en file pour {dossier}")
+
+
 # ── étapes du chemin métier ───────────────────────────────────────────────────
 
 def _reset_create_ratelimit():
@@ -304,7 +332,9 @@ def build_to(target, date_bac=None):
         _as_staff("admin"); r = staff.request_complement(dossier_id=dossier, motif="Fixture E2E — pièce à compléter.")
         _admin()
         assert r.get("ok"), f"request_complement: {r}"
-        return _result(dossier, token)
+        # FIX-RETOUR-DOSSIER : request_complement ROTE le token (mail INC tokenisé) → celui du
+        # tunnel est périmé ; on rend le token du mail INC (exactement ce que reçoit le candidat).
+        return _result(dossier, _token_from_mail(dossier))
 
     _verify_required(dossier)                               # garde 3c-1
     _as_staff("admin"); staff.start_review(dossier_id=dossier); _admin()   # SOU → ETU
