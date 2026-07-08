@@ -47,20 +47,33 @@ def _uniform_response():
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 @rate_limit(limit=5, seconds=60 * 60)
 def request_password_reset(email=None):
-    """Demande de réinitialisation (guest, 5/h/IP). Toujours la même réponse."""
+    """Demande de réinitialisation (guest, 5/h/IP). Réponse ET timing CONSTANTS : tout le
+    travail (exists-check, génération de clé, mail) est ENFILÉ dans un job d'arrière-plan →
+    le chemin requête ne varie pas selon le compte (anti-énumération TEMPORELLE, en plus du
+    corps uniforme). Mesuré : sans enqueue le chemin valide était ~40 ms plus lent (get_doc +
+    reset_password + INSERT Email Queue synchrones) = oracle temporel faible mais réel — supprimé."""
     email = (email or frappe.form_dict.get("email") or "").strip().lower()
     log_event("password_reset", "requested", ref=_ref(email))
     try:
-        _maybe_send(email)
+        # enqueue = même coût pour tout compte ; enqueue_after_commit → hors transaction requête.
+        frappe.enqueue("admission.api.account._maybe_send", queue="short",
+                       email=email, enqueue_after_commit=True)
     except Exception:
-        # Jamais de 500 révélateur : l'échec interne est tracé (sans clé, sans e-mail),
-        # la réponse reste uniforme.
-        log_event("password_reset", "internal_error", ref=_ref(email), level="error")
+        log_event("password_reset", "enqueue_failed", ref=_ref(email), level="error")
     return _uniform_response()
 
 
 def _maybe_send(email):
-    """Envoie le lien SEULEMENT à un compte staff actif — silencieux dans tous les autres cas."""
+    """JOB d'arrière-plan : envoie le lien SEULEMENT à un compte staff actif — silencieux
+    (aucun effet observable) dans tous les autres cas. Ne lève jamais (les erreurs sont
+    tracées sans clé ni e-mail en clair)."""
+    try:
+        _do_send(email)
+    except Exception:
+        log_event("password_reset", "internal_error", ref=_ref(email), level="error")
+
+
+def _do_send(email):
     if not email or not frappe.db.exists("User", email):
         return
     user = frappe.get_doc("User", email)
