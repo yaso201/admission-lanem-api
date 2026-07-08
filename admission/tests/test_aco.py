@@ -239,7 +239,7 @@ class TestConditionalAdmission(TestCase):
     def test_responsable_etu_to_aco_licence(self):
         app = _aco_app(status="ETU")
         res, mf, gen, prepa = _run_staff("conditional_admission", app, is_prepa=False, user="resp@lanem.bj")
-        mf.only_for.assert_called_once_with(roles_at_or_above("Admission Responsable"))
+        mf.only_for.assert_called_once_with(("Admission Responsable", "System Manager"))
         self.assertEqual(app.status, "ACO")
         self.assertEqual(app.decided_by, "resp@lanem.bj")   # stamp
         self.assertEqual(app.decision_date, "2026-06-11 10:00:00")

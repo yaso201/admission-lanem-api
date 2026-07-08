@@ -92,7 +92,7 @@ class TestSetWaitlistRank(TestCase):
         res, app, mf = self._run("ATT", 3)
         self.assertTrue(res["ok"])
         self.assertEqual(app.rang_liste_attente, 3)
-        mf.only_for.assert_called_with(roles_at_or_above("Admission Responsable"))
+        mf.only_for.assert_called_with(("Admission Responsable", "System Manager"))
 
     def test_rank_cleared(self):
         res, app, _ = self._run("ATT", "")

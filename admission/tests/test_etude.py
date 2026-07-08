@@ -80,7 +80,7 @@ class TestMarkAdmissible(TestCase):
 
     def test_etu_to_adm_stamps_decision(self):
         app, res, mf = self._run("ETU")
-        mf.only_for.assert_called_once_with(roles_at_or_above("Admission Responsable"))
+        mf.only_for.assert_called_once_with(("Admission Responsable", "System Manager"))
         self.assertEqual(app.status, "ADM")
         self.assertEqual(app.decided_by, "resp@lanem.bj")
         self.assertEqual(app.decision_date, "2026-06-11 10:00:00")
@@ -107,7 +107,7 @@ class TestWaitlist(TestCase):
             mf.session.user = "resp@lanem.bj"
             from admission.api.staff import waitlist
             res = waitlist(dossier_id="CAN-2026-00001", rang=3)
-            mf.only_for.assert_called_once_with(roles_at_or_above("Admission Responsable"))
+            mf.only_for.assert_called_once_with(("Admission Responsable", "System Manager"))
         self.assertEqual(app.status, "ATT")
         self.assertEqual(app.rang_liste_attente, 3)
         self.assertEqual(app.decided_by, "resp@lanem.bj")
@@ -134,7 +134,7 @@ class TestRefuse(TestCase):
             mf.session.user = "resp@lanem.bj"
             from admission.api.staff import refuse
             res = refuse(dossier_id="CAN-2026-00001", motif="Niveau insuffisant")
-            mf.only_for.assert_called_once_with(roles_at_or_above("Admission Responsable"))
+            mf.only_for.assert_called_once_with(("Admission Responsable", "System Manager"))
         self.assertEqual(app.status, "REF")
         self.assertEqual(app.motif_refus, "Niveau insuffisant")
         self.assertEqual(app.decided_by, "resp@lanem.bj")

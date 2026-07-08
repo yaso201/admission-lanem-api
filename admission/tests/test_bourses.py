@@ -181,7 +181,9 @@ class TestProposeScholarships(TestCase):
 
     def test_responsable_proposes_in_etu(self):
         app, res, mf = self._run(bourses=["B-EXC-A", "B-MERITE"])
-        mf.only_for.assert_called_once_with(roles_at_or_above("Admission Responsable"))
+        # FIX-ROLES-HYBRIDE : proposer des bourses = décision « maker » EXACTE (Responsable + SysMgr,
+        # Direction EXCLUE — SoD). N'est PLUS ascendant (roles_at_or_above).
+        mf.only_for.assert_called_once_with(("Admission Responsable", "System Manager"))
         self.assertEqual(json.loads(app.proposed_scholarships), ["B-EXC-A", "B-MERITE"])
         self.assertEqual(app.scholarships_proposed_by, "resp@lanem.bj")
         self.assertEqual(app.scholarships_proposed_date, "2026-06-11 10:00:00")

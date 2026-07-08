@@ -154,7 +154,7 @@ class TestValiderNotesConcours(TestCase):
             mf.session.user = "resp@lanem.bj"
             from admission.api.staff import valider_notes_concours
             res = valider_notes_concours(dossier_id="CAN-2026-00001")
-            mf.only_for.assert_called_once_with(roles_at_or_above("Admission Responsable"))
+            mf.only_for.assert_called_once_with(("Admission Responsable", "System Manager"))
         self.assertEqual(app.notes_validated, 1)
         self.assertEqual(app.notes_validated_by, "resp@lanem.bj")  # séparation : validateur tracé
         self.assertEqual(app.notes_validated_date, "2026-06-11 10:00:00")
