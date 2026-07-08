@@ -178,9 +178,11 @@ def send_prepa_decision_notification(applicant, decision_label):
 # ── Complément requis (INC) — désormais sur le socle commun ────────────────────
 
 
-def send_incompletude_notification(applicant, motif):
+def send_incompletude_notification(applicant, motif, token=None):
     """Notifie le candidat de l'incomplétude (entrée INC). NON-BLOQUANT.
-    Signature INCHANGÉE. Statut `complement` (ambre) + CTA de reprise."""
+    Statut `complement` (ambre) + CTA de reprise. FIX-RETOUR-DOSSIER #5 : `token` (rotaté par
+    request_complement) → CTA `/reprise` tokenisé, ouvrable sur appareil vierge (pattern récap
+    SOU) ; sans token (rétro-compat), lien de suivi générique comme avant."""
     nom = _full_name(applicant)
     html = render_candidate_email(
         nom=nom, dossier=getattr(applicant, "name", ""), filiere="", status="complement",
@@ -189,7 +191,7 @@ def send_incompletude_notification(applicant, motif):
         meta=[("Candidat", nom), ("Dossier", getattr(applicant, "name", ""), True),
               ("Programme", _programme(applicant))],
         motif=motif or "",
-        cta={"label": "Reprendre ma candidature", "url": _portal_link(applicant)},
+        cta={"label": "Reprendre ma candidature", "url": _portal_link(applicant, token=token)},
         cta_intro="Corrigez les éléments demandés depuis votre espace, puis re-soumettez votre dossier.",
         preheader="Une pièce manque pour poursuivre l'instruction de votre dossier.",
         subject="Votre candidature LaNEM — complément requis",

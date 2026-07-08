@@ -229,3 +229,50 @@ class TestMotifField(TestCase):
         self.assertIsNotNone(field, "champ motif_incompletude absent")
         self.assertIn(field["fieldtype"], ("Text", "Small Text", "Long Text"))
         self.assertIn("motif_incompletude", doc["field_order"])
+
+
+class TestRequestComplementTokenisation(TestCase):
+    """FIX-RETOUR-DOSSIER #5 — le mail INC porte un lien /reprise tokenisé (pattern récap SOU) :
+    request_complement fait TOURNER le token (hash posé, OTP re-exigé) et transmet le CLAIR à la
+    notification ; le clair n'est jamais persisté."""
+
+    def test_request_complement_rotates_token_and_passes_it(self):
+        app = _app("SOU")
+        ok, err = _patches()
+        with patch(f"{STAFF}.frappe") as mf, ok, err, \
+             patch(f"{STAFF}.send_incompletude_notification") as notify:
+            mf.db.exists.return_value = True
+            mf.get_doc.return_value = app
+            from admission.api.staff import request_complement
+            request_complement(dossier_id="CAN-2026-00001", motif="Relevé manquant")
+        # rotation : hash SHA256 posé (64 hex), OTP re-exigé, expiration reposée
+        self.assertIsInstance(app.dossier_token_hash, str)
+        self.assertRegex(app.dossier_token_hash, r"^[0-9a-f]{64}$")
+        self.assertEqual(app.otp_verified, 0)
+        # le token CLAIR est transmis à la notification (kwarg token=), jamais persisté tel quel
+        tok = notify.call_args.kwargs.get("token")
+        self.assertTrue(tok and isinstance(tok, str))
+        self.assertNotEqual(tok, app.dossier_token_hash)
+        app.save.assert_called_once()
+
+    def test_send_incompletude_tokenised_link(self):
+        """Le CTA du mail INC pointe /reprise?dossier=…&token=… quand un token est fourni."""
+        NOTIF = "admission.api.notifications"
+        app = _app("INC", motif="Relevé manquant")
+        with patch(f"{NOTIF}._send_candidate_mail"), \
+             patch(f"{NOTIF}.render_candidate_email") as render:
+            from admission.api.notifications import send_incompletude_notification
+            send_incompletude_notification(app, "Relevé manquant", token="TOK123")
+        cta = render.call_args.kwargs.get("cta") or {}
+        self.assertIn("/reprise?dossier=CAN-2026-00001&token=TOK123", cta.get("url", ""))
+
+    def test_send_incompletude_without_token_keeps_suivi(self):
+        """Rétro-compatible : sans token, le CTA reste le lien de suivi générique."""
+        NOTIF = "admission.api.notifications"
+        app = _app("INC", motif="x")
+        with patch(f"{NOTIF}._send_candidate_mail"), \
+             patch(f"{NOTIF}.render_candidate_email") as render:
+            from admission.api.notifications import send_incompletude_notification
+            send_incompletude_notification(app, "x")
+        cta = render.call_args.kwargs.get("cta") or {}
+        self.assertTrue(cta.get("url", "").endswith("/suivi"))

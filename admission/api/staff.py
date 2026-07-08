@@ -181,8 +181,15 @@ def request_complement(dossier_id=None, motif=None):
         return _error("MOTIF_REQUIRED", "Le motif d'incomplétude est obligatoire.", 400)
     applicant.motif_incompletude = str(motif).strip()
     applicant.status = "INC"
+    # FIX-RETOUR-DOSSIER #5 : rotation du token (pattern récap SOU, cf. notify_pieces_recap) →
+    # le mail INC porte un lien /reprise tokenisé (ouvrable sur appareil vierge). Le clair n'est
+    # jamais persisté ; l'OTP reste re-exigé à l'arrivée (double barrière). 1 seul save.
+    tok = _generate_token()
+    applicant.dossier_token_hash = _hash(tok)
+    applicant.token_expires_at = add_days(now_datetime(), TOKEN_TTL_DAYS)
+    applicant.otp_verified = 0
     applicant.save(ignore_permissions=True)
-    send_incompletude_notification(applicant, applicant.motif_incompletude)  # non-bloquant
+    send_incompletude_notification(applicant, applicant.motif_incompletude, token=tok)  # non-bloquant
     log_event("request_complement", "success", dossier_id=applicant.name)
     return _ok({"dossier_id": applicant.name, "status": "INC"})
 
