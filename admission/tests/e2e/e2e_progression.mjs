@@ -97,8 +97,23 @@ try {
     const b = [...document.querySelectorAll('#act-body .act-btn')].find((x) => /Mettre en étude/.test(x.textContent));
     if (!b) return false; b.click(); return true;
   });
-  await sleep(2500);
-  rec('GP6 Resp clique « Mettre en étude » (bouton montré) → statut ETU', clicked && (await readStatus(resp)) === 'ETU', `clicked=${clicked}`);
+  // Vérité SERVEUR (V-LEARN-PROOF-17) : on interroge get_dossier (staff, session authentifiée)
+  // — indépendant du rafraîchissement DOM. On retente quelques fois (l'action est async).
+  let st6 = 'none', toast6 = '';
+  for (let i = 0; i < 12; i++) {
+    await sleep(1200);
+    st6 = await resp.evaluate(async () => {
+      const B = window.EMELA_API_BASE || '';
+      try {
+        const id = new URLSearchParams(location.search).get('c');
+        const r = await fetch(`${B}/api/method/admission.api.staff.get_dossier?dossier_id=${encodeURIComponent(id)}`, { credentials: 'include' });
+        const j = await r.json(); const m = j.message || j; return (m.data || m).statut || 'none';
+      } catch (e) { return 'err:' + e.message; }
+    });
+    if (st6 === 'ETU') break;
+  }
+  toast6 = await resp.evaluate(() => [...document.querySelectorAll('[role="status"],[role="alert"],.em-toast')].map((x) => x.textContent.trim()).filter(Boolean).join(' | '));
+  rec('GP6 Resp clique « Mettre en étude » (bouton montré) → dossier passe ETU (serveur)', clicked && st6 === 'ETU', `clicked=${clicked} statut_serveur=${st6} toast="${toast6}"`);
   await resp.screenshot({ path: `${SHOTS}/gp6-resp-sou-to-etu.png` }).catch(() => {});
 
   // ── GP3 — Directeur@ETU : voit « Admettre » (action Responsable via hiérarchie) ──
