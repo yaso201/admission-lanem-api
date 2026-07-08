@@ -118,6 +118,26 @@ class TestAvailableActions(TestCase):
         self.assertIn("withdraw", available_actions(_a(status="ADM"), ADMIN, is_prepa=False))
         self.assertNotIn("withdraw", available_actions(_a(status="REF"), ADMIN, is_prepa=False))
 
+    # ── GP6 : préconditions MÉTIER via ctx (aucun bouton montré rejeté sur motif métier) ──
+    def test_start_review_hidden_until_pieces_verified(self):
+        a = _a(status="SOU")
+        self.assertNotIn("start_review", available_actions(a, ADMIN, is_prepa=False, ctx={"pieces_verified": False}))
+        self.assertIn("start_review", available_actions(a, ADMIN, is_prepa=False, ctx={"pieces_verified": True}))
+
+    def test_notify_recap_hidden_until_ready(self):
+        a = _a(status="SOU")
+        self.assertNotIn("notify_pieces_recap", available_actions(a, ADMIN, is_prepa=False, ctx={"notify_ready": False}))
+        self.assertIn("notify_pieces_recap", available_actions(a, ADMIN, is_prepa=False, ctx={"notify_ready": True}))
+
+    def test_enroll_hidden_until_enrollment_ready(self):
+        a = _a(status="ACC")
+        self.assertNotIn("enroll", available_actions(a, DIR, is_prepa=False, ctx={"enrollment_ready": False}))
+        self.assertIn("enroll", available_actions(a, DIR, is_prepa=False, ctx={"enrollment_ready": True}))
+
+    def test_lift_condition_hidden_until_bac_verified(self):
+        self.assertNotIn("lift_condition", available_actions(_a(status="ACO", bac_verified=0), DIR, is_prepa=False))
+        self.assertIn("lift_condition", available_actions(_a(status="ACO", bac_verified=1), DIR, is_prepa=False))
+
 
 class TestGetDossierExposesActions(TestCase):
     """T2 — get_dossier (staff) sert available_actions/can_control_pieces/can_manage_payments.
@@ -197,25 +217,31 @@ class TestCoherenceMatrix(FrappeTestCase):
         frappe.db.commit()
         self.addCleanup(self._clean)
 
+    # Codes d'erreur qui signifient « l'action n'est PAS exécutable ici » (rôle/statut/MÉTIER) →
+    # un bouton MONTRÉ ne doit JAMAIS en produire (GP6). Les autres erreurs (MOTIF_REQUIRED, args
+    # manquants) surviennent APRÈS les gardes → l'action était bien autorisée (PASSED).
+    _REJECT_CODES = {"INVALID_STATE", "PIECES_NON_VERIFIEES", "PIECES_NON_TRAITEES",
+                     "BAC_NOT_VERIFIED", "GATE_FAILED"}
+
     def _gate(self, user, fn):
         """Garde RÉEL de l'endpoint AS `user` :
-          · DENIED       = only_for a rejeté (PermissionError) → rôle refusé ;
-          · STATE_REJECT = INVALID_STATE (garde de statut) → action inapplicable à cet état ;
-          · PASSED       = a franchi rôle ET statut (échoue plus loin : args/motif/métier).
-        Scelle LES DEUX dimensions (rôle + statut) contre le registre."""
+          · DENIED  = only_for a rejeté (PermissionError) → rôle refusé ;
+          · REJECT  = garde statut/MÉTIER (_REJECT_CODES) → action inapplicable ici ;
+          · PASSED  = a franchi rôle + statut + métier (échoue plus loin : args/motif).
+        Scelle LES TROIS dimensions (rôle + statut + métier) contre le registre."""
         frappe.set_user(user)
         frappe.flags.in_test = False
         try:
             try:
                 r = fn(dossier_id=self.dossier)
                 if isinstance(r, dict) and not r.get("ok") \
-                        and (r.get("error") or {}).get("code") == "INVALID_STATE":
-                    return "STATE_REJECT"
+                        and (r.get("error") or {}).get("code") in self._REJECT_CODES:
+                    return "REJECT"
                 return "PASSED"
             except frappe.PermissionError:
                 return "DENIED"
             except Exception:
-                return "PASSED"     # franchi rôle+statut ; échoue plus loin (args/métier)
+                return "PASSED"     # franchi rôle+statut+métier ; échoue plus loin (args/motif)
         finally:
             frappe.flags.in_test = True
             frappe.set_user("Administrator")
@@ -229,9 +255,11 @@ class TestCoherenceMatrix(FrappeTestCase):
             frappe.db.commit()
             doc = frappe.get_doc("Admission Applicant", self.dossier)
             ip = case["is_prepa"]
-            applicable = set(available_actions(doc, _TOP, is_prepa=ip))   # tout ce qui est applicable ici
+            from admission.api._actions import action_context
+            ctx = action_context(doc)                                     # contexte métier (source unique)
+            applicable = set(available_actions(doc, _TOP, is_prepa=ip, ctx=ctx))   # applicable ici
             for user, role in _ROLE_OF.items():
-                shown = set(available_actions(doc, [role], is_prepa=ip))
+                shown = set(available_actions(doc, [role], is_prepa=ip, ctx=ctx))
                 for key in _ACTION_RULES:
                     fn = getattr(S, key)
                     gate = self._gate(user, fn)

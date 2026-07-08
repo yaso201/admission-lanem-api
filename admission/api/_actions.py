@@ -6,6 +6,12 @@ Le registre `_ACTION_RULES` déclare, par action, le rôle de BASE requis à l'�
 Les endpoints gardent leur `frappe.only_for(...)` (ENFORCEMENT intouché) ; ici = UX pure
 (montrer/masquer). Un bug de disponibilité = bug UX, jamais un trou de sécurité.
 
+GP6 : une action n'est proposée QUE si elle passerait aussi les gardes MÉTIER de l'endpoint
+(pièces vérifiées pour start_review, pièces traitées pour notify, bac vérifié pour lift_condition,
+frais 2 payé + consentement pour enroll) → aucun bouton montré n'est rejeté sur motif métier.
+Le contexte métier est calculé par `action_context` (source unique, réutilisée par get_dossier
+ET la matrice de cohérence).
+
 Anti-dérive : la matrice de cohérence (tests, AS chaque vrai rôle) verrouille registre ↔ gardes.
 `Admission SM` est ORTHOGONAL (hors hiérarchie workflow) → actions workflow vides pour un SM pur.
 """
@@ -28,31 +34,37 @@ def _has_requested(applicant):
         return False
 
 
-# Chaque règle : (applicant, is_prepa) -> rôle de BASE requis MAINTENANT, ou None si l'action
-# n'est pas applicable (statut/condition métier). Le rôle de base est ensuite étendu vers le
-# HAUT par roles_at_or_above (ascendant). Les clés = noms d'endpoint (vocabulaire canonique).
+# Chaque règle : (applicant, is_prepa, ctx) -> rôle de BASE requis MAINTENANT, ou None si l'action
+# n'est pas applicable (statut / condition métier). Le rôle de base est étendu vers le HAUT par
+# roles_at_or_above (ascendant). Les clés = noms d'endpoint (vocabulaire canonique).
+# `ctx` porte les préconditions MÉTIER calculées (action_context) : pieces_verified, notify_ready,
+# enrollment_ready. Défaut permissif (True) si absent → sûr pour les tests unitaires ciblés.
+def _c(ctx, key):
+    return (ctx or {}).get(key, True)
+
+
 _ACTION_RULES = {
-    "start_review":          lambda a, p: "Admission Administratif" if a.status == "SOU" else None,
-    "notify_pieces_recap":   lambda a, p: "Admission Administratif" if a.status == "SOU" else None,
-    "reject_dossier":        lambda a, p: "Admission Administratif" if a.status == "SOU" else None,
-    "reopen_dossier":        lambda a, p: "Admission Administratif" if a.status == "REJ" else None,
-    "request_complement":    lambda a, p: "Admission Administratif" if a.status == "SOU"
-                                          else ("Admission Responsable" if a.status == "ETU" else None),
-    "verify_bac_diploma":    lambda a, p: "Admission Administratif" if a.status == "ACO" and not a.bac_verified else None,
-    "saisir_note_concours":  lambda a, p: "Admission Administratif" if a.status == "ETU" and p and not a.notes_validated else None,
-    "valider_notes_concours":lambda a, p: "Admission Responsable" if a.status == "ETU" and p and a.notes_concours and not a.notes_validated else None,
-    "propose_scholarships":  lambda a, p: "Admission Responsable" if a.status in ("ETU", "ATT") and _has_requested(a) else None,
-    "set_waitlist_rank":     lambda a, p: "Admission Responsable" if a.status == "ATT" else None,
-    "mark_admissible":       lambda a, p: "Admission Responsable" if a.status in ("ETU", "ATT") else None,
-    "waitlist":              lambda a, p: "Admission Responsable" if a.status == "ETU" else None,
-    "refuse":                lambda a, p: "Admission Responsable" if a.status == "ETU"
-                                          else ("Admission Direction" if a.status == "ADM" else None),
-    "conditional_admission": lambda a, p: "Admission Responsable" if a.status == "ETU" and a.conditionnel else None,
-    "accept_admission":      lambda a, p: "Admission Direction" if a.status == "ADM" else None,
-    "lift_condition":        lambda a, p: "Admission Direction" if a.status == "ACO" else None,
-    "refuse_condition":      lambda a, p: "Admission Direction" if a.status == "ACO" else None,
-    "enroll":                lambda a, p: "Admission Direction" if a.status == "ACC" else None,
-    "withdraw":              lambda a, p: "Admission Administratif" if a.status in _WITHDRAW_STATES else None,
+    "start_review":          lambda a, p, c: "Admission Administratif" if a.status == "SOU" and _c(c, "pieces_verified") else None,
+    "notify_pieces_recap":   lambda a, p, c: "Admission Administratif" if a.status == "SOU" and _c(c, "notify_ready") else None,
+    "reject_dossier":        lambda a, p, c: "Admission Administratif" if a.status == "SOU" else None,
+    "reopen_dossier":        lambda a, p, c: "Admission Administratif" if a.status == "REJ" else None,
+    "request_complement":    lambda a, p, c: "Admission Administratif" if a.status == "SOU"
+                                             else ("Admission Responsable" if a.status == "ETU" else None),
+    "verify_bac_diploma":    lambda a, p, c: "Admission Administratif" if a.status == "ACO" and not a.bac_verified else None,
+    "saisir_note_concours":  lambda a, p, c: "Admission Administratif" if a.status == "ETU" and p and not a.notes_validated else None,
+    "valider_notes_concours":lambda a, p, c: "Admission Responsable" if a.status == "ETU" and p and a.notes_concours and not a.notes_validated else None,
+    "propose_scholarships":  lambda a, p, c: "Admission Responsable" if a.status in ("ETU", "ATT") and _has_requested(a) else None,
+    "set_waitlist_rank":     lambda a, p, c: "Admission Responsable" if a.status == "ATT" else None,
+    "mark_admissible":       lambda a, p, c: "Admission Responsable" if a.status in ("ETU", "ATT") else None,
+    "waitlist":              lambda a, p, c: "Admission Responsable" if a.status == "ETU" else None,
+    "refuse":                lambda a, p, c: "Admission Responsable" if a.status == "ETU"
+                                             else ("Admission Direction" if a.status == "ADM" else None),
+    "conditional_admission": lambda a, p, c: "Admission Responsable" if a.status == "ETU" and a.conditionnel else None,
+    "accept_admission":      lambda a, p, c: "Admission Direction" if a.status == "ADM" else None,
+    "lift_condition":        lambda a, p, c: "Admission Direction" if a.status == "ACO" and a.bac_verified else None,
+    "refuse_condition":      lambda a, p, c: "Admission Direction" if a.status == "ACO" else None,
+    "enroll":                lambda a, p, c: "Admission Direction" if a.status == "ACC" and _c(c, "enrollment_ready") else None,
+    "withdraw":              lambda a, p, c: "Admission Administratif" if a.status in _WITHDRAW_STATES else None,
 }
 
 
@@ -61,12 +73,39 @@ def _authorized(need, roles):
     return bool(need and set(roles) & set(roles_at_or_above(need)))
 
 
-def available_actions(applicant, roles, *, is_prepa):
+def _enrollment_ready(applicant):
+    """Gate MÉTIER d'enroll (miroir EXACT de l'endpoint) : frais 2 payé + consentement DATA_TRANSFER.
+    Seulement pertinent à ACC ; renvoie False sinon (évite toute requête inutile)."""
+    if applicant.status != "ACC":
+        return False
+    from admission.api.public import _check_enrollment_fee_paid
+    from admission.api.legal import _require_consent_record
+    try:
+        _check_enrollment_fee_paid(applicant.name)
+        _require_consent_record(applicant.name, "DATA_TRANSFER")
+        return True
+    except Exception:
+        return False
+
+
+def action_context(applicant):
+    """Contexte MÉTIER (source unique) consommé par available_actions — reflète les gardes des
+    endpoints pour que la disponibilité UX == ce que le back accepterait (GP6). Import paresseux
+    (acyclique : _actions ne doit pas être importé au chargement de public/legal)."""
+    from admission.api.public import pieces_requises_non_verifiees, notify_pieces_blocked
+    return {
+        "pieces_verified": not pieces_requises_non_verifiees(applicant),   # start_review
+        "notify_ready": not notify_pieces_blocked(applicant),              # notify_pieces_recap
+        "enrollment_ready": _enrollment_ready(applicant),                  # enroll
+    }
+
+
+def available_actions(applicant, roles, *, is_prepa, ctx=None):
     """Liste des clés d'action que `roles` peut exécuter sur `applicant` à son état courant.
-    Dérivé du registre — même déclaration d'autorisation que les gardes (source unique)."""
+    Dérivé du registre — même déclaration d'autorisation (rôle+statut+métier) que les gardes."""
     roles = roles or []
     return [key for key, rule in _ACTION_RULES.items()
-            if _authorized(rule(applicant, is_prepa), roles)]
+            if _authorized(rule(applicant, is_prepa, ctx), roles)]
 
 
 def can_control_pieces(applicant, roles):
