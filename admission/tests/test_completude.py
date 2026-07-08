@@ -10,6 +10,7 @@ import os
 import types
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
+from admission.api.permissions import roles_at_or_above  # FIX-ROLES-HIERARCHIE : source unique de l'ordre
 
 STAFF = "admission.api.staff"
 
@@ -38,7 +39,7 @@ class TestRequestComplementRoleGuard(TestCase):
             mf.get_doc.return_value = app
             from admission.api.staff import request_complement
             request_complement(dossier_id="CAN-2026-00001", motif="Relevé de notes manquant")
-            mf.only_for.assert_called_once_with(("Admission Administratif", "System Manager"))
+            mf.only_for.assert_called_once_with(roles_at_or_above("Admission Administratif"))
         self.assertEqual(app.status, "INC")
         self.assertEqual(app.motif_incompletude, "Relevé de notes manquant")
         app.save.assert_called_once()
@@ -51,7 +52,7 @@ class TestRequestComplementRoleGuard(TestCase):
             mf.get_doc.return_value = app
             from admission.api.staff import request_complement
             request_complement(dossier_id="CAN-2026-00001", motif="Pièce illisible")
-            mf.only_for.assert_called_once_with(("Admission Responsable", "System Manager"))
+            mf.only_for.assert_called_once_with(roles_at_or_above("Admission Responsable"))
         self.assertEqual(app.status, "INC")
 
 

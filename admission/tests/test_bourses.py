@@ -16,6 +16,7 @@ import os
 import types
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
+from admission.api.permissions import roles_at_or_above  # FIX-ROLES-HIERARCHIE : source unique de l'ordre
 
 STAFF = "admission.api.staff"
 PUBLIC = "admission.api.public"
@@ -180,7 +181,7 @@ class TestProposeScholarships(TestCase):
 
     def test_responsable_proposes_in_etu(self):
         app, res, mf = self._run(bourses=["B-EXC-A", "B-MERITE"])
-        mf.only_for.assert_called_once_with(("Admission Responsable", "System Manager"))
+        mf.only_for.assert_called_once_with(roles_at_or_above("Admission Responsable"))
         self.assertEqual(json.loads(app.proposed_scholarships), ["B-EXC-A", "B-MERITE"])
         self.assertEqual(app.scholarships_proposed_by, "resp@lanem.bj")
         self.assertEqual(app.scholarships_proposed_date, "2026-06-11 10:00:00")
@@ -232,7 +233,7 @@ class TestAcceptAdmissionWithBourses(TestCase):
 
     def test_atomic_validation_with_acc(self):
         app, res, mf, gen = self._run(["B-EXC-A", "B-MERITE"])
-        mf.only_for.assert_called_once_with(("Admission Direction", "System Manager"))
+        mf.only_for.assert_called_once_with(roles_at_or_above("Admission Direction"))
         self.assertEqual(app.status, "ACC")
         self.assertEqual(json.loads(app.validated_scholarships), ["B-EXC-A", "B-MERITE"])
         self.assertEqual(app.scholarships_validated_by, "dir@lanem.bj")

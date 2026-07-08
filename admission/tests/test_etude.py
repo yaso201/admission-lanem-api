@@ -9,6 +9,7 @@ import json
 import os
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
+from admission.api.permissions import roles_at_or_above  # FIX-ROLES-HIERARCHIE : source unique de l'ordre
 
 STAFF = "admission.api.staff"
 
@@ -37,7 +38,7 @@ class TestStartReview(TestCase):
             mf.get_doc.return_value = app
             from admission.api.staff import start_review
             res = start_review(dossier_id="CAN-2026-00001")
-            mf.only_for.assert_called_once_with(("Admission Administratif", "System Manager"))
+            mf.only_for.assert_called_once_with(roles_at_or_above("Admission Administratif"))
         self.assertEqual(app.status, "ETU")
         app.save.assert_called_once()
         self.assertEqual(res["data"]["status"], "ETU")
@@ -79,7 +80,7 @@ class TestMarkAdmissible(TestCase):
 
     def test_etu_to_adm_stamps_decision(self):
         app, res, mf = self._run("ETU")
-        mf.only_for.assert_called_once_with(("Admission Responsable", "System Manager"))
+        mf.only_for.assert_called_once_with(roles_at_or_above("Admission Responsable"))
         self.assertEqual(app.status, "ADM")
         self.assertEqual(app.decided_by, "resp@lanem.bj")
         self.assertEqual(app.decision_date, "2026-06-11 10:00:00")
@@ -106,7 +107,7 @@ class TestWaitlist(TestCase):
             mf.session.user = "resp@lanem.bj"
             from admission.api.staff import waitlist
             res = waitlist(dossier_id="CAN-2026-00001", rang=3)
-            mf.only_for.assert_called_once_with(("Admission Responsable", "System Manager"))
+            mf.only_for.assert_called_once_with(roles_at_or_above("Admission Responsable"))
         self.assertEqual(app.status, "ATT")
         self.assertEqual(app.rang_liste_attente, 3)
         self.assertEqual(app.decided_by, "resp@lanem.bj")
@@ -133,7 +134,7 @@ class TestRefuse(TestCase):
             mf.session.user = "resp@lanem.bj"
             from admission.api.staff import refuse
             res = refuse(dossier_id="CAN-2026-00001", motif="Niveau insuffisant")
-            mf.only_for.assert_called_once_with(("Admission Responsable", "System Manager"))
+            mf.only_for.assert_called_once_with(roles_at_or_above("Admission Responsable"))
         self.assertEqual(app.status, "REF")
         self.assertEqual(app.motif_refus, "Niveau insuffisant")
         self.assertEqual(app.decided_by, "resp@lanem.bj")
@@ -173,7 +174,7 @@ class TestRefuse(TestCase):
             res = refuse(dossier_id="CAN-2026-00001", motif="Places épuisées")
         self.assertTrue(res["ok"])
         self.assertEqual(app.status, "REF")
-        mf.only_for.assert_called_with(("Admission Direction", "System Manager"))
+        mf.only_for.assert_called_with(roles_at_or_above("Admission Direction"))
 
 
 class TestAcceptAdmission(TestCase):
@@ -185,7 +186,7 @@ class TestAcceptAdmission(TestCase):
             mf.get_doc.return_value = app
             from admission.api.staff import accept_admission
             res = accept_admission(dossier_id="CAN-2026-00001")
-            mf.only_for.assert_called_once_with(("Admission Direction", "System Manager"))
+            mf.only_for.assert_called_once_with(roles_at_or_above("Admission Direction"))
         self.assertEqual(app.status, "ACC")
         # IMPÉRATIF : via le contrôleur (save) → déclenche _on_accepted (frais 2) ; PAS de court-circuit
         app.save.assert_called_once_with(ignore_permissions=True)

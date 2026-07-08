@@ -9,6 +9,7 @@ import os
 import types
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
+from admission.api.permissions import roles_at_or_above  # FIX-ROLES-HIERARCHIE : source unique de l'ordre
 
 STAFF = "admission.api.staff"
 NOTIF = "admission.api.notifications"
@@ -153,7 +154,7 @@ class TestValiderNotesConcours(TestCase):
             mf.session.user = "resp@lanem.bj"
             from admission.api.staff import valider_notes_concours
             res = valider_notes_concours(dossier_id="CAN-2026-00001")
-            mf.only_for.assert_called_once_with(("Admission Responsable", "System Manager"))
+            mf.only_for.assert_called_once_with(roles_at_or_above("Admission Responsable"))
         self.assertEqual(app.notes_validated, 1)
         self.assertEqual(app.notes_validated_by, "resp@lanem.bj")  # séparation : validateur tracé
         self.assertEqual(app.notes_validated_date, "2026-06-11 10:00:00")
@@ -259,7 +260,7 @@ class TestSaisirNoteConcours(TestCase):
             mf.get_doc.return_value = app
             from admission.api.staff import saisir_note_concours
             res = saisir_note_concours(dossier_id="CAN-2026-00001", notes={"maths": 14, "francais": 12})
-            mf.only_for.assert_called_once_with(("Admission Administratif", "System Manager"))
+            mf.only_for.assert_called_once_with(roles_at_or_above("Admission Administratif"))
         self.assertTrue(res["ok"])
         self.assertEqual(json.loads(app.notes_concours), {"maths": 14.0, "francais": 12.0})
         self.assertEqual(app.notes_validated, 0)  # NON validées

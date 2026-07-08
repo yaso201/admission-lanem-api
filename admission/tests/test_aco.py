@@ -11,6 +11,7 @@ import os
 import types
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
+from admission.api.permissions import roles_at_or_above  # FIX-ROLES-HIERARCHIE : source unique de l'ordre
 
 STAFF = "admission.api.staff"
 PUBLIC = "admission.api.public"
@@ -182,7 +183,7 @@ class TestVerifyBacDiploma(TestCase):
     def test_administratif_role(self):
         app = _aco_app()
         res, mf = self._run(app)
-        mf.only_for.assert_called_once_with(("Admission Administratif", "System Manager"))
+        mf.only_for.assert_called_once_with(roles_at_or_above("Admission Administratif"))
 
     def test_sets_bac_verified(self):
         app = _aco_app()
@@ -238,7 +239,7 @@ class TestConditionalAdmission(TestCase):
     def test_responsable_etu_to_aco_licence(self):
         app = _aco_app(status="ETU")
         res, mf, gen, prepa = _run_staff("conditional_admission", app, is_prepa=False, user="resp@lanem.bj")
-        mf.only_for.assert_called_once_with(("Admission Responsable", "System Manager"))
+        mf.only_for.assert_called_once_with(roles_at_or_above("Admission Responsable"))
         self.assertEqual(app.status, "ACO")
         self.assertEqual(app.decided_by, "resp@lanem.bj")   # stamp
         self.assertEqual(app.decision_date, "2026-06-11 10:00:00")
@@ -277,7 +278,7 @@ class TestLiftCondition(TestCase):
     def test_direction_aco_to_acc_via_save(self):
         app = _aco_app(status="ACO", bac_verified=1)
         res, mf, gen, prepa = _run_staff("lift_condition", app)
-        mf.only_for.assert_called_once_with(("Admission Direction", "System Manager"))
+        mf.only_for.assert_called_once_with(roles_at_or_above("Admission Direction"))
         self.assertEqual(app.status, "ACC")
         # IMPÉRATIF : via save() (le contrôleur) → _on_accepted (frais 2) ; PAS de court-circuit
         app.save.assert_called_once_with(ignore_permissions=True)
@@ -303,7 +304,7 @@ class TestRefuseCondition(TestCase):
     def test_direction_aco_to_ref_with_motif(self):
         app = _aco_app(status="ACO")
         res, mf, gen, prepa = _run_staff("refuse_condition", app, motif="Bac non obtenu")
-        mf.only_for.assert_called_once_with(("Admission Direction", "System Manager"))
+        mf.only_for.assert_called_once_with(roles_at_or_above("Admission Direction"))
         self.assertEqual(app.status, "REF")
         self.assertEqual(app.motif_refus, "Bac non obtenu")
         self.assertEqual(app.decided_by, "dir@lanem.bj")   # stamp (miroir refuse)

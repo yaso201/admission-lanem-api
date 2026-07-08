@@ -8,6 +8,7 @@ W6 gate d'état valider_notes. Style unitaire mocké.
 
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
+from admission.api.permissions import roles_at_or_above  # FIX-ROLES-HIERARCHIE : source unique de l'ordre
 
 import frappe as _real_frappe
 
@@ -56,7 +57,7 @@ class TestWithdraw(TestCase):
         self.assertEqual(app.decided_by, mf.session.user)   # trace non falsifiable
         mnotif.assert_called_once()                          # candidat NOTIFIÉ (audit #2)
         app.save.assert_called_once_with(ignore_permissions=True)
-        mf.only_for.assert_called_with(("Admission Administratif", "System Manager"))
+        mf.only_for.assert_called_with(roles_at_or_above("Admission Administratif"))
 
     def test_withdraw_requires_motif(self):
         res, app, _, mnotif = self._run("SOU", motif="  ")
@@ -91,7 +92,7 @@ class TestSetWaitlistRank(TestCase):
         res, app, mf = self._run("ATT", 3)
         self.assertTrue(res["ok"])
         self.assertEqual(app.rang_liste_attente, 3)
-        mf.only_for.assert_called_with(("Admission Responsable", "System Manager"))
+        mf.only_for.assert_called_with(roles_at_or_above("Admission Responsable"))
 
     def test_rank_cleared(self):
         res, app, _ = self._run("ATT", "")
@@ -178,7 +179,7 @@ class TestCloseSession(TestCase):
         sample = dossier_writes[0][0][2]
         self.assertIn("decided_by", sample)
         self.assertTrue(sample.get("motif_refus") or sample.get("motif_desistement"))
-        mf.only_for.assert_called_with(("Admission Direction", "System Manager"))
+        mf.only_for.assert_called_with(roles_at_or_above("Admission Direction"))
 
     @patch("admission.admission.doctype.admission_applicant.admission_applicant.write_transition_log")
     def test_one_failure_does_not_stop_the_batch(self, mlog):

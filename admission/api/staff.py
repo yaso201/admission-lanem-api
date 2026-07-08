@@ -42,7 +42,14 @@ from admission.api.notifications import (
 )
 from admission.api.receipt import send_payment_receipt
 
-CONFIRM_ROLES = ("Admission Administratif", "System Manager")
+from admission.api.permissions import roles_at_or_above
+
+# FIX-ROLES-HIERARCHIE — modele B ascendant : chaque action declare son NIVEAU MIN ;
+# roles_at_or_above l'expanse vers le haut (+ System Manager). Un superieur couvre l'inferieur.
+ADMIN_UP = roles_at_or_above("Admission Administratif")   # {Admin, Resp, Dir, SysMgr}
+RESP_UP = roles_at_or_above("Admission Responsable")      # {Resp, Dir, SysMgr}
+DIR_UP = roles_at_or_above("Admission Direction")         # {Dir, SysMgr}
+CONFIRM_ROLES = ADMIN_UP                                  # actions confirm = niveau min Administratif
 OFFLINE_MODES = {"cash": "Cash", "bank": "Bank"}
 
 
@@ -172,9 +179,9 @@ def request_complement(dossier_id=None, motif=None):
         return scope_err
     state = applicant.status
     if state == "SOU":
-        frappe.only_for(("Admission Administratif", "System Manager"))
+        frappe.only_for(ADMIN_UP)
     elif state == "ETU":
-        frappe.only_for(("Admission Responsable", "System Manager"))
+        frappe.only_for(RESP_UP)
     else:
         return _error("INVALID_STATE", "Renvoi en incomplet possible seulement depuis SOU ou ETU.", 409)
     if not motif or not str(motif).strip():
@@ -201,7 +208,7 @@ def start_review(dossier_id=None):
     Role-gardé **Administratif** (A1 tranchée : l'Administratif instruit/met en étude, le Responsable
     décide). Trace via Transition Log (save, rôle gardé → validate_workflow OK).
     """
-    frappe.only_for(("Admission Administratif", "System Manager"))
+    frappe.only_for(ADMIN_UP)
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
@@ -233,7 +240,7 @@ def _stamp_decision(applicant):
 @frappe.whitelist()
 def mark_admissible(dossier_id=None):
     """C1-ETUDE — décision Admissible (ETU/ATT→ADM). Responsable. decided_by/date posés."""
-    frappe.only_for(("Admission Responsable", "System Manager"))
+    frappe.only_for(RESP_UP)
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
@@ -259,7 +266,7 @@ def mark_admissible(dossier_id=None):
 @frappe.whitelist()
 def waitlist(dossier_id=None, rang=None):
     """C1-ETUDE — mise en liste d'attente (ETU→ATT). Responsable. Rang optionnel."""
-    frappe.only_for(("Admission Responsable", "System Manager"))
+    frappe.only_for(RESP_UP)
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
@@ -299,9 +306,9 @@ def refuse(dossier_id=None, motif=None):
     if scope_err:
         return scope_err
     if applicant.status == "ETU":
-        frappe.only_for(("Admission Responsable", "System Manager"))
+        frappe.only_for(RESP_UP)
     elif applicant.status == "ADM":
-        frappe.only_for(("Admission Direction", "System Manager"))
+        frappe.only_for(DIR_UP)
     else:
         return _error("INVALID_STATE", "Refus possible depuis En étude (ETU, Responsable) ou Admissible (ADM, Direction).", 409)
     notes_gate = _require_validated_notes_if_prepa(applicant)
@@ -334,7 +341,7 @@ def accept_admission(dossier_id=None, bourses_validees=None):
     notifiées AVEC la décision). Omis → comportement inchangé (rétro-compatible). Gardes :
     ⊆ requested, existence miroir, exclusivité (R3). Bourses + ACC partent dans le MÊME save.
     """
-    frappe.only_for(("Admission Direction", "System Manager"))
+    frappe.only_for(DIR_UP)
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
@@ -595,7 +602,7 @@ def stats_direction():
     NB : agrégats globaux anonymes (pas de liste nominative) — assumés hors du
     cloisonnement par dossier DEC-262, qui s'applique aux listes.
     """
-    frappe.only_for(("Admission Direction", "System Manager"))
+    frappe.only_for(DIR_UP)
     by_status = dict(frappe.db.sql(
         "SELECT status, COUNT(*) FROM `tabAdmission Applicant` WHERE anonymized != 1 GROUP BY status"))
     by_programme = dict(frappe.db.sql(
@@ -635,7 +642,7 @@ def enroll(dossier_id=None):
     est portée par les 5 étages de clés (person_id SA, job_id+IntegrationLog cascade,
     C5 Student, IntegrationLog fee sync, StudentFee UF + C5).
     """
-    frappe.only_for(("Admission Direction", "System Manager"))
+    frappe.only_for(DIR_UP)
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
@@ -753,7 +760,7 @@ def propose_scholarships(dossier_id=None, bourses=None):
     non falsifiable). AUCUN effet financier : la proposition guide la validation à l'ACC.
     Re-proposition possible tant que le dossier est en ETU/ATT (la dernière fait foi).
     """
-    frappe.only_for(("Admission Responsable", "System Manager"))
+    frappe.only_for(RESP_UP)
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
@@ -813,7 +820,7 @@ def verify_bac_diploma(dossier_id=None):
     NE LÈVE PAS la condition : la levée (ACO→ACC) est l'étape Direction (lift_condition). INV-HUMAN :
     la vérification humaine (Adm) et la levée humaine (Dir) sont deux gestes séparés.
     """
-    frappe.only_for(("Admission Administratif", "System Manager"))
+    frappe.only_for(ADMIN_UP)
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
@@ -1057,7 +1064,7 @@ def conditional_admission(dossier_id=None):
     diplôme. Garde notes Prépa (cohérence C1-CONCOURS : un Prépa entre en ACO avec notes validées).
     stamp decided_by/date + notif (« admission conditionnelle » — Prépa avec notes / Licence générique).
     """
-    frappe.only_for(("Admission Responsable", "System Manager"))
+    frappe.only_for(RESP_UP)
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
@@ -1094,7 +1101,7 @@ def lift_condition(dossier_id=None, bourses_validees=None):
     C2-BOURSES (ruling R2) : `bourses_validees` OPTIONNEL — même geste atomique de validation
     Direction que accept_admission (la branche conditionnelle atteint ACC ici, pas par ADM→ACC).
     """
-    frappe.only_for(("Admission Direction", "System Manager"))
+    frappe.only_for(DIR_UP)
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
@@ -1124,7 +1131,7 @@ def refuse_condition(dossier_id=None, motif=None):
 
     SPEC §5 : ACO→REF si bac non obtenu (frais 1 non remboursable, PO-3). stamp + notif « refusé »+motif.
     """
-    frappe.only_for(("Admission Direction", "System Manager"))
+    frappe.only_for(DIR_UP)
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
@@ -1190,7 +1197,7 @@ def saisir_note_concours(dossier_id=None, notes=None):
     Administratif, dossiers **Prépa** uniquement (is_prepa_session), en étude (ETU). `notes` = objet
     {épreuve: note numérique} (garde de format). Re-saisie → réinitialise la validation (intégrité).
     """
-    frappe.only_for(("Admission Administratif", "System Manager"))
+    frappe.only_for(ADMIN_UP)
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
@@ -1220,7 +1227,7 @@ def valider_notes_concours(dossier_id=None):
     Responsable, Prépa-only, notes saisies présentes. Idempotent (déjà validées → no-op). Pose
     notes_validated=1 + notes_validated_by (validateur réel) + notes_validated_date.
     """
-    frappe.only_for(("Admission Responsable", "System Manager"))
+    frappe.only_for(RESP_UP)
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
@@ -1317,7 +1324,7 @@ def withdraw(dossier_id=None, motif=None):
     """W1 (B0.1) — désistement (→DES). Administratif (calé Workflow Withdraw), motif
     OBLIGATOIRE, candidat NOTIFIÉ (ton neutre — pas un refus). decided_by/date posés
     (acte sensible tracé). Transition par save() : rôle gardé → validate_workflow OK."""
-    frappe.only_for(("Admission Administratif", "System Manager"))
+    frappe.only_for(ADMIN_UP)
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
@@ -1343,7 +1350,7 @@ def withdraw(dossier_id=None, motif=None):
 def set_waitlist_rank(dossier_id=None, rang=None):
     """W5 — édite le rang de liste d'attente (Responsable, dossier ATT). rang vide → effacé.
     Le rang devient OPPOSABLE : exposé (get_dossier/list_dossiers) et trié au cockpit."""
-    frappe.only_for(("Admission Responsable", "System Manager"))
+    frappe.only_for(RESP_UP)
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
@@ -1387,7 +1394,7 @@ def close_session(session=None, motif=None, dry_run=1):
         write_transition_log,
     )
 
-    frappe.only_for(("Admission Direction", "System Manager"))
+    frappe.only_for(DIR_UP)
     if not session or not frappe.db.exists("Admission Session", session):
         return _error("INVALID_SESSION", "Session inconnue.", 404)
     # FIX-D-CONF-04 (granularité session) : une Direction scopée ne clôture pas une session hors périmètre.

@@ -25,6 +25,18 @@ SETTINGS = "Admission Settings"
 TABLE = "`tabAdmission Applicant`"
 BYPASS_ROLES = {"System Manager", "Administrator", "Admission SM"}
 
+# FIX-ROLES-HIERARCHIE — modele B : hierarchie ASCENDANTE des roles workflow (couche 1,
+# DROIT D'ACTION, distincte du cloisonnement/couche 2). Source UNIQUE de l'ordre.
+_HIERARCHY = ("Admission Administratif", "Admission Responsable", "Admission Direction")
+
+
+def roles_at_or_above(min_role):
+    """Roles workflow de niveau >= min_role + System Manager (break-glass technique, inchange).
+    Un role SUPERIEUR peut faire les actions d'un INFERIEUR ; jamais l'inverse (ascendant seul).
+    Admission SM ORTHOGONAL (hors hierarchie workflow). N'elargit que la couche 1 (action) ;
+    le perimetre de DONNEES reste porte par le cloisonnement (has_permission/_guard_write_scope)."""
+    return _HIERARCHY[_HIERARCHY.index(min_role):] + ("System Manager",)
+
 # conditions SQL "fail-closed" : ne matchent aucun dossier
 _NO_SCOPE = f"{TABLE}.`name` = '__no_scope__'"
 _MISCONFIGURED = f"{TABLE}.`name` = '__cloisonnement_misconfigured__'"
