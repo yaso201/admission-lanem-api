@@ -109,11 +109,17 @@ try {
     await shot(page, '03-gr1-suivi-carte-inc');
 
     await goTo(page, '/pieces/');
-    const st = await page.evaluate(() => ({
-      resubmitVisible: !(document.getElementById('resubmit-box') || { hidden: true }).hidden,
-      btnLabel: (document.getElementById('resubmit-btn') || {}).textContent || '',
-      nextHidden: (document.getElementById('ab-next') || {}).hidden === true,
-    }));
+    const st = await page.evaluate(() => {
+      const box = document.getElementById('resubmit-box');
+      const next = document.getElementById('ab-next');
+      return {
+        // vérité VISUELLE (style calculé), pas la propriété DOM — le display de .em-btn
+        // écrase la règle UA [hidden] (leçon capture 04, 1er run)
+        resubmitVisible: !!box && getComputedStyle(box).display !== 'none',
+        btnLabel: (document.getElementById('resubmit-btn') || {}).textContent || '',
+        nextHidden: !next || getComputedStyle(next).display === 'none',
+      };
+    });
     rec('GR3a bloc re-soumission VISIBLE en INC sur /pieces', st.resubmitVisible, '');
     rec('GR3b bouton = « Re-soumettre mon dossier »', /Re-soumettre mon dossier/.test(st.btnLabel), `label="${st.btnLabel}"`);
     rec('GR3c CTA tunnel (« Continuer vers le récapitulatif ») MASQUÉ en INC', st.nextHidden, '');
@@ -127,10 +133,13 @@ try {
     if (inputHandle) {
       await inputHandle.uploadFile('/tmp/fixture-piece.png');
       await sleep(6000);   // upload 3G-safe + re-render
-      const after = await page.evaluate(() => ({
-        nextHidden: (document.getElementById('ab-next') || {}).hidden === true,
-        resubmitEnabled: !(document.getElementById('resubmit-btn') || {}).disabled,
-      }));
+      const after = await page.evaluate(() => {
+        const next = document.getElementById('ab-next');
+        return {
+          nextHidden: !next || getComputedStyle(next).display === 'none',   // vérité visuelle
+          resubmitEnabled: !(document.getElementById('resubmit-btn') || {}).disabled,
+        };
+      });
       rec('GR1c après upload : CTA tunnel TOUJOURS masqué (plus de bascule paiement)', after.nextHidden, '');
       rec('GR1d après upload : re-soumission activable', after.resubmitEnabled, '');
       await shot(page, '05-gr1-pieces-apres-upload');
