@@ -134,3 +134,112 @@ class TestGetDossierExposesActions(TestCase):
         self.assertIn("available_actions", src)
         self.assertIn("can_control_pieces", src)
         self.assertIn("can_manage_payments", src)
+
+
+import frappe                                            # noqa: E402
+from frappe.tests.utils import FrappeTestCase            # noqa: E402
+from admission.api import staff as S                     # noqa: E402
+from admission.api._actions import _ACTION_RULES         # noqa: E402
+
+_ADMIN_U = "prog-admin@lanem.test"
+_RESP_U = "prog-resp@lanem.test"
+_DIR_U = "prog-dir@lanem.test"
+_SM_U = "prog-sm@lanem.test"
+_ROLE_OF = {_ADMIN_U: "Admission Administratif", _RESP_U: "Admission Responsable",
+            _DIR_U: "Admission Direction", _SM_U: "Admission SM"}
+_TOP = ["Admission Direction"]   # rôle sommet : authorise TOUTE action applicable (ascendant)
+
+# Cas de statut + flags métier → exercent les conditions (verify_bac/is_prepa/bourses/conditionnel).
+_CASES = [
+    {"status": "SOU", "flags": {}, "is_prepa": False},
+    {"status": "ETU", "flags": {"conditionnel": 1, "requested_scholarships": '["m1"]'}, "is_prepa": False},
+    {"status": "ETU", "flags": {"notes_concours": '{"maths":"12"}', "notes_validated": 0}, "is_prepa": True},
+    {"status": "ADM", "flags": {}, "is_prepa": False},
+    {"status": "ACO", "flags": {"bac_verified": 0}, "is_prepa": False},
+    {"status": "ACC", "flags": {}, "is_prepa": False},
+    {"status": "ATT", "flags": {}, "is_prepa": False},
+    {"status": "REJ", "flags": {}, "is_prepa": False},
+]
+
+
+class TestCoherenceMatrix(FrappeTestCase):
+    """GP1 — anti-dérive : AS chaque vrai rôle (set_user, in_test=False → only_for actif),
+    pour chaque statut × action, available_actions coïncide avec le garde RÉEL de l'endpoint :
+      · FORWARD  : tout bouton MONTRÉ passe le garde de rôle (aucun bouton rejeté sur rôle) ;
+      · REVERSE  : tout ce que le rôle PEUT (garde accepte) et qui est applicable EST montré
+                   (désync fermée — un supérieur voit ce qu'il peut invoquer)."""
+
+    def _clean(self):
+        frappe.set_user("Administrator")
+        for e in _ROLE_OF:
+            if frappe.db.exists("User", e):
+                frappe.delete_doc("User", e, force=True, ignore_permissions=True)
+        if getattr(self, "dossier", None) and frappe.db.exists("Admission Applicant", self.dossier):
+            frappe.delete_doc("Admission Applicant", self.dossier, force=True, ignore_permissions=True)
+        frappe.db.commit()
+
+    def setUp(self):
+        self._clean()
+        for e, role in _ROLE_OF.items():
+            frappe.get_doc({"doctype": "User", "email": e, "first_name": e.split("-")[1],
+                            "send_welcome_email": 0, "enabled": 1,
+                            "roles": [{"role": role}]}).insert(ignore_permissions=True)
+        sessions = frappe.get_all("Admission Session", limit=1, pluck="name")
+        if not sessions:
+            self.skipTest("Aucune Admission Session seedee (decor requis).")
+        app = frappe.get_doc({
+            "doctype": "Admission Applicant", "status": "BRO",
+            "first_name": "Prog", "last_name": "Test", "email": "prog-app@lanem.test",
+            "phone": "+2290160000001", "programme_code": "PREPA", "level_code": "PREPA-S1",
+            "session": sessions[0],
+        }).insert(ignore_permissions=True)
+        self.dossier = app.name
+        frappe.db.commit()
+        self.addCleanup(self._clean)
+
+    def _gate(self, user, fn):
+        """Garde RÉEL de l'endpoint AS `user` :
+          · DENIED       = only_for a rejeté (PermissionError) → rôle refusé ;
+          · STATE_REJECT = INVALID_STATE (garde de statut) → action inapplicable à cet état ;
+          · PASSED       = a franchi rôle ET statut (échoue plus loin : args/motif/métier).
+        Scelle LES DEUX dimensions (rôle + statut) contre le registre."""
+        frappe.set_user(user)
+        frappe.flags.in_test = False
+        try:
+            try:
+                r = fn(dossier_id=self.dossier)
+                if isinstance(r, dict) and not r.get("ok") \
+                        and (r.get("error") or {}).get("code") == "INVALID_STATE":
+                    return "STATE_REJECT"
+                return "PASSED"
+            except frappe.PermissionError:
+                return "DENIED"
+            except Exception:
+                return "PASSED"     # franchi rôle+statut ; échoue plus loin (args/métier)
+        finally:
+            frappe.flags.in_test = True
+            frappe.set_user("Administrator")
+            frappe.db.rollback()
+
+    def test_coherence_all_roles_all_states(self):
+        violations = []
+        for case in _CASES:
+            frappe.db.set_value("Admission Applicant", self.dossier,
+                                dict(status=case["status"], **case["flags"]))
+            frappe.db.commit()
+            doc = frappe.get_doc("Admission Applicant", self.dossier)
+            ip = case["is_prepa"]
+            applicable = set(available_actions(doc, _TOP, is_prepa=ip))   # tout ce qui est applicable ici
+            for user, role in _ROLE_OF.items():
+                shown = set(available_actions(doc, [role], is_prepa=ip))
+                for key in _ACTION_RULES:
+                    fn = getattr(S, key)
+                    gate = self._gate(user, fn)
+                    cell = f"{case['status']}/{role.split()[-1]}/{key}"
+                    # FORWARD : montré ⇒ le garde de rôle accepte
+                    if key in shown and gate != "PASSED":
+                        violations.append(f"FORWARD {cell}: montré mais garde={gate}")
+                    # REVERSE : applicable ET garde accepte ⇒ montré
+                    if key in applicable and gate == "PASSED" and key not in shown:
+                        violations.append(f"REVERSE {cell}: autorisé+applicable mais masqué")
+        self.assertEqual(violations, [], "\n".join(violations))
