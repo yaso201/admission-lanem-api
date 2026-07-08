@@ -23,35 +23,57 @@ STATES = [
 	("DES", "Inverse", "Admission Administratif"),
 ]
 
-TRANSITIONS = [
-	("BRO", "Declare Offline Payment", "SOP", "Admission Administratif"),
-	("BRO", "Confirm Online Payment", "SOU", "Admission Administratif"),
-	("SOP", "Confirm Payment", "SOU", "Admission Administratif"),
-	("SOU", "Request Complement", "INC", "Admission Administratif"),
-	("INC", "Resubmit Complement", "SOU", "Admission Administratif"),
-	("SOU", "Start Review", "ETU", "Admission Administratif"),
-	("SOU", "Reject Documentary", "REJ", "Admission Administratif"),
-	("REJ", "Reopen", "SOU", "Admission Administratif"),
-	("ETU", "Request Complement", "INC", "Admission Responsable"),
-	("ETU", "Waitlist", "ATT", "Admission Responsable"),
-	("ETU", "Mark Admissible", "ADM", "Admission Responsable"),
-	("ETU", "Conditional Admission", "ACO", "Admission Responsable"),
-	("ETU", "Refuse", "REF", "Admission Responsable"),
-	("ATT", "Mark Admissible", "ADM", "Admission Responsable"),
-	("ADM", "Accept Admission", "ACC", "Admission Direction"),
-	("ADM", "Refuse", "REF", "Admission Direction"),
-	("ACO", "Lift Condition", "ACC", "Admission Direction"),
-	("ACO", "Refuse", "REF", "Admission Direction"),
-	("ACC", "Enroll", "INS", "Admission Direction"),
-	("BRO", "Withdraw", "DES", "Admission Administratif"),
-	("SOP", "Withdraw", "DES", "Admission Administratif"),
-	("SOU", "Withdraw", "DES", "Admission Administratif"),
-	("ETU", "Withdraw", "DES", "Admission Administratif"),
-	("ATT", "Withdraw", "DES", "Admission Administratif"),
-	("ADM", "Withdraw", "DES", "Admission Administratif"),
-	("ACO", "Withdraw", "DES", "Admission Administratif"),
-	("ACC", "Withdraw", "DES", "Admission Administratif"),
-]
+# FIX-ROLES-HYBRIDE-WORKFLOW — couche 1b alignée sur le MÊME modèle hybride que only_for :
+#   opérationnel = ASCENDANT (une ligne par rôle >= base + System Manager break-glass) ;
+#   décision maker = EXACT Responsable (+ SysMgr) ; validation checker = EXACT Direction (+ SysMgr).
+# Multi-lignes VALIDÉ sur Frappe 15.103.2 (get_transitions itère toutes les lignes `allowed in roles`
+# au chemin save()->validate_workflow ; #14862 = chemin dropdown/apply_workflow, hors périmètre).
+# Les transitions CANDIDAT/PAIEMENT (Declare/Confirm/Resubmit) passent par db.set_value côté endpoint
+# -> bypassent validate_workflow -> laissées à 1 ligne (Administratif), sans effet de garde réel.
+SYSMGR = "System Manager"
+_ASCENDING = ["Admission Administratif", "Admission Responsable", "Admission Direction", SYSMGR]
+_ASC_FROM_RESP = ["Admission Responsable", "Admission Direction", SYSMGR]
+_MAKER = ["Admission Responsable", SYSMGR]          # décision (Direction EXCLUE — SoD)
+_CHECKER = ["Admission Direction", SYSMGR]          # validation
+_WITHDRAW_STATES = ["BRO", "SOP", "SOU", "ETU", "ATT", "ADM", "ACO", "ACC"]
+
+
+def _build_transitions():
+	rows = [
+		# candidat / paiement — db.set_value côté endpoint (bypass Workflow), 1 ligne
+		("BRO", "Declare Offline Payment", "SOP", "Admission Administratif"),
+		("BRO", "Confirm Online Payment", "SOU", "Admission Administratif"),
+		("SOP", "Confirm Payment", "SOU", "Admission Administratif"),
+		("INC", "Resubmit Complement", "SOU", "Admission Administratif"),
+	]
+
+	def fan(state, action, nxt, roles):
+		rows.extend((state, action, nxt, role) for role in roles)
+
+	# opérationnel — ASCENDANT
+	fan("SOU", "Start Review", "ETU", _ASCENDING)
+	fan("SOU", "Request Complement", "INC", _ASCENDING)
+	fan("ETU", "Request Complement", "INC", _ASC_FROM_RESP)
+	fan("SOU", "Reject Documentary", "REJ", _ASCENDING)
+	fan("REJ", "Reopen", "SOU", _ASCENDING)
+	for s in _WITHDRAW_STATES:
+		fan(s, "Withdraw", "DES", _ASCENDING)
+	# décision maker — EXACT Responsable
+	fan("ETU", "Waitlist", "ATT", _MAKER)
+	fan("ETU", "Mark Admissible", "ADM", _MAKER)
+	fan("ATT", "Mark Admissible", "ADM", _MAKER)
+	fan("ETU", "Conditional Admission", "ACO", _MAKER)
+	fan("ETU", "Refuse", "REF", _MAKER)
+	# validation checker — EXACT Direction
+	fan("ADM", "Accept Admission", "ACC", _CHECKER)
+	fan("ADM", "Refuse", "REF", _CHECKER)
+	fan("ACO", "Lift Condition", "ACC", _CHECKER)
+	fan("ACO", "Refuse", "REF", _CHECKER)
+	fan("ACC", "Enroll", "INS", _CHECKER)
+	return rows
+
+
+TRANSITIONS = _build_transitions()
 
 
 def _setup_workflow():
