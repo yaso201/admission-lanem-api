@@ -50,6 +50,10 @@ from admission.api._actions import available_actions, can_control_pieces, can_ma
 ADMIN_UP = roles_at_or_above("Admission Administratif")   # {Admin, Resp, Dir, SysMgr}
 RESP_UP = roles_at_or_above("Admission Responsable")      # {Resp, Dir, SysMgr}
 DIR_UP = roles_at_or_above("Admission Direction")         # {Dir, SysMgr}
+# FIX-ROLES-HYBRIDE-WORKFLOW — modèle HYBRIDE : les DÉCISIONS « maker » sont EXACTES (Responsable
+# SANS Direction) pour préserver la séparation maker-checker (SoD / ISO 27001 A.5.3) — la Direction
+# valide (checker) mais ne décide pas. SysMgr reste break-glass. L'opérationnel reste ascendant.
+RESP_EXACT = ("Admission Responsable", "System Manager")  # décisions maker (Direction EXCLUE)
 CONFIRM_ROLES = ADMIN_UP                                  # actions confirm = niveau min Administratif
 OFFLINE_MODES = {"cash": "Cash", "bank": "Bank"}
 
@@ -240,8 +244,8 @@ def _stamp_decision(applicant):
 
 @frappe.whitelist()
 def mark_admissible(dossier_id=None):
-    """C1-ETUDE — décision Admissible (ETU/ATT→ADM). Responsable. decided_by/date posés."""
-    frappe.only_for(RESP_UP)
+    """C1-ETUDE — décision Admissible (ETU/ATT→ADM). Responsable (maker EXACT, SoD). decided_by/date posés."""
+    frappe.only_for(RESP_EXACT)
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
@@ -266,8 +270,8 @@ def mark_admissible(dossier_id=None):
 
 @frappe.whitelist()
 def waitlist(dossier_id=None, rang=None):
-    """C1-ETUDE — mise en liste d'attente (ETU→ATT). Responsable. Rang optionnel."""
-    frappe.only_for(RESP_UP)
+    """C1-ETUDE — mise en liste d'attente (ETU→ATT). Responsable (maker EXACT, SoD). Rang optionnel."""
+    frappe.only_for(RESP_EXACT)
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
@@ -307,9 +311,9 @@ def refuse(dossier_id=None, motif=None):
     if scope_err:
         return scope_err
     if applicant.status == "ETU":
-        frappe.only_for(RESP_UP)
+        frappe.only_for(RESP_EXACT)   # maker EXACT (décision de refus en étude)
     elif applicant.status == "ADM":
-        frappe.only_for(DIR_UP)
+        frappe.only_for(DIR_UP)       # checker EXACT (revenir sur une admissibilité = Direction)
     else:
         return _error("INVALID_STATE", "Refus possible depuis En étude (ETU, Responsable) ou Admissible (ADM, Direction).", 409)
     notes_gate = _require_validated_notes_if_prepa(applicant)
@@ -772,7 +776,7 @@ def propose_scholarships(dossier_id=None, bourses=None):
     non falsifiable). AUCUN effet financier : la proposition guide la validation à l'ACC.
     Re-proposition possible tant que le dossier est en ETU/ATT (la dernière fait foi).
     """
-    frappe.only_for(RESP_UP)
+    frappe.only_for(RESP_EXACT)   # maker EXACT (proposition de bourses = décision Responsable)
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
@@ -1076,7 +1080,7 @@ def conditional_admission(dossier_id=None):
     diplôme. Garde notes Prépa (cohérence C1-CONCOURS : un Prépa entre en ACO avec notes validées).
     stamp decided_by/date + notif (« admission conditionnelle » — Prépa avec notes / Licence générique).
     """
-    frappe.only_for(RESP_UP)
+    frappe.only_for(RESP_EXACT)   # maker EXACT (décision d'admission conditionnelle)
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
@@ -1239,7 +1243,7 @@ def valider_notes_concours(dossier_id=None):
     Responsable, Prépa-only, notes saisies présentes. Idempotent (déjà validées → no-op). Pose
     notes_validated=1 + notes_validated_by (validateur réel) + notes_validated_date.
     """
-    frappe.only_for(RESP_UP)
+    frappe.only_for(RESP_EXACT)   # maker EXACT (validation des notes = décision Responsable)
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
@@ -1362,7 +1366,7 @@ def withdraw(dossier_id=None, motif=None):
 def set_waitlist_rank(dossier_id=None, rang=None):
     """W5 — édite le rang de liste d'attente (Responsable, dossier ATT). rang vide → effacé.
     Le rang devient OPPOSABLE : exposé (get_dossier/list_dossiers) et trié au cockpit."""
-    frappe.only_for(RESP_UP)
+    frappe.only_for(RESP_EXACT)   # maker EXACT (rang opposable = décision Responsable)
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
