@@ -1205,6 +1205,15 @@ def create_dossier():
 	from admission.api.notifications import send_account_created
 	send_account_created(applicant, token)
 	log_event("create_dossier", "success", dossier_id=applicant.name, programme=session.programme_code)
+	# Notification métier temps réel : nouvelle candidature → groupe Telegram. ENFILÉE hors du
+	# chemin candidat (0 latence ajoutée, cf. V-LEARN-TIMING-ENUM) + non-bloquante (un dossier ne
+	# doit JAMAIS échouer parce que Telegram est down) + 0 PII (réf + codes, jamais nom/e-mail).
+	try:
+		frappe.enqueue("admission.api.alerting.notify_new_application", queue="short",
+		               dossier_id=applicant.name, programme=session.programme_code,
+		               level=applicant.level_code, enqueue_after_commit=True)
+	except Exception:
+		frappe.logger("public").warning("enqueue notify_new_application échoué (non-bloquant)")
 	return _ok({"dossier_id": applicant.name, "token": token, "statut": applicant.status})
 
 

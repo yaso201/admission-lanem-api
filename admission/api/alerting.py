@@ -133,6 +133,28 @@ def send_high_alert(alert_type, *, dossier_id=None, ref=None, detail=None):
         return False
 
 
+def notify_new_application(dossier_id, programme=None, level=None):
+    """Notification MÉTIER (pas une alerte d'erreur) : une nouvelle candidature (brouillon) vient
+    d'être créée → message immédiat au groupe Telegram. À la DIFFÉRENCE de send_high_alert :
+    PAS de cooldown (chaque candidature compte ; le canal d'erreurs, lui, est bridé anti-flood).
+    Non-bloquant (ne lève jamais), 0 PII : référence dossier + codes, JAMAIS nom/e-mail/téléphone.
+    Appelée depuis un job d'arrière-plan (frappe.enqueue) → 0 latence sur le parcours candidat."""
+    try:
+        lines = ["🆕 Nouvelle candidature (brouillon)", f"dossier: {dossier_id}"]
+        if programme:
+            lines.append(f"programme: {programme}")
+        if level:
+            lines.append(f"niveau: {level}")
+        sent = _send_telegram("\n".join(lines))
+        _trace({"step": "new_application", "status": "notified" if sent else "notify_failed",
+                "dossier_id": dossier_id}, level="info" if sent else "error")
+        return sent
+    except Exception:
+        _trace({"step": "new_application", "status": "internal_error", "dossier_id": dossier_id},
+               level="error")
+        return False
+
+
 def note_client_error():
     """Compteur fenêtré des erreurs front (OBS-1) : le seuil franchi déclenche UNE alerte
     (== strict + cooldown), pas une par erreur. Appelé par health.log_client_error ;

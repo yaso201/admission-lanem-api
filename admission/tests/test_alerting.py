@@ -116,6 +116,38 @@ class TestSendHighAlert(TestCase):
             self.assertFalse(send_high_alert("uf_payment"))  # silence défensif total
 
 
+class TestNotifyNewApplication(TestCase):
+    def test_sends_message_ids_and_codes_only_no_cooldown(self):
+        with patch(f"{A}.frappe") as mf, patch(f"{A}.requests") as mr:
+            _mock_frappe(mf)
+            mr.post.return_value = MagicMock(ok=True)
+            from admission.api.alerting import notify_new_application
+            self.assertTrue(notify_new_application("CAN-2026-00042", programme="PREPA", level="PREPA-S1"))
+            text = mr.post.call_args[1]["json"]["text"]
+            self.assertIn("CAN-2026-00042", text)
+            self.assertIn("PREPA", text)
+            self.assertIn("candidature", text.lower())
+            mf.cache.get.assert_not_called()                 # PAS de cooldown (≠ canal d'erreurs)
+
+    def test_no_pii_only_ref_and_codes(self):
+        # même si un appelant passe des identifiants internes, jamais de nom/e-mail/téléphone
+        with patch(f"{A}.frappe") as mf, patch(f"{A}.requests") as mr:
+            _mock_frappe(mf)
+            mr.post.return_value = MagicMock(ok=True)
+            from admission.api.alerting import notify_new_application
+            notify_new_application("CAN-2026-00042", programme="LIC-IS", level="L1")
+            text = mr.post.call_args[1]["json"]["text"]
+            for pii in ("@", "nom", "email", "téléphone", "phone"):
+                self.assertNotIn(pii, text.lower())
+
+    def test_never_raises_when_telegram_down(self):
+        with patch(f"{A}.frappe") as mf, patch(f"{A}.requests") as mr:
+            _mock_frappe(mf)
+            mr.post.side_effect = Exception("network down")
+            from admission.api.alerting import notify_new_application
+            self.assertFalse(notify_new_application("CAN-2026-00042"))   # non-bloquant
+
+
 class TestLogEventDispatch(TestCase):
     def _log_event(self, mocked_alert, **kwargs):
         with patch(f"{L}.frappe") as mf:
