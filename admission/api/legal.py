@@ -122,7 +122,9 @@ def _get_active_legal_texts():
     docs = frappe.get_all(
         "Admission Legal Document",
         filters={"is_active": 1},
-        fields=["document_type", "version", "content_text", "content_hash"],
+        # effective_date : additif, rétro-compatible — permet au front (build-time,
+        # LEGAL-SOURCE-UNIQUE) d'afficher la date depuis la MÊME source unique que le texte.
+        fields=["document_type", "version", "content_text", "content_hash", "effective_date"],
         limit=200,
     )
     result = {}
@@ -132,6 +134,7 @@ def _get_active_legal_texts():
             "version": d.version,
             "content_text": d.content_text,
             "content_hash": d.content_hash,
+            "effective_date": str(d.effective_date) if d.effective_date else None,
         }
     return result
 
@@ -169,6 +172,58 @@ def _get_active_legal_texts_meta():
             cache.set_value("admission:legal:active", {"v": result}, expires_in_sec=24 * 60 * 60)
         except Exception:
             pass
+    return result
+
+
+# ── LEGAL-SOURCE-UNIQUE : sonde de cohérence front↔back (OBS-2) ──────────────
+# Le front dérive les textes AU BUILD ; le risque de l'option build-time est un
+# back édité SANS rebuild → front figé silencieusement. Cette sonde compare le
+# manifeste COMPILÉ publié par le front aux hash back ACTIFS et rend la divergence
+# DÉTECTABLE (aujourd'hui elle serait invisible). Aucune écriture, aucun consentement touché.
+
+def _compare_legal_hashes(front_manifest, back_meta):
+    """PURE : compare le manifeste front {TYPE: {version, content_hash}} aux hash back
+    actifs {type_lower: {type, version, content_hash}}.
+
+    On n'inspecte QUE les types que le front prétend dériver (clés du manifeste) : un
+    type back non dérivé (SIMULATION_DISCLAIMER, non-page) n'est jamais un faux positif.
+    Retourne {ok, divergences:[{type, reason, front, back}]}.
+    """
+    back_by_type = {v.get("type"): v for v in (back_meta or {}).values()}
+    divergences = []
+    for doc_type, front in (front_manifest or {}).items():
+        back = back_by_type.get(doc_type)
+        if back is None:
+            divergences.append({"type": doc_type, "reason": "absent_back",
+                                "front": (front or {}).get("content_hash"), "back": None})
+        elif (front or {}).get("content_hash") != back.get("content_hash"):
+            divergences.append({"type": doc_type, "reason": "hash_divergent",
+                                "front": (front or {}).get("content_hash"), "back": back.get("content_hash")})
+    return {"ok": not divergences, "divergences": divergences}
+
+
+def check_legal_front_coherence(portal_url=None, timeout=5):
+    """Récupère le manifeste légal compilé du front (`/legal-manifest.json`) et le compare
+    aux hash back actifs. Ne LÈVE JAMAIS (patron digest) : retourne un statut lisible.
+
+    Statuts : ok=True (aligné) · ok=False+divergences (rebuild dû → à alerter) ·
+    status='indisponible' (manifeste injoignable / pas d'URL → ni alarme ni silence).
+    """
+    portal_url = portal_url or frappe.conf.get("candidate_portal_url")
+    if not portal_url:
+        return {"ok": True, "status": "indisponible", "detail": "candidate_portal_url absent"}
+    url = portal_url.rstrip("/") + "/legal-manifest.json"
+    try:
+        import requests
+        resp = requests.get(url, timeout=timeout)
+        resp.raise_for_status()
+        front_manifest = resp.json()
+    except Exception as e:
+        return {"ok": True, "status": "indisponible", "detail": f"manifeste injoignable ({url}): {e}"}
+    back_meta = _get_active_legal_texts_meta()
+    result = _compare_legal_hashes(front_manifest, back_meta)
+    result["status"] = "ok" if result["ok"] else "divergence"
+    result["url"] = url
     return result
 
 

@@ -226,6 +226,26 @@ def send_daily_digest():
         except Exception:
             lines.append("Santé: indisponible")
 
+        # LEGAL-SOURCE-UNIQUE : sonde de cohérence des textes légaux (front dérivé au build).
+        # Compare le manifeste compilé publié par le front aux hash back actifs → rend
+        # visible un « back édité sans rebuild » (sinon divergence silencieuse). N'éteint
+        # jamais le digest (try/except), et n'alerte QUE sur divergence avérée.
+        try:
+            from admission.api.legal import check_legal_front_coherence
+            coh = check_legal_front_coherence()
+            if coh.get("status") == "divergence":
+                alerts += 1
+                types = ",".join(d.get("type", "?") for d in coh.get("divergences", []))
+                lines.append(f"Textes légaux: DIVERGENCE ⚠️ rebuild front dû ({types})")
+                send_high_alert("legal_front_divergence",
+                                detail=f"rebuild front dû — textes divergents: {types}")
+            elif coh.get("status") == "indisponible":
+                lines.append("Textes légaux: indisponible")
+            else:
+                lines.append("Textes légaux: OK")
+        except Exception:
+            lines.append("Textes légaux: indisponible")
+
         site = getattr(frappe.local, "site", "") or ""
         subject = (f"[admission {site}] Bilan opérationnel quotidien — "
                    + (f"{alerts} point(s) d'attention" if alerts else "RAS"))
