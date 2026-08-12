@@ -369,6 +369,8 @@ class TestSec3TokenExpiry(TestCase):
         session.programme_code = "LIS"
         session.programme_label = "Licence"
         session.name = "SES-001"
+        session.is_open = 1
+        session.closes_on = None  # ouverte, sans échéance → sélectionnable (garde SESSION_CLOSED)
         mock_session.return_value = session
         mock_frappe.db.exists.return_value = True
         mock_frappe.db.get_value.return_value = "LIS"
@@ -653,6 +655,8 @@ class TestSec5Integration(TestCase):
         session = MagicMock()
         session.programme_code = "LIS"
         session.name = "SES-001"
+        session.is_open = 1
+        session.closes_on = None  # ouverte, sans échéance → sélectionnable (garde SESSION_CLOSED)
         mock_session.return_value = session
         mock_frappe.local.response = {}
         mock_frappe.request = None

@@ -35,6 +35,8 @@ SCHEDULER_JOBS = (  # hooks.py scheduler_events.daily — garde anti-dérive
     # le gate anti-drift était aveugle sur eux (il ne vérifiait que 10/12).
     "admission.api.catalogue_sync.sync_catalogue",
     "admission.api.notifications.send_pieces_reminders",
+    # SESSIONS-AUTO-FERMETURE : fermeture quotidienne des sessions échues.
+    "admission.api.sessions.close_expired_sessions",
 )
 
 

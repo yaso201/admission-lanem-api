@@ -992,30 +992,37 @@ def list_programmes():
 @frappe.whitelist(allow_guest=True, methods=["GET"])
 def list_sessions(programme=None):
 	programme = programme or _value("programme")
-	filters = {"is_open": 1}
+	# SESSIONS-AUTO-FERMETURE : on ne filtre PLUS sur is_open — les sessions ÉCHUES restent
+	# affichées (lisibilité du calendrier) mais non sélectionnables. Les sessions fermées à la
+	# main dont la date n'est pas dépassée (démos, annulées) sont masquées (statut 'fermee').
+	from admission.api.sessions import session_display_status
+	filters = {}
 	if programme:
 		filters["programme_code"] = programme
 	sessions = frappe.get_all(
 		"Admission Session",
 		filters=filters,
-		fields=["name", "label", "academic_year", "programme_code", "programme_label", "opens_on", "closes_on"],
+		fields=["name", "label", "academic_year", "programme_code", "programme_label", "opens_on", "closes_on", "is_open"],
 		order_by="opens_on asc",
 	)
-	return _ok(
-		{
-			"sessions": [
-				{
-					"id": row.name,
-					"label": row.label,
-					"academic_year": row.academic_year,
-					"programme": {"code": row.programme_code, "label": row.programme_label},
-					"opens_on": str(row.opens_on),
-					"closes_on": str(row.closes_on),
-				}
-				for row in sessions
-			]
-		}
-	)
+	out = []
+	for row in sessions:
+		status = session_display_status(row)
+		if status == "fermee":
+			continue
+		out.append(
+			{
+				"id": row.name,
+				"label": row.label,
+				"academic_year": row.academic_year,
+				"programme": {"code": row.programme_code, "label": row.programme_label},
+				"opens_on": str(row.opens_on) if row.opens_on else None,
+				"closes_on": str(row.closes_on) if row.closes_on else None,  # null-safe (GS6 sans-date)
+				"status": status,                    # 'a_venir' | 'echue'
+				"selectable": status == "a_venir",   # le front grise + désactive si False
+			}
+		)
+	return _ok({"sessions": out})
 
 
 @frappe.whitelist(allow_guest=True, methods=["GET"])
@@ -1110,6 +1117,12 @@ def create_dossier():
 	session = _session_doc(payload.get("session"))
 	if not session:
 		return _error("SESSION_REQUIRED", "session is required.", 400)
+	# GS3 — GARDE SERVEUR (l'enforcement, PAS l'affichage) : refuser un dossier sur une session
+	# fermée ou échue, même par appel direct (l'onglet resté ouvert à la bascule de minuit).
+	from admission.api.sessions import is_session_selectable
+	if not is_session_selectable(session):
+		return _error("SESSION_CLOSED",
+					  "Cette session est clôturée. Veuillez choisir une session ouverte.", 409)
 	level_code = payload.get("level_code") or payload.get("niveau")
 	if not level_code:
 		return _error("LEVEL_REQUIRED", "level_code is required.", 400)

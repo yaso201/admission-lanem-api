@@ -168,6 +168,8 @@ scheduler_events = {
 		"admission.api.retention.scheduled_retention_run",
 		"admission.api.notify_uf.redrive_uf_notifications",
 		"admission.api.public.expire_stale_online_pending",
+		# SESSIONS-AUTO-FERMETURE : ferme les sessions échues (closes_on dépassé, Porto-Novo).
+		"admission.api.sessions.close_expired_sessions",
 		# LOT M (M9) : relance SOP J+7 et préavis J-7 avant purge des brouillons.
 		"admission.api.notifications.remind_dormant_sop_dossiers",
 		"admission.api.retention.notify_expiring_drafts",
