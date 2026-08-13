@@ -80,3 +80,20 @@ def build_receipt_name(payment):
     canal = CANAL_BY_MODE.get(payment.get("payment_mode"), "0")
     aa = SOURCE_ADMISSION + canal
     return make_autoname(f"{xx}{aa}.#####")
+
+
+def build_convocation_number(exam_date):
+    """CONVOCATION-PREPA — numéro `MMAAXXXX` (8 chiffres). MM/AA = mois/année de l'ÉPREUVE ;
+    XXXX = compteur ANNUEL CONTINU (repart à 0001 au 1er janvier, jamais par session).
+
+    Attribution atomique + concurrency-safe : `make_autoname` sur une série keyée par l'année
+    (`CONV{aa}`) — MÊME mécanisme que le reçu (table `Series` verrouillée). Deux confirmations
+    simultanées ne peuvent JAMAIS produire le même numéro (le point de vigilance du §2.2).
+    Deux sessions le même mois (septembre) partagent la série annuelle → pas de collision.
+    """
+    d = getdate(exam_date)
+    mm = f"{d.month:02d}"
+    aa = f"{d.year % 100:02d}"
+    seq = make_autoname(f"CONV{aa}.####")   # série ANNUELLE : clé consommée = CONV{aa}
+    counter = seq[len(f"CONV{aa}"):]         # les 4 chiffres du compteur
+    return f"{mm}{aa}{counter}"

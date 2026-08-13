@@ -912,6 +912,19 @@ def _get_fee_and_payment(applicant_name, fee_types):
 	return fee, payment
 
 
+def _convocation_info(applicant, session):
+	"""CONVOCATION-PREPA — disponible ssi la session porte une date d'épreuve ET le frais de
+	candidature est confirmé. `numero` posé à l'émission (définitif)."""
+	if not session or not getattr(session, "exam_date", None):
+		return {"available": False, "numero": None}
+	fee = frappe.get_all("Applicant Fee",
+		filters={"applicant": applicant.name, "fee_type": ["in", list(FRAIS1_FEE_TYPES)]},
+		pluck="name", limit=1)
+	confirmed = bool(fee) and bool(frappe.db.exists("Applicant Fee Payment",
+		{"applicant_fee": fee[0], "payment_status": ["in", ["Confirmed", "Paid"]]}))
+	return {"available": confirmed, "numero": getattr(applicant, "convocation_number", None) or None}
+
+
 def _serialize_dossier(applicant):
 	fee, payment = _get_fee_and_payment(applicant.name, ["application", "competition"])
 	enrollment_fee, enrollment_payment = _get_fee_and_payment(applicant.name, ["enrollment"])
@@ -973,6 +986,9 @@ def _serialize_dossier(applicant):
 				"recu_ref": enrollment_payment.receipt_number if enrollment_payment else None,
 			} if enrollment_fee else None,
 		},
+		# CONVOCATION-PREPA : disponible dès frais 1 confirmé + session à date d'épreuve (canal
+		# de référence = téléchargement depuis le suivi). `available` pilote le bouton front.
+		"convocation": _convocation_info(applicant, session),
 		"conditionnel": bool(applicant.conditionnel),
 		# LOT F (F6) : motif affiché par le front pour la reprise INC (resubmit_complement).
 		"motif_incompletude": applicant.motif_incompletude if applicant.status == "INC" else None,
@@ -1091,6 +1107,31 @@ def get_frais(programme=None, session=None, level_code=None):
 	if not session_doc:
 		return _error("SESSION_NOT_FOUND", "Aucune session d'admission ouverte.", 404)
 	return _ok(_build_frais_data(session_doc, level_code))
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET"])
+def download_convocation(dossier_id=None, token=None):
+	"""CONVOCATION-PREPA — téléchargement candidat (canal de référence). Auth token candidat.
+	Disponible À TOUT MOMENT dès le frais de candidature confirmé + session à date d'épreuve.
+	Réutilise build_convocation_pdf (même source que l'e-mail et l'édition back-office)."""
+	dossier_id = dossier_id or _value("dossier_id")
+	token = token or _value("token")
+	try:
+		applicant = _get_applicant(dossier_id, token)
+	except DossierTokenExpired:
+		return _error("TOKEN_EXPIRED", "Lien de dossier expiré. Demandez un nouveau code OTP.", 403)
+	except Exception:
+		return _error("INVALID_DOSSIER", "Identifiants de dossier invalides.", 403)
+	session = _session_doc(applicant.session)
+	if not session or not getattr(session, "exam_date", None):
+		return _error("NO_CONVOCATION", "Aucune convocation pour cette session.", 404)
+	from admission.api.convocation import _frais1_confirmed_payment, build_convocation_pdf
+	if not _frais1_confirmed_payment(applicant):
+		return _error("NOT_CONFIRMED", "La convocation sera disponible dès la confirmation de votre paiement.", 409)
+	pdf, numero = build_convocation_pdf(applicant, session)
+	frappe.local.response.filename = f"convocation-{numero}.pdf"
+	frappe.local.response.filecontent = pdf
+	frappe.local.response.type = "pdf"
 
 
 def _build_frais_data(session_doc, level_code=None):
@@ -1895,6 +1936,14 @@ def apply_confirmed_payment_cascade(applicant, fee):
 		# provisoire (SOP→SOU) a DÉJÀ été notifiée au declare — pas de double compte.
 		if from_status == "BRO":
 			_enqueue_submission_notif(applicant, mode="payée en ligne")
+	# CONVOCATION-PREPA : à la confirmation du frais de CANDIDATURE, si la session porte une date
+	# d'épreuve, émettre la convocation (point UNIQUE des 3 canaux). Aucun cas particulier de
+	# parcours : la présence de `exam_date` décide. Envoi unique (drapeau), NON-BLOQUANT.
+	if fee and getattr(fee, "fee_type", None) in FRAIS1_FEE_TYPES:
+		session = _session_doc(applicant.session)
+		if session and getattr(session, "exam_date", None):
+			from admission.api.convocation import send_convocation
+			send_convocation(applicant, session)
 
 
 def _online_payment_exists(reference):

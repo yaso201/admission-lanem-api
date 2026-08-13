@@ -581,6 +581,16 @@ def get_dossier(dossier_id=None):
             ctx=action_context(applicant)),
         "can_control_pieces": can_control_pieces(applicant, _viewer_roles),
         "can_manage_payments": can_manage_payments(applicant, _viewer_roles),
+        # CONVOCATION-PREPA : édition au guichet disponible ssi session à date d'épreuve + paiement
+        # confirmé. `numero` posé à l'émission. Pilote le bouton « Convocation PDF ».
+        "convocation": {
+            "available": bool(
+                session_doc and getattr(session_doc, "exam_date", None)
+                and frappe.get_all("Applicant Fee Payment",
+                    filters={"applicant": applicant.name, "payment_status": ["in", ["Confirmed", "Paid"]]},
+                    limit=1)),
+            "numero": getattr(applicant, "convocation_number", None) or None,
+        },
     })
 
 
@@ -609,6 +619,30 @@ def download_receipt(payment_id=None):
     frappe.local.response.filecontent = get_pdf(html)
     frappe.local.response.type = "pdf"
     log_event("download_receipt", "success", dossier_id=payment.applicant, ref=payment.name)
+
+
+@frappe.whitelist(methods=["GET"])
+def download_convocation(dossier_id=None):
+    """CONVOCATION-PREPA — édition de la convocation par le personnel (indispensable au guichet).
+    Rôle staff + check_permission (miroir download_receipt). AUCUNE garde de session → fonctionne
+    au guichet du matin sur une session FERMÉE (GC5). Même PDF que le candidat (build_convocation_pdf)."""
+    frappe.only_for(STAFF_ROLES)
+    if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
+        return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
+    applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    applicant.check_permission("read")
+    from admission.api.public import _session_doc
+    from admission.api.convocation import _frais1_confirmed_payment, build_convocation_pdf
+    session = _session_doc(applicant.session)
+    if not session or not getattr(session, "exam_date", None):
+        return _error("NO_CONVOCATION", "Cette session ne porte pas de date d'épreuve.", 404)
+    if not _frais1_confirmed_payment(applicant):
+        return _error("NOT_CONFIRMED", "La convocation n'existe qu'après confirmation du paiement de candidature.", 409)
+    pdf, numero = build_convocation_pdf(applicant, session)
+    frappe.local.response.filename = f"convocation-{numero}.pdf"
+    frappe.local.response.filecontent = pdf
+    frappe.local.response.type = "pdf"
+    log_event("download_convocation", "success", dossier_id=dossier_id, ref=numero)
 
 
 @frappe.whitelist(methods=["GET"])

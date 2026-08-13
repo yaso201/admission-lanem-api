@@ -19,7 +19,12 @@
   "fee_section",
   "application_fee_xof",
   "is_open",
-  "is_prepa_session"
+  "is_prepa_session",
+  "exam_section",
+  "exam_date",
+  "exam_call_time",
+  "exam_start_time",
+  "exam_room"
  ],
  "fields": [
   {
@@ -114,6 +119,33 @@
    "fieldname": "is_prepa_session",
    "fieldtype": "Check",
    "label": "Prepa Session"
+  },
+  {
+   "fieldname": "exam_section",
+   "fieldtype": "Section Break",
+   "label": "Épreuve (concours)"
+  },
+  {
+   "fieldname": "exam_date",
+   "fieldtype": "Date",
+   "label": "Date de l'épreuve",
+   "description": "Renseignée seulement pour les parcours à concours. Sa présence déclenche la convocation."
+  },
+  {
+   "fieldname": "exam_call_time",
+   "fieldtype": "Time",
+   "label": "Heure d'appel"
+  },
+  {
+   "fieldname": "exam_start_time",
+   "fieldtype": "Time",
+   "label": "Heure de début des épreuves"
+  },
+  {
+   "fieldname": "exam_room",
+   "fieldtype": "Data",
+   "label": "Salle",
+   "description": "Facultatif — masqué sur la convocation si vide."
   }
  ],
  "index_web_pages_for_search": 0,

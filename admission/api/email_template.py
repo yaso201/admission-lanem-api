@@ -116,6 +116,8 @@ STATUS = {
     "complement": {"band": "#B05B0A", "soft": "#FEF6E7", "eyebrow": "Votre dossier", "label": "Complément requis",        "mark": "!"},
     # ─ TRANSACTION financière ─
     "paiement":   {"band": "#047857", "soft": "#ECFDF5", "eyebrow": "Paiement",      "label": "Paiement confirmé",       "mark": "✓"},
+    # ─ CONCOURS — couleur d'accent PROPRE (distincte du paiement) pour la convocation ─
+    "convocation": {"band": "#4C1D95", "soft": "#F3EEFB", "eyebrow": "Concours",     "label": "Convocation au concours", "mark": "✓"},
     # ─ SÉCURITÉ ─
     "otp":        {"band": "#2D1B69", "soft": "#F5F2FB", "eyebrow": "Sécurité",      "label": "Vérification e-mail",         "mark": ""},
     # ─ CHANGEMENT D'ÉTAT (NON-décision) — violet unifié, seul le corps change ─

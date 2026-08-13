@@ -77,7 +77,9 @@
   "integration_section",
   "idempotency_key",
   "source",
-  "anonymized"
+  "anonymized",
+  "convocation_number",
+  "convocation_sent_at"
  ],
  "fields": [
   {
@@ -554,6 +556,18 @@
    "fieldtype": "Check",
    "hidden": 1,
    "label": "Anonymized",
+   "read_only": 1
+  },
+  {
+   "fieldname": "convocation_number",
+   "fieldtype": "Data",
+   "label": "Numéro de convocation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "convocation_sent_at",
+   "fieldtype": "Datetime",
+   "label": "Convocation envoyée le",
    "read_only": 1
   }
  ],
