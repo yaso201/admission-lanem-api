@@ -69,6 +69,7 @@ class TestFrais1DescriptorUnchanged(TestCase):
 class TestInitiateFeeType(TestCase):
     def test_agent_initiates_enrollment(self):
         with patch(f"{STAFF}.frappe") as mf, \
+             patch(f"{STAFF}._prepare_fee_channel", return_value=(None, None)), \
              patch(f"{STAFF}._ensure_enrollment_fee") as menr, \
              patch(f"{STAFF}.prepare_enrollment_online_payment", return_value={"fee_type": "enrollment", "reference": "RA"}) as mprep, \
              patch(f"{STAFF}._ok", side_effect=lambda d: {"ok": True, **d}), \

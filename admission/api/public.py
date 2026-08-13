@@ -716,6 +716,54 @@ def _assert_fee_unpaid(fee):
 	return None
 
 
+def _supersede_payment(payment_row, new_mode):
+	"""FIX-FEE2-VERROU — annule une déclaration/tentative supplantée par un nouveau règlement
+	(motif consigné). Un ONLINE supplanté passe Rejected + reconciliation : le webhook peut
+	ENCORE le promouvoir (Rejected→Confirmed « Promoted late ») si un succès KkiaPay tardif
+	arrive — on supplante une INTENTION, jamais un paiement réel (invariant #1 ; une confirmation
+	prime ensuite via la cascade, invariant #2)."""
+	frappe.db.set_value(
+		"Applicant Fee Payment", payment_row.name,
+		{"payment_status": "Rejected",
+		 "reconciliation": f"Superseded - replaced by {new_mode}"},
+		update_modified=False,
+	)
+	log_event("payment", "superseded", ref=payment_row.name,
+	          mode=payment_row.payment_mode, new_mode=new_mode)
+
+
+def _prepare_fee_channel(fee, requested_mode):
+	"""FIX-FEE2-VERROU — POINT DE PASSAGE UNIQUE du règlement (modèle PaymentIntent : reuse /
+	replace / refuse). `requested_mode` ∈ {"Online","Cash","Bank"}. Retourne (error, reuse) :
+	  - error : _error(ALREADY_PAID, 409) à propager si un paiement Confirmed existe (GF1, TOUS
+	            canaux, y compris appel direct) ; sinon None.
+	  - reuse : le Pending du MÊME mode hors-ligne à réutiliser (AUCUNE création, AUCUN courriel),
+	            ou None (l'appelant crée le nouveau règlement).
+	Effet de bord : supplante (Rejected + motif) les Pending ACTIFS remplacés → UN SEUL actif par
+	frais. Online n'est jamais réutilisé (nouvelle tentative) ; un Online supplanté reste
+	RECONCILIABLE. Refuser une intention en attente serait un cul-de-sac (T1) — on réutilise/remplace."""
+	if frappe.db.exists("Applicant Fee Payment",
+	                    {"applicant_fee": fee.name, "payment_status": "Confirmed"}):
+		return _error("ALREADY_PAID", "Ce frais a deja ete regle.", 409), None
+	actives = frappe.get_all(
+		"Applicant Fee Payment",
+		filters={"applicant_fee": fee.name, "payment_status": "Pending"},
+		fields=["name", "payment_mode"], order_by="creation asc",
+	)
+	same = [p for p in actives if p.payment_mode == requested_mode] if requested_mode in ("Cash", "Bank") else []
+	if same:
+		# Réutilisation d'une déclaration hors-ligne identique : mêmes instructions, rien de neuf.
+		# Défensif : supplante d'éventuels autres actifs (un seul actif garanti).
+		for p in actives:
+			if p.name != same[0].name:
+				_supersede_payment(p, requested_mode)
+		return None, same[0]
+	# Remplacement : supplante TOUS les actifs — l'appelant crée le nouveau règlement.
+	for p in actives:
+		_supersede_payment(p, requested_mode)
+	return None, None
+
+
 def _ensure_fee(applicant, idempotency_key=None):
 	session = _session_doc(applicant.session)
 	fee_type = _resolve_frais1_fee_type(session)
@@ -849,13 +897,18 @@ def _get_fee_and_payment(applicant_name, fee_types):
 	if not fee_names:
 		return None, None
 	fee = frappe.get_doc("Applicant Fee", fee_names[0])
-	payment_names = frappe.get_all(
-		"Applicant Fee Payment",
-		filters={"applicant_fee": fee.name},
-		pluck="name",
-		limit=1,
-	)
-	payment = frappe.get_doc("Applicant Fee Payment", payment_names[0]) if payment_names else None
+	# FIX-FEE2-VERROU (T6) : l'état AUTORITAIRE est le Confirmed/Paid s'il existe — jamais un
+	# Pending arbitraire (limit=1 sans tri renvoyait n'importe lequel → la carte pouvait mentir).
+	payment = None
+	for pref in (["Confirmed", "Paid"], None):
+		filters = {"applicant_fee": fee.name}
+		if pref:
+			filters["payment_status"] = ["in", pref]
+		names = frappe.get_all("Applicant Fee Payment", filters=filters,
+		                       order_by="creation desc", pluck="name", limit=1)
+		if names:
+			payment = frappe.get_doc("Applicant Fee Payment", names[0])
+			break
 	return fee, payment
 
 
@@ -1671,9 +1724,11 @@ def submit_payment_online(dossier_id=None, token=None, idempotency_key=None, con
 		return _error("PIECES_MANQUANTES",
 			f"Pièces obligatoires manquantes : {labels}. Merci de les déposer avant de payer.", 409)
 	fee = _ensure_fee(applicant)
-	already_paid = _assert_fee_unpaid(fee)  # garde amont B1 (anti double-débit, critère autoritaire)
-	if already_paid:
-		return already_paid
+	# FIX-FEE2-VERROU : point de passage unique (reuse/replace/refuse). Online → supplante une
+	# intention/tentative antérieure et crée la nouvelle ; refuse ferme si déjà Confirmed (GF1).
+	err, _reuse = _prepare_fee_channel(fee, "Online")
+	if err:
+		return err
 	_record_consent(applicant.name, "REFUND_ACKNOWLEDGMENT", refund_doc.name)
 	log_event("payment_online", "initiated", dossier_id=applicant.name, fee_type="application")
 	return _ok(prepare_online_payment(applicant, fee, idempotency_key=idempotency_key))
@@ -1718,6 +1773,16 @@ def declare_payment_offline(dossier_id=None, token=None, mode=None, reference=No
 		return _error("PIECES_MANQUANTES",
 			f"Pièces obligatoires manquantes : {labels}. Merci de les déposer avant de payer.", 409)
 	fee = _ensure_fee(applicant)
+	# FIX-FEE2-VERROU (symétrie frais 1) : reuse/replace/refuse. Refuse si déjà Confirmed (GF1) ;
+	# réutilise une déclaration identique (aucun courriel) ; supplante une autre intention/tentative.
+	requested = "Cash" if str(mode).strip().lower() == "cash" else "Bank"
+	err, reuse = _prepare_fee_channel(fee, requested)
+	if err:
+		return err
+	if reuse:
+		log_event("payment_offline", "reused", dossier_id=applicant.name, mode=mode_norm)
+		return _ok({"dossier_id": applicant.name, "statut": applicant.status,
+		            "payment_id": reuse.name, "reused": True})
 	payment = frappe.get_doc(
 		{
 			"doctype": "Applicant Fee Payment",
@@ -1801,6 +1866,19 @@ def apply_confirmed_payment_cascade(applicant, fee):
 	if fee and fee.status != "Paid":
 		fee.status = "Paid"
 		fee.save(ignore_permissions=True)
+	# FIX-FEE2-VERROU invariant #2 : une confirmation prime sur toute déclaration ENCORE en attente
+	# sur le même frais (le candidat a réellement payé) → les Pending frères deviennent caducs.
+	# Le paiement confirmé n'est plus Pending → jamais lui-même touché. Couvre la réconciliation
+	# d'un Online supplanté promu tardivement (Rejected→Confirmed) pendant qu'une déclaration traîne.
+	if fee:
+		for sibling in frappe.get_all(
+			"Applicant Fee Payment",
+			filters={"applicant_fee": fee.name, "payment_status": "Pending"}, pluck="name",
+		):
+			frappe.db.set_value("Applicant Fee Payment", sibling,
+			                    {"payment_status": "Rejected",
+			                     "reconciliation": "Superseded - fee confirmed"},
+			                    update_modified=False)
 	if applicant.status in {"BRO", "SOP"}:
 		from_status = applicant.status
 		if frappe.session.user == "Guest":
@@ -1944,9 +2022,11 @@ def submit_enrollment_payment_online(dossier_id=None, token=None, idempotency_ke
 	fee = _ensure_enrollment_fee(applicant)
 	if not fee:
 		return _error("FEE_NOT_AVAILABLE", "Enrollment fee amount not available in catalog.", 500)
-	already_paid = _assert_fee_unpaid(fee)  # garde amont B1 symétrique frais 2 (même critère autoritaire)
-	if already_paid:
-		return already_paid
+	# FIX-FEE2-VERROU : même point de passage unique que frais 1. Online → nouvelle tentative,
+	# un seul actif ; refuse ferme si déjà Confirmed (GF1, tous canaux, y compris appel direct).
+	err, _reuse = _prepare_fee_channel(fee, "Online")
+	if err:
+		return err
 	_record_consent(applicant.name, "REFUND_ACKNOWLEDGMENT", refund_doc.name)
 	_record_consent(applicant.name, "DATA_TRANSFER", transfer_doc.name)
 	log_event("enrollment_payment_online", "initiated", dossier_id=applicant.name)
@@ -1996,6 +2076,23 @@ def declare_enrollment_payment_offline(
 	fee = _ensure_enrollment_fee(applicant)
 	if not fee:
 		return _error("FEE_NOT_AVAILABLE", "Enrollment fee amount not available in catalog.", 500)
+	# FIX-FEE2-VERROU (LE trou principal — frais 2 reste à ACC entre règlement et inscription, donc
+	# la garde de STATUT ne bloquait rien). Point de passage unique : refuse si Confirmed (GF1),
+	# réutilise une déclaration identique (aucun courriel, GF3), supplante une autre intention/tentative.
+	requested = "Cash" if str(mode).strip().lower() == "cash" else "Bank"
+	err, reuse = _prepare_fee_channel(fee, requested)
+	if err:
+		return err
+	if reuse:
+		if acompte_xof > 0:
+			applicant.acompte_xof = acompte_xof
+			applicant.save(ignore_permissions=True)
+		log_event("enrollment_payment_offline", "reused", dossier_id=applicant.name)
+		return _ok({
+			"dossier_id": applicant.name, "statut": applicant.status,
+			"payment_id": reuse.name, "reused": True,
+			"ventilation": {"frais2": fee.amount_xof, "acompte": acompte_xof},
+		})
 	payment = frappe.get_doc(
 		{
 			"doctype": "Applicant Fee Payment",

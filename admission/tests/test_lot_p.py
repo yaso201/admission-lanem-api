@@ -137,10 +137,11 @@ class TestInitiateStateGuard(TestCase):
         from admission.api.staff import initiate_online_payment
         return initiate_online_payment(dossier_id="CAN-1", fee_type=fee_type)
 
+    @patch(f"{STAFF}._prepare_fee_channel", return_value=(None, None))
     @patch(f"{STAFF}.prepare_online_payment", return_value={"ok": 1})
     @patch(f"{STAFF}._ensure_fee", return_value=MagicMock())
     @patch(f"{STAFF}.frappe")
-    def test_frais1_allowed_from_sop(self, mf, _fee, _prep):
+    def test_frais1_allowed_from_sop(self, mf, _fee, _prep, _chan):
         res = self._call(mf, "SOP", "application")
         self.assertTrue(res["ok"])
 
@@ -157,9 +158,10 @@ class TestInitiateStateGuard(TestCase):
         self.assertFalse(res["ok"])
         self.assertEqual(res["error"]["code"], "INVALID_STATE")
 
+    @patch(f"{STAFF}._prepare_fee_channel", return_value=(None, None))
     @patch(f"{STAFF}.prepare_enrollment_online_payment", return_value={"ok": 1})
     @patch(f"{STAFF}._ensure_enrollment_fee", return_value=MagicMock())
     @patch(f"{STAFF}.frappe")
-    def test_frais2_allowed_from_acc(self, mf, _fee, _prep):
+    def test_frais2_allowed_from_acc(self, mf, _fee, _prep, _chan):
         res = self._call(mf, "ACC", "enrollment")
         self.assertTrue(res["ok"])

@@ -108,6 +108,7 @@ class TestSubmitPaymentOnlineGuard(TestCase):
     def test_autorise_si_toutes_uploaded(self, mf, mget, mens, mprep, mleg, mrec):
         # T2 + G3a1 : toutes requises uploaded → passe (cœur partagé appelé).
         mf.db.exists.return_value = False
+        mf.get_all.return_value = []  # FIX-FEE2-VERROU : aucun règlement actif (canal libre)
         applicant = MagicMock(); applicant.name = "CAN-1"
         applicant.pieces = _pieces_anterieur()
         mget.return_value = applicant
@@ -203,6 +204,8 @@ class TestDeclarePaymentOfflineGuard(TestCase):
     def test_autorise_si_toutes_uploaded(self, mf, mget, mens, mnow, mleg, mrec, mnotif):
         # T4 + G3a2 : offline passe si toutes requises uploaded → SOP.
         mf.form_dict = {}; mf.request = None
+        mf.db.exists.return_value = False  # FIX-FEE2-VERROU : pas de Confirmed
+        mf.get_all.return_value = []       # aucun règlement actif (canal libre)
         applicant = MagicMock(); applicant.name = "CAN-1"; applicant.status = "BRO"
         applicant.pieces = _pieces_anterieur()
         mget.return_value = applicant

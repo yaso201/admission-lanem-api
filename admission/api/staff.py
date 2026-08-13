@@ -18,6 +18,7 @@ from admission.api.public import (
     _error,
     _ok,
     _assert_fee_unpaid,
+    _prepare_fee_channel,
     apply_confirmed_payment_cascade,
     PAYMENT_FORBIDDEN_STATES,
     prepare_enrollment_online_payment,
@@ -1296,9 +1297,17 @@ def initiate_online_payment(dossier_id=None, idempotency_key=None, fee_type="app
         fee = _ensure_enrollment_fee(applicant)
         if not fee:
             return _error("FEE_NOT_AVAILABLE", "Frais d'inscription indisponible au catalogue.", 500)
+        # FIX-FEE2-VERROU : le canal staff-initie passe aussi par le point de passage unique
+        # (refuse si Confirmed — GF1 y compris par appel direct ; supplante l'intention antérieure).
+        err, _reuse = _prepare_fee_channel(fee, "Online")
+        if err:
+            return err
         descriptor = prepare_enrollment_online_payment(applicant, fee, acompte_xof=acompte_xof, idempotency_key=idempotency_key)
     else:
         fee = _ensure_fee(applicant)
+        err, _reuse = _prepare_fee_channel(fee, "Online")
+        if err:
+            return err
         descriptor = prepare_online_payment(applicant, fee, idempotency_key=idempotency_key)
     log_event("payment_online", "initiated_by_agent", dossier_id=dossier_id, fee_type=fee_type)
     return _ok(descriptor)

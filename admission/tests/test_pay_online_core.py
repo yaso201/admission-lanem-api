@@ -92,6 +92,7 @@ class TestInitiateOnlinePaymentStaff(TestCase):
 
     def test_initiates_linked_pending(self):
         with patch(f"{STAFF}.frappe") as mf, \
+             patch(f"{STAFF}._prepare_fee_channel", return_value=(None, None)), \
              patch(f"{STAFF}._ensure_fee") as mens, \
              patch(f"{STAFF}.prepare_online_payment", return_value={"provider": "kkiapay", "reference": "R-AGENT"}) as mprep, \
              patch(f"{STAFF}._ok", side_effect=lambda d: {"ok": True, **d}), \

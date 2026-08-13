@@ -182,6 +182,8 @@ class TestAcompteVentilationOffline(TestCase):
         mock_resolve, mock_legal, mock_record,
     ):
         from admission.api.public import declare_enrollment_payment_offline
+        mock_frappe.db.exists.return_value = False  # FIX-FEE2-VERROU : canal libre
+        mock_frappe.get_all.return_value = []       # aucun règlement actif
 
         applicant = MagicMock()
         applicant.name = "CAN-2026-00001"
@@ -222,6 +224,8 @@ class TestAcompteVentilationOffline(TestCase):
         mock_legal, mock_record,
     ):
         from admission.api.public import declare_enrollment_payment_offline
+        mock_frappe.db.exists.return_value = False  # FIX-FEE2-VERROU : canal libre
+        mock_frappe.get_all.return_value = []       # aucun règlement actif
 
         applicant = MagicMock()
         applicant.name = "CAN-2026-00002"
