@@ -645,6 +645,45 @@ def download_convocation(dossier_id=None):
     log_event("download_convocation", "success", dossier_id=dossier_id, ref=numero)
 
 
+def _exam_session_or_error(session):
+    if not session or not frappe.db.exists("Admission Session", session):
+        return _error("INVALID_SESSION", "Session inconnue.", 404)
+    if not frappe.db.get_value("Admission Session", session, "exam_date"):
+        return _error("NO_EXAM", "Cette session ne porte pas de date d'épreuve.", 409)
+    return None
+
+
+@frappe.whitelist(methods=["GET"])
+def print_emargement(session=None):
+    """DOCUMENTS-JOUR-EPREUVE — liste d'émargement (PDF paysage) depuis la SESSION. ADMIN_UP.
+    À LA DEMANDE, SANS garde de session (jour de l'épreuve = session fermée → GJ6)."""
+    frappe.only_for(ADMIN_UP)
+    err = _exam_session_or_error(session)
+    if err:
+        return err
+    from admission.api.exam_documents import build_emargement_pdf
+    pdf, _sess = build_emargement_pdf(session)
+    frappe.local.response.filename = f"emargement-{session}.pdf"
+    frappe.local.response.filecontent = pdf
+    frappe.local.response.type = "pdf"
+    log_event("print_emargement", "success", ref=session)
+
+
+@frappe.whitelist(methods=["GET"])
+def print_etat_concours(session=None):
+    """DOCUMENTS-JOUR-EPREUVE — état du concours (PDF paysage) depuis la SESSION. ADMIN_UP."""
+    frappe.only_for(ADMIN_UP)
+    err = _exam_session_or_error(session)
+    if err:
+        return err
+    from admission.api.exam_documents import build_etat_pdf
+    pdf, _sess = build_etat_pdf(session)
+    frappe.local.response.filename = f"etat-concours-{session}.pdf"
+    frappe.local.response.filecontent = pdf
+    frappe.local.response.type = "pdf"
+    log_event("print_etat_concours", "success", ref=session)
+
+
 @frappe.whitelist(methods=["GET"])
 def stats_direction():
     """C4-FRONT — agrégats lecture seule du tableau Direction (A03 : montants ENCAISSÉS
