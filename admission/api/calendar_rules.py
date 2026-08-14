@@ -67,12 +67,33 @@ def _is_advance(old, new):
     return n < o
 
 
+def is_machine_defaulted_time(v):
+    """CAL-09 (V-LEARN-CAL-01) : Frappe pose nowtime() — précision µs — sur TOUT champ Time
+    absent d'un insert (frappe/model/create_new.py, set_dynamic_default_values), silencieusement.
+    Une saisie humaine (UI HH:MM, API HH:MM[:SS]) porte toujours des µs nulles → µs > 0 = valeur
+    machine, jamais une intention. Consommé par le contrôleur (normalisation du doc neuf) et par
+    _norm_time (tolérance sur ligne résiduelle : backup restauré, chemin imprévu)."""
+    if not v:
+        return False
+    if hasattr(v, "microseconds"):   # timedelta (relecture DB)
+        return v.microseconds > 0
+    if hasattr(v, "microsecond"):    # datetime.time
+        return v.microsecond > 0
+    s = str(v)
+    if "." not in s:
+        return False
+    frac = s.rsplit(".", 1)[1]
+    return frac.isdigit() and int(frac) > 0
+
+
 def _norm_time(v):
     """Time (timedelta champ Frappe ou 'HH:MM[:SS]') → secondes depuis minuit. None si vide OU
     minuit : un champ Time non renseigné revient en timedelta(0), et une épreuve ne débute jamais à
     00:00 → on le traite comme non renseigné (sinon 0>0 = faux positif sur les sessions sans heures)."""
     if not v:   # None, "", timedelta(0)
         return None
+    if is_machine_defaulted_time(v):
+        return None   # CAL-09 : heure machine-défautée = non renseignée (défense en profondeur)
     if hasattr(v, "total_seconds"):
         return int(v.total_seconds()) or None
     p = str(v).split(":")

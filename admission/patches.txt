@@ -18,3 +18,4 @@ admission.patches.v1_1.add_applicant_fee_type_unique
 
 admission.patches.v1_1.hybrid_workflow_roles
 admission.patches.v1_1.set_session_lifecycle_state
+admission.patches.v1_2.clean_machine_defaulted_times

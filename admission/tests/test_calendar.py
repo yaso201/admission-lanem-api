@@ -76,12 +76,16 @@ class TestCalendarState(FrappeTestCase):
         s = self._session("O", state="Open")
         self.assertEqual(s.is_open, 1)
 
-    def test_legacy_is_open_derives_state(self):
-        # insert historique : is_open posé, lifecycle_state absent → dérivé
+    def test_legacy_is_open_no_longer_drives_birth(self):
+        # DEC-E : le doctype défaute lifecycle_state à Draft — is_open seul ne pilote PLUS la
+        # naissance (l'intention d'ouvrir se déclare : lifecycle_state explicite ou open_session).
+        # La dérivation legacy reste vivante en LECTURE des rows/dicts sans état (_state,
+        # cf. test_sessions_lifecycle) ; à l'insert, elle est morte par construction.
         s = self._session("L", is_open=1)
-        self.assertEqual(s.lifecycle_state, "Open")
+        self.assertEqual(s.lifecycle_state, "Draft")
+        self.assertEqual(s.is_open, 0)
         s2 = self._session("L0", is_open=0)
-        self.assertEqual(s2.lifecycle_state, "Closed")
+        self.assertEqual(s2.lifecycle_state, "Draft")
 
     # ── Sélectionnabilité par état ──────────────────────────────────────────────
     def test_selectable_by_state(self):
@@ -693,3 +697,106 @@ class TestCalendarView(FrappeTestCase):
         self.assertEqual(q["total"], 1)
         self.assertEqual(q["items"][0]["change"]["change_field"], "closes_on")
         self.assertEqual(q["items"][0]["session"]["name"], self.open.name)
+
+
+class TestCal09DecE(FrappeTestCase):
+    """CAL-FIX-0 : heures machine-défautées (CAL-09, V-LEARN-CAL-01) + naissance Draft (DEC-E).
+
+    Frappe pose nowtime() (µs) sur tout Time absent d'un insert → sur une session à épreuve,
+    la paire quasi-égale fait rejeter par A07 toute proposition légitime (preuve E4). Ici :
+    normalisation à l'insert (A), tolérance cohérence sur résidu (B), patch de purge (G4)."""
+
+    def setUp(self):
+        _purge()
+
+    def tearDown(self):
+        frappe.db.rollback()
+        _purge()
+
+    def _mk(self, suffix, **over):
+        vals = {
+            "doctype": "Admission Session", "session_code": f"{_MARK}-{suffix}",
+            "label": f"Session {suffix}", "programme_code": _PROG,
+            "programme_label": "Cycle test", "academic_year": "2026-2027",
+            "opens_on": "2026-06-01", "closes_on": str(add_days(nowdate(), 30)),
+            "bac_results_date": "2026-07-15", "application_fee_xof": 10000,
+        }
+        vals.update(over)
+        return frappe.get_doc(vals).insert(ignore_permissions=True, ignore_mandatory=True)
+
+    def _pollute(self, name):
+        # Simule le stock pollué (signature µs de nowtime) hors du chemin d'insert contrôlé.
+        frappe.db.sql(
+            """UPDATE `tabAdmission Session`
+               SET exam_call_time = '23:30:58.627497', exam_start_time = '23:30:58.627641'
+               WHERE name = %(n)s""", {"n": name})
+
+    # ── G1 : insert à épreuve SANS heures → NULL en base (pas nowtime), l'insert passe ──
+    def test_insert_without_times_stores_null(self):
+        s = self._mk("N9", lifecycle_state="Open", exam_date=str(add_days(nowdate(), 60)))
+        call, start = frappe.db.get_value(
+            "Admission Session", s.name, ["exam_call_time", "exam_start_time"])
+        self.assertIsNone(call)
+        self.assertIsNone(start)
+
+    # ── G1 : duplication d'une source sans heures → brouillon sans heures parasites ──
+    def test_duplicate_source_without_times_stays_null(self):
+        from admission.api.calendar import _create_duplicates
+        src = self._mk("DS", lifecycle_state="Open", exam_date=str(add_days(nowdate(), 60)))
+        created = _create_duplicates([src.name], 364, None)["created"]
+        call, start = frappe.db.get_value(
+            "Admission Session", created[0], ["exam_call_time", "exam_start_time"])
+        self.assertIsNone(call)
+        self.assertIsNone(start)
+
+    # ── Exigence Pause 1 : source POLLUÉE (µs en base) → le brouillon dupliqué naît assaini ──
+    def test_duplicate_polluted_source_is_cleaned(self):
+        from admission.api.calendar import _create_duplicates
+        src = self._mk("DP", lifecycle_state="Open", exam_date=str(add_days(nowdate(), 60)))
+        self._pollute(src.name)
+        created = _create_duplicates([src.name], 364, None)["created"]
+        call, start = frappe.db.get_value(
+            "Admission Session", created[0], ["exam_call_time", "exam_start_time"])
+        self.assertIsNone(call)
+        self.assertIsNone(start)
+
+    # ── G2 : rejeu E4 — extension de clôture sur session à épreuve sans heures → ACCEPTÉE ──
+    def test_e4_extension_accepted_on_session_without_times(self):
+        from admission.api.calendar import _propose_changes
+        s = self._mk("E4", lifecycle_state="Open", exam_date=str(add_days(nowdate(), 60)))
+        r = _propose_changes(s.name, {"closes_on": str(add_days(nowdate(), 37))})
+        self.assertIn("closes_on", r["pending"])
+
+    # ── B : ligne polluée RÉSIDUELLE (restore, chemin imprévu) → cohérence tolère ──
+    def test_residual_polluted_row_tolerated(self):
+        from admission.api.calendar import _propose_changes
+        s = self._mk("RP", lifecycle_state="Open", exam_date=str(add_days(nowdate(), 60)))
+        self._pollute(s.name)
+        r = _propose_changes(s.name, {"closes_on": str(add_days(nowdate(), 37))})
+        self.assertIn("closes_on", r["pending"])
+
+    # ── G3 : A07 vivant — heures RÉELLEMENT incohérentes saisies (µs=0) → rejet ──
+    def test_real_incoherent_times_still_rejected(self):
+        with self.assertRaises(frappe.ValidationError):
+            self._mk("KO", lifecycle_state="Open", exam_date=str(add_days(nowdate(), 60)),
+                     exam_call_time="08:00:00", exam_start_time="07:30:00")
+
+    # ── G5 : DEC-E — insert nu → naît Draft, miroir à 0 ──
+    def test_naked_insert_is_born_draft(self):
+        s = self._mk("NU")
+        self.assertEqual(s.lifecycle_state, "Draft")
+        self.assertEqual(s.is_open, 0)
+        self.assertEqual(
+            frappe.db.get_value("Admission Session", s.name, "lifecycle_state"), "Draft")
+
+    # ── G4 : le patch purge le stock pollué (idempotent) ──
+    def test_patch_cleans_polluted_rows(self):
+        from admission.patches.v1_2.clean_machine_defaulted_times import execute
+        s = self._mk("PG", lifecycle_state="Open")
+        self._pollute(s.name)
+        execute()
+        call, start = frappe.db.get_value(
+            "Admission Session", s.name, ["exam_call_time", "exam_start_time"])
+        self.assertIsNone(call)
+        self.assertIsNone(start)
+        execute()  # idempotent : 2e passage sans effet ni erreur

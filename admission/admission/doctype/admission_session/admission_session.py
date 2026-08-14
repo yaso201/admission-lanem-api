@@ -12,9 +12,14 @@ _LIFECYCLE_STATES = ("Draft", "Open", "Closed")
 class AdmissionSession(Document):
 	def validate(self):
 		# GESTION-CALENDRIER : lifecycle_state est la SOURCE de vérité ; is_open en est le miroir
-		# dérivé (Open ⟺ 1). Reconciliation à chaque save. Les inserts historiques (is_open posé,
-		# lifecycle_state absent) dérivent l'état ; les nouveaux (duplication) posent l'état.
+		# dérivé (Open ⟺ 1). Reconciliation à chaque save. DEC-E : le doctype défaute désormais
+		# lifecycle_state à Draft — un insert sans état naît brouillon ; la dérivation depuis
+		# is_open ne subsiste qu'en LECTURE des rows historiques sans état (_state, sessions.py).
 		self._sync_lifecycle_mirror()
+		# CAL-09 (V-LEARN-CAL-01) : Frappe défaute tout Time ABSENT d'un insert à nowtime() (µs)
+		# — y compris les brouillons de duplication. On rend le champ à son intention : non saisi.
+		# Doc NEUF seulement ; le stock relève du patch clean_machine_defaulted_times.
+		self._normalize_machine_times()
 		if self.academic_year and not _ACADEMIC_YEAR_FORMAT.match(self.academic_year):
 			frappe.throw(
 				"academic_year doit être au format YYYY-YYYY (ex. 2026-2027). "
@@ -40,6 +45,14 @@ class AdmissionSession(Document):
 		elif self.lifecycle_state not in _LIFECYCLE_STATES:
 			frappe.throw(f"lifecycle_state invalide : {self.lifecycle_state}")
 		self.is_open = 1 if self.lifecycle_state == "Open" else 0
+
+	def _normalize_machine_times(self):
+		if not self.is_new():
+			return
+		from admission.api.calendar_rules import is_machine_defaulted_time
+		for f in ("exam_call_time", "exam_start_time"):
+			if is_machine_defaulted_time(self.get(f)):
+				self.set(f, None)
 
 	def _enforce_change_rules(self):
 		before = self.get_doc_before_save()

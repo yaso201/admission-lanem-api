@@ -39,6 +39,7 @@ def _upsert_session(session_code, label, programme_code, programme_label,
         "programme_code": programme_code, "programme_label": programme_label,
         "academic_year": "2026-2027", "opens_on": opens_on, "closes_on": closes_on,
         "bac_results_date": bac, "application_fee_xof": fee, "is_open": 1,
+        "lifecycle_state": "Open",  # DEC-E : le défaut est Draft — l'intention d'ouvrir se déclare
         "is_prepa_session": prepa,
     }).insert(ignore_permissions=True)
 

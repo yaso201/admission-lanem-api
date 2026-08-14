@@ -112,7 +112,7 @@
    "reqd": 1
   },
   {
-   "default": "1",
+   "default": "0",
    "fieldname": "is_open",
    "fieldtype": "Check",
    "in_list_view": 1,
@@ -121,6 +121,7 @@
    "description": "Miroir DÉRIVÉ de lifecycle_state (Open ⟺ 1). Ne pas éditer directement — voir lifecycle_state."
   },
   {
+   "default": "Draft",
    "fieldname": "lifecycle_state",
    "fieldtype": "Select",
    "label": "Lifecycle State",

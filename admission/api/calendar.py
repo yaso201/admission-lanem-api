@@ -15,6 +15,7 @@ import re
 import frappe
 from frappe.utils import add_days, cint, getdate
 
+from admission.api.calendar_rules import is_machine_defaulted_time
 from admission.api.permissions import roles_at_or_above
 from admission.api.public import _ok, _error
 from admission.api.sessions import set_lifecycle, _state, session_display_status
@@ -77,6 +78,8 @@ def _derive_code(source_code, source_ay, target_ay, taken):
 
 def _time_str(t):
     if t is None:
+        return None
+    if is_machine_defaulted_time(t):   # CAL-09 : la troncation µs ci-dessous détruirait la signature
         return None
     if hasattr(t, "total_seconds"):   # datetime.timedelta (champ Time)
         total = int(t.total_seconds())

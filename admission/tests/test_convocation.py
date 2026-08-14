@@ -37,6 +37,7 @@ class TestConvocation(FrappeTestCase):
             "academic_year": "2026-2027", "opens_on": "2026-06-01", "closes_on": "2026-08-01",
             "bac_results_date": "2026-07-15", "application_fee_xof": 10000,
             "is_open": is_open, "exam_date": exam_date, "exam_call_time": "07:30:00",
+            "lifecycle_state": "Open" if is_open else "Closed",  # DEC-E : le défaut est Draft
             "exam_start_time": "08:00:00", "exam_room": "Salle B",
         }).insert(ignore_permissions=True, ignore_mandatory=True)
         return doc
