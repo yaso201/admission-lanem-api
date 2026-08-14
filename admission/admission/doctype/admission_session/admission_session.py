@@ -54,6 +54,12 @@ class AdmissionSession(Document):
 			return  # création : coefficients libres
 		if (before.get("exam_coefficients") or "") == (self.get("exam_coefficients") or ""):
 			return  # coefficients inchangés
+		# A08/A09 : ne bloquer que la MODIFICATION d'une pondération EXISTANTE quand une note existe.
+		# La 1ʳᵉ pose (avant = vide) reste permise même si une note traîne (rien à figer).
+		from admission.api.exam_grading import coefficients_complete, coefficients_of
+		was_set = coefficients_complete(coefficients_of({"exam_coefficients": before.get("exam_coefficients")}))
+		if not was_set:
+			return
 		from admission.api.staff import coefficients_locked
 		if coefficients_locked(self.name):
 			frappe.throw(

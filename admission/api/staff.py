@@ -1270,8 +1270,8 @@ def _require_validated_notes_if_prepa(applicant):
 
 
 def coefficients_locked(session_name):
-    """GN2 — vrai dès qu'au moins un candidat de la session porte une note (ABS incluse : l'épreuve
-    a eu lieu). SOURCE UNIQUE du verrou des coefficients (endpoint + validate() de la session)."""
+    """Vrai dès qu'au moins un candidat de la session porte une note (ABS incluse : l'épreuve a eu
+    lieu). Primitive « une note existe » — NE décide PAS seule du verrou (cf. coefficients_frozen)."""
     rows = frappe.get_all("Admission Applicant", filters={"session": session_name},
                           fields=["notes_concours"], limit_page_length=0)
     return any((r.notes_concours or "").strip() not in ("", "{}") for r in rows)
@@ -1280,6 +1280,17 @@ def coefficients_locked(session_name):
 def _session_coefficients(session_name):
     """Coefficients d'épreuve effectifs d'une session (via exam_grading). {} si absents."""
     return exam_grading.coefficients_of(frappe.get_doc("Admission Session", session_name))
+
+
+def coefficients_frozen(session_name):
+    """A08/A09 — coefficients FIGÉS = une pondération EXISTE (à protéger) ET au moins une note existe.
+    Tant qu'aucune pondération n'est posée, il n'y a RIEN à figer : la 1ʳᵉ pose reste permise même si
+    une note traîne (le verrou protège une pondération existante, pas la simple présence d'une note).
+    Une fois posée, une note la verrouille définitivement (une modification recalculerait toutes les
+    moyennes rétroactivement — acte interdit)."""
+    if not exam_grading.coefficients_complete(_session_coefficients(session_name)):
+        return False
+    return coefficients_locked(session_name)
 
 
 @frappe.whitelist()
@@ -1295,7 +1306,9 @@ def set_exam_coefficients(session_id=None, coefficients=None):
     parsed, err = exam_grading.validate_coefficients(coefficients)
     if err:
         return _error("COEF_INVALID", err, 400)
-    if coefficients_locked(session_id):
+    # A08/A09 : on refuse la MODIFICATION d'une pondération existante dès qu'une note existe. La
+    # 1ʳᵉ pose (aucune pondération encore) reste toujours permise — rien à figer.
+    if coefficients_frozen(session_id):
         return _error("COEF_LOCKED", "Coefficients verrouillés : une note a déjà été saisie dans "
                       "cette session. La pondération ne se change plus.", 409)
     session = frappe.get_doc("Admission Session", session_id)
@@ -1503,7 +1516,9 @@ def list_notes_roster(session_id=None):
                           "nom": c["nom"], "validees": bool(row.get("notes_validated")),
                           **exam_grading.summary(row.get("notes_concours"), coefs)})
     return _ok({"session_id": session_id, "subjects": exam_grading.subjects_payload(),
-                "coefficients": coefs, "coefficients_verrouilles": coefficients_locked(session_id),
+                "coefficients": coefs,
+                "coefficients_set": exam_grading.coefficients_complete(coefs),
+                "coefficients_frozen": coefficients_frozen(session_id),
                 "candidats": candidats})
 
 
@@ -1562,7 +1577,7 @@ def list_prepa_sessions():
         out.append({"session_id": s.name, "label": s.label, "programme_label": s.programme_label,
                     "exam_date": str(s.exam_date or ""),
                     "coefficients_set": exam_grading.coefficients_complete(coefs),
-                    "verrouilles": coefficients_locked(s.name)})
+                    "coefficients_frozen": coefficients_frozen(s.name)})
     return _ok({"sessions": out})
 
 

@@ -22,19 +22,20 @@ def ok(label, cond, detail=""):
 
 def _cleanup():
     frappe.set_user("Administrator")
-    for a in frappe.get_all("Admission Applicant", filters={"session": SESSION}, pluck="name"):
-        frappe.db.delete("Applicant Fee Payment", {"applicant": a})
-        frappe.db.delete("Applicant Fee", {"applicant": a})
-        frappe.db.delete("Admission Applicant Transition Log", {"applicant": a})
-        frappe.delete_doc("Admission Applicant", a, force=True, ignore_permissions=True)
-    if frappe.db.exists("Admission Session", SESSION):
-        frappe.delete_doc("Admission Session", SESSION, force=True, ignore_permissions=True)
+    sessions = frappe.get_all("Admission Session", filters={"name": ["like", SESSION + "%"]}, pluck="name")
+    for sess in sessions:
+        for a in frappe.get_all("Admission Applicant", filters={"session": sess}, pluck="name"):
+            frappe.db.delete("Applicant Fee Payment", {"applicant": a})
+            frappe.db.delete("Applicant Fee", {"applicant": a})
+            frappe.db.delete("Admission Applicant Transition Log", {"applicant": a})
+            frappe.delete_doc("Admission Applicant", a, force=True, ignore_permissions=True)
+        frappe.delete_doc("Admission Session", sess, force=True, ignore_permissions=True)
     frappe.db.commit()
 
 
-def _mk_session():
+def _mk_session(name=SESSION):
     frappe.get_doc({
-        "doctype": "Admission Session", "session_code": SESSION, "label": "Recette Notes",
+        "doctype": "Admission Session", "session_code": name, "label": "Recette Notes",
         "programme_code": "PREPA", "programme_label": "Cycle Préparatoire", "academic_year": "2026-2027",
         "opens_on": "2026-08-01", "closes_on": "2026-08-20", "bac_results_date": "2026-07-15",
         "application_fee_xof": 15000, "is_open": 0, "lifecycle_state": "Closed",
@@ -43,16 +44,16 @@ def _mk_session():
     }).insert(ignore_permissions=True)
 
 
-def _mk_candidat(prenom, nom, num):
+def _mk_candidat(prenom, nom, num, session=SESSION):
     a = frappe.get_doc({
         "doctype": "Admission Applicant", "status": "BRO", "first_name": prenom, "last_name": nom,
-        "email": f"{prenom}.{nom}@rec.bj".lower(), "phone": "+22990000000", "programme_code": "PREPA",
-        "programme_label": "Cycle Préparatoire", "level_code": "PRE-A1", "session": SESSION,
+        "email": f"{prenom}.{nom}.{num}@rec.bj".lower(), "phone": "+22990000000", "programme_code": "PREPA",
+        "programme_label": "Cycle Préparatoire", "level_code": "PRE-A1", "session": session,
         "convocation_number": num,
     }).insert(ignore_permissions=True)
     # ETU forcé en base (raw) : le Workflow Frappe interdit BRO→ETU direct ; fixture uniquement.
     frappe.db.set_value("Admission Applicant", a.name, "status", "ETU", update_modified=False)
-    fee = frappe.get_doc({"doctype": "Applicant Fee", "applicant": a.name, "session": SESSION,
+    fee = frappe.get_doc({"doctype": "Applicant Fee", "applicant": a.name, "session": session,
                           "fee_type": "competition", "amount_xof": 15000, "status": "Paid"}
                          ).insert(ignore_permissions=True)
     frappe.get_doc({"doctype": "Applicant Fee Payment", "applicant_fee": fee.name, "applicant": a.name,
@@ -253,6 +254,35 @@ def run():
         again = staff.valider_notes_masse(session_id=SESSION)["data"]
         ok("D3-LOT requirement 3 : rien à re-valider (déjà validés non re-touchés)",
            again["valides"] == 0, f"valides={again['valides']}")
+
+        # ── A08 / A09 : le verrou protège une pondération EXISTANTE, pas la présence d'une note ──
+        print("--- A08/A09 : verrou coefficients ---")
+        S2 = SESSION + "-A08"
+        frappe.set_user("Administrator")
+        _mk_session(S2)
+        a08 = _mk_candidat("Gil", "Test", "26260099", session=S2)
+        # résidu de note SANS coefficients (simule l'ancien format libre pré-canonique — bypass endpoint)
+        frappe.db.set_value("Admission Applicant", a08, "notes_concours", '{"Maths": 14}')
+        frappe.db.commit()
+        ok("A08 note résiduelle SANS coefficients ne fige RIEN (rien à protéger)",
+           not staff.coefficients_frozen(S2), "coefficients_frozen=False")
+        frappe.set_user(RESP)
+        r = staff.set_exam_coefficients(session_id=S2, coefficients={"maths": 3, "physique": 2, "culture": 1})
+        ok("A08 1ʳᵉ pose des coefficients PERMISE malgré le résidu (fin du cul-de-sac)",
+           r.get("ok"), str(r.get("data", {}).get("coefficients")) if r.get("ok") else r.get("error"))
+        # A09 — posés + une note existe → figé ; modification refusée SERVEUR (appel direct)
+        ok("A09 après pose, la note fige la pondération", staff.coefficients_frozen(S2), "frozen=True")
+        r = staff.set_exam_coefficients(session_id=S2, coefficients={"maths": 1, "physique": 1, "culture": 1})
+        ok("A09 modification refusée serveur dès qu'une note existe (appel direct endpoint)",
+           not r.get("ok") and r["error"]["code"] == "COEF_LOCKED", r.get("error", {}).get("code"))
+        try:
+            frappe.set_user("Administrator")
+            s2 = frappe.get_doc("Admission Session", S2)
+            s2.exam_coefficients = '{"maths": 1, "physique": 1, "culture": 1}'
+            s2.save(ignore_permissions=True); a09_l2 = False
+        except frappe.ValidationError:
+            a09_l2 = True
+        ok("A09 2ᵉ couche : validate() session refuse la modification (édition directe)", a09_l2, "ValidationError")
 
         print(f"\n=== RECETTE NOTES-CONCOURS : {R['pass']} PASS / {R['fail']} FAIL ===")
     finally:

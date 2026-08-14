@@ -339,7 +339,7 @@ class TestSetExamCoefficients(TestCase):
     def test_responsable_sets(self):  # GN2 + arbitrage 3 (RESP_UP, Administratif exclu)
         session = MagicMock(); session.exam_coefficients = None
         ok, err = _patches()
-        with patch(f"{STAFF}.frappe") as mf, ok, err, patch(f"{STAFF}.coefficients_locked", return_value=False):
+        with patch(f"{STAFF}.frappe") as mf, ok, err, patch(f"{STAFF}.coefficients_frozen", return_value=False):
             mf.db.exists.return_value = True
             mf.get_doc.return_value = session
             from admission.api.staff import set_exam_coefficients
@@ -350,18 +350,30 @@ class TestSetExamCoefficients(TestCase):
         self.assertEqual(json.loads(session.exam_coefficients), {"maths": 3.0, "physique": 2.0, "culture": 1.0})
         session.save.assert_called_once()
 
-    def test_locked_after_first_note(self):  # GN2 — verrou dès la 1ʳᵉ note
+    def test_frozen_refused(self):  # A09 — figé (pondération posée + note) → modification refusée
         ok, err = _patches()
-        with patch(f"{STAFF}.frappe") as mf, ok, err, patch(f"{STAFF}.coefficients_locked", return_value=True):
+        with patch(f"{STAFF}.frappe") as mf, ok, err, patch(f"{STAFF}.coefficients_frozen", return_value=True):
             mf.db.exists.return_value = True
             from admission.api.staff import set_exam_coefficients
             res = set_exam_coefficients(session_id="SES-2026-10",
                                         coefficients={"maths": 3, "physique": 2, "culture": 1})
         self.assertEqual(res["error"]["code"], "COEF_LOCKED")
 
+    def test_first_set_allowed_despite_stray_note(self):  # A08 — jamais posé + note traîne → permis
+        session = MagicMock(); session.exam_coefficients = None
+        ok, err = _patches()
+        with patch(f"{STAFF}.frappe") as mf, ok, err, patch(f"{STAFF}.coefficients_frozen", return_value=False):
+            mf.db.exists.return_value = True
+            mf.get_doc.return_value = session
+            from admission.api.staff import set_exam_coefficients
+            res = set_exam_coefficients(session_id="SES-2026-10",
+                                        coefficients={"maths": 3, "physique": 2, "culture": 1})
+        self.assertTrue(res["ok"])          # verrou = pondération existante, pas présence d'une note
+        session.save.assert_called_once()
+
     def test_incomplete_coefficients_refused(self):
         ok, err = _patches()
-        with patch(f"{STAFF}.frappe") as mf, ok, err, patch(f"{STAFF}.coefficients_locked", return_value=False):
+        with patch(f"{STAFF}.frappe") as mf, ok, err, patch(f"{STAFF}.coefficients_frozen", return_value=False):
             mf.db.exists.return_value = True
             from admission.api.staff import set_exam_coefficients
             res = set_exam_coefficients(session_id="SES-2026-10", coefficients={"maths": 3, "physique": 2})
