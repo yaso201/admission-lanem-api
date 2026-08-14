@@ -152,6 +152,7 @@ class TestCloseSession(TestCase):
     def test_execute_maps_notifies_and_logs(self, mlog):
         ok, err = _patches()
         with patch(f"{STAFF}.frappe") as mf, ok, err, \
+             patch("admission.api.sessions.set_lifecycle") as mset, \
              patch(f"{STAFF}.send_decision_notification") as mref, \
              patch(f"{STAFF}.send_withdrawal_notification") as mdes:
             mf.db.exists.return_value = True
@@ -169,10 +170,8 @@ class TestCloseSession(TestCase):
         self.assertEqual(mdes.call_count, 3)     # mails clôture neutre
         self.assertEqual(mlog.call_count, 8)     # Transition Log manuel par dossier
         self.assertEqual(mlog.call_args.kwargs.get("action"), "Session Close")
-        # Session fermée + motifs posés par dossier
-        session_close = [c for c in mf.db.set_value.call_args_list
-                         if c[0][0] == "Admission Session"]
-        self.assertTrue(session_close)
+        # Session fermée via la source unique set_lifecycle (état + miroir) — GESTION-CALENDRIER
+        mset.assert_called_once_with("SES-1", "Closed")
         dossier_writes = [c for c in mf.db.set_value.call_args_list
                           if c[0][0] == "Admission Applicant"]
         self.assertEqual(len(dossier_writes), 8)

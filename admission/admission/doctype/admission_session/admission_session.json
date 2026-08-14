@@ -19,12 +19,15 @@
   "fee_section",
   "application_fee_xof",
   "is_open",
+  "lifecycle_state",
   "is_prepa_session",
   "exam_section",
   "exam_date",
   "exam_call_time",
   "exam_start_time",
-  "exam_room"
+  "exam_room",
+  "pending_section",
+  "pending_changes"
  ],
  "fields": [
   {
@@ -112,7 +115,18 @@
    "fieldname": "is_open",
    "fieldtype": "Check",
    "in_list_view": 1,
-   "label": "Is Open"
+   "label": "Is Open",
+   "read_only": 1,
+   "description": "Miroir DÉRIVÉ de lifecycle_state (Open ⟺ 1). Ne pas éditer directement — voir lifecycle_state."
+  },
+  {
+   "fieldname": "lifecycle_state",
+   "fieldtype": "Select",
+   "label": "Lifecycle State",
+   "options": "\nDraft\nOpen\nClosed",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Source de vérité du cycle de vie. Brouillon = invisible du candidat, ignoré par l'auto-fermeture. is_open en est le miroir. Les mutations passent par les endpoints calendrier (write REST verrouillé)."
   },
   {
    "default": "0",
@@ -146,6 +160,18 @@
    "fieldtype": "Data",
    "label": "Salle",
    "description": "Facultatif — masqué sur la convocation si vide."
+  },
+  {
+   "fieldname": "pending_section",
+   "fieldtype": "Section Break",
+   "label": "Modifications en attente de validation"
+  },
+  {
+   "fieldname": "pending_changes",
+   "fieldtype": "Table",
+   "label": "Modifications en attente",
+   "options": "Admission Session Pending Change",
+   "description": "Maker-checker : changements de dates proposés par le Responsable, en attente de la Direction. La valeur LIVE reste effective tant que la Direction n'a pas validé (GK8)."
   }
  ],
  "index_web_pages_for_search": 0,
@@ -177,10 +203,8 @@
    "role": "Admission Responsable"
   },
   {
-   "create": 1,
    "read": 1,
-   "role": "Admission Direction",
-   "write": 1
+   "role": "Admission Direction"
   }
  ],
  "sort_field": "modified",

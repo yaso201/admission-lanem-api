@@ -1071,13 +1071,14 @@ def list_sessions(programme=None):
 	sessions = frappe.get_all(
 		"Admission Session",
 		filters=filters,
-		fields=["name", "label", "academic_year", "programme_code", "programme_label", "opens_on", "closes_on", "is_open"],
+		fields=["name", "label", "academic_year", "programme_code", "programme_label", "opens_on", "closes_on", "is_open", "lifecycle_state"],
 		order_by="opens_on asc",
 	)
 	out = []
 	for row in sessions:
 		status = session_display_status(row)
-		if status == "fermee":
+		# 'fermee' (clôturée main, date future) ET 'brouillon' (jamais publié) → masqués du candidat.
+		if status in ("fermee", "brouillon"):
 			continue
 		out.append(
 			{

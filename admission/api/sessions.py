@@ -31,12 +31,32 @@ def _field(session, name):
     return getattr(session, name, None)
 
 
+def _state(session) -> str:
+    """État lifecycle : `lifecycle_state` (source de vérité) quand c'est un état VALIDE, sinon repli
+    sur le miroir is_open (rows historiques sans le champ, valeur corrompue) — Open ⟺ is_open=1,
+    sinon Closed. GESTION-CALENDRIER."""
+    st = _field(session, "lifecycle_state")
+    if st in ("Draft", "Open", "Closed"):
+        return st
+    return "Open" if _field(session, "is_open") else "Closed"
+
+
+def set_lifecycle(name, state, update_modified=True):
+    """Transition d'état au niveau base (chemins hors doc.save : auto-fermeture, clôture, endpoints).
+    Pose lifecycle_state ET son miroir is_open ensemble — zéro divergence."""
+    frappe.db.set_value(
+        "Admission Session", name,
+        {"lifecycle_state": state, "is_open": 1 if state == "Open" else 0},
+        update_modified=update_modified,
+    )
+
+
 def is_session_selectable(session) -> bool:
-    """Sélectionnable = ouverte ET non échue. Utilisé par le catalogue ET la garde.
-    `closes_on` absent = pas d'échéance (reste sélectionnable si ouverte)."""
+    """Sélectionnable = état Open ET non échue. Utilisé par le catalogue ET la garde.
+    Brouillon/Fermée → jamais sélectionnable. `closes_on` absent = pas d'échéance."""
     if not session:
         return False
-    if not _field(session, "is_open"):
+    if _state(session) != "Open":
         return False
     closes_on = _field(session, "closes_on")
     if closes_on and getdate(closes_on) < _today():
@@ -45,25 +65,30 @@ def is_session_selectable(session) -> bool:
 
 
 def session_display_status(session) -> str:
-    """'a_venir' (ouverte + non échue → sélectionnable) ·
-    'echue' (date dépassée → visible, NON sélectionnable, quel que soit is_open) ·
-    'fermee' (fermée à la main, date non dépassée → masquée du catalogue)."""
+    """'brouillon' (Draft → invisible du candidat, masqué du catalogue) ·
+    'a_venir' (Open + non échue → sélectionnable) ·
+    'echue' (Open/Closed, date dépassée → visible, NON sélectionnable) ·
+    'fermee' (Closed, date non dépassée → masquée du catalogue)."""
+    st = _state(session)
+    if st == "Draft":
+        return "brouillon"
     closes_on = _field(session, "closes_on")
     echue = bool(closes_on) and getdate(closes_on) < _today()
     if echue:
         return "echue"
-    if _field(session, "is_open"):
+    if st == "Open":
         return "a_venir"
     return "fermee"
 
 
 def close_expired_sessions():
     """Tâche quotidienne : ferme les sessions échues (`closes_on < aujourd'hui`, Porto-Novo).
+    Ne considère QUE les sessions Open → les BROUILLONS sont ignorés par construction (GK2).
     Idempotente (ne re-ferme pas), journalisée, NE TOUCHE AUCUN DOSSIER, ne rouvre jamais.
     `closes_on` absent → non fermée, SIGNALÉE (GS6). Enregistrable via scheduler ou bench."""
     today = _today()
     closed, skipped_no_date = [], []
-    for s in frappe.get_all("Admission Session", filters={"is_open": 1},
+    for s in frappe.get_all("Admission Session", filters={"lifecycle_state": "Open"},
                             fields=["name", "closes_on"]):
         if not s.closes_on:
             skipped_no_date.append(s.name)
@@ -72,7 +97,7 @@ def close_expired_sessions():
             )
             continue
         if getdate(s.closes_on) < today:
-            frappe.db.set_value("Admission Session", s.name, "is_open", 0)
+            set_lifecycle(s.name, "Closed")
             closed.append({"session": s.name, "closes_on": str(s.closes_on)})
             frappe.logger("session_lifecycle").info(
                 f"Session {s.name} fermée automatiquement (closes_on {s.closes_on} < {today})."

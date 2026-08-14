@@ -272,6 +272,77 @@ def send_convocation(applicant, session):
         log_event("convocation", "send_failed", dossier_id=applicant.name, level="error")
 
 
+def reissue_convocations(session):
+    """GESTION-CALENDRIER (GK6) — réémission après REPORT d'épreuve / correction d'horaire ou de
+    salle. Un report est un PROCESSUS d'information, pas une réécriture silencieuse : chaque
+    convoqué (frais 1 confirmé) reçoit un courriel EXPLICITE « Report de votre épreuve — nouvelle
+    date » dont le corps annonce le changement AVANT de joindre la convocation (numéro CONSERVÉ,
+    document à jour). Non bloquant. Renvoie le nombre de réémissions."""
+    from admission.api.public import FRAIS1_FEE_TYPES
+    session_doc = frappe.get_doc("Admission Session", session) if isinstance(session, str) else session
+    rows = frappe.get_all("Admission Applicant", filters={"session": session_doc.name}, pluck="name")
+    count = 0
+    for name in rows:
+        applicant = frappe.get_doc("Admission Applicant", name)
+        if not _frais1_confirmed_payment(applicant):
+            continue   # seuls les convoqués (frais 1 confirmé) sont concernés
+        _send_reissue(applicant, session_doc)
+        count += 1
+    return count
+
+
+def _send_reissue(applicant, session):
+    """Envoi d'une réémission (ignore le drapeau d'envoi unique : c'est une RÉémission voulue).
+    Objet et corps explicites — un candidat ayant déjà téléchargé sa convocation ne rouvrira pas
+    un simple pré-en-tête discret ; c'est le message qui doit alerter (arbitrage #4 révisé)."""
+    try:
+        pdf, numero = build_convocation_pdf(applicant, session)
+        email = getattr(applicant, "email", None)
+        if email:
+            frappe.sendmail(
+                recipients=[email],
+                subject="Report de votre épreuve — nouvelle date",
+                message=_reissue_email_body(applicant, session, numero),
+                attachments=[{"fname": f"convocation-{numero}.pdf", "fcontent": pdf}],
+            )
+        frappe.db.set_value("Admission Applicant", applicant.name, "convocation_sent_at",
+                            now_datetime(), update_modified=False)
+        applicant.convocation_sent_at = now_datetime()
+        log_event("convocation", "reissued", dossier_id=applicant.name, ref=numero)
+    except Exception:
+        frappe.log_error(title="Convocation reissue failed", message=frappe.get_traceback())
+        log_event("convocation", "reissue_failed", dossier_id=applicant.name, level="error")
+
+
+def _reissue_email_body(applicant, session, numero):
+    """Corps de la réémission : ANNONCE le changement (nouvelle date, appel) puis joint la
+    convocation à jour. Réutilise le gabarit candidat (accent 'convocation')."""
+    from admission.api.email_template import _portal_link, render_candidate_email
+    nom = getattr(applicant, "applicant_name", "") or ""
+    date_ep = _fmt_date_fr(session.exam_date, weekday=True)
+    salle = getattr(session, "exam_room", "") or None
+    meta = [("Numéro de convocation", numero, True),
+            ("Nouvelle date de l'épreuve", date_ep),
+            ("Heure d'appel", _fmt_time_fr(getattr(session, "exam_call_time", None))),
+            ("Début des épreuves", _fmt_time_fr(getattr(session, "exam_start_time", None)))]
+    if salle:
+        meta.append(("Salle", salle))
+    return render_candidate_email(
+        nom=nom, dossier=applicant.name, filiere=getattr(session, "programme_label", "") or "",
+        status="convocation",
+        intro="<strong>La date de votre épreuve a été modifiée.</strong> Votre convocation au "
+              "concours d'entrée reste valable — seule la date (et éventuellement l'horaire ou la "
+              "salle) change. Le document ci-joint est à jour ; merci de vous fier à cette nouvelle "
+              "convocation et d'ignorer la version précédente.",
+        meta=meta,
+        attachment={"label": "Convocation au concours (mise à jour)", "fname": f"convocation-{numero}.pdf"},
+        secondary={"label": "Ouvrir mon espace de suivi", "url": _portal_link(applicant)},
+        signoff="Nous vous prions de nous excuser pour ce changement. — L'équipe des admissions, LaNEM",
+        preheader=f"Nouvelle date : {date_ep}. Votre convocation {numero} ci-jointe est à jour.",
+        subject="Report de votre épreuve — nouvelle date",
+    )
+
+
 def _email_body(applicant, session, numero, verifie):
     """Courriel d'accompagnement — RÉUTILISE le gabarit candidat existant, seule la couleur
     d'accent change (status='convocation') pour distinguer des autres notifications."""

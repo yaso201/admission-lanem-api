@@ -1518,7 +1518,8 @@ def close_session(session=None, motif=None, dry_run=1):
     motif = (str(motif).strip() if motif and str(motif).strip()
              else f"Clôture de la session {sess.label or session} — candidature non aboutie.")
     if sess.is_open:
-        frappe.db.set_value("Admission Session", session, "is_open", 0)
+        from admission.api.sessions import set_lifecycle
+        set_lifecycle(session, "Closed")   # GESTION-CALENDRIER : Fermée (miroir is_open=0)
     done, failed = {"REF": 0, "DES": 0}, 0
     for r in rows:
         target = SESSION_CLOSE_MAP[r.status]

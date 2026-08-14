@@ -111,8 +111,10 @@ class TestCloseExpiredTask(TestCase):
         res = close_expired_sessions()
         self.assertEqual([c["session"] for c in res["closed"]], ["S-ECHUE"])
         self.assertEqual(res["skipped_no_date"], ["S-NODATE"])
+        # GESTION-CALENDRIER : l'auto-fermeture pose l'état lifecycle (source) + son miroir is_open.
         mock_frappe.db.set_value.assert_called_once_with(
-            "Admission Session", "S-ECHUE", "is_open", 0)
+            "Admission Session", "S-ECHUE",
+            {"lifecycle_state": "Closed", "is_open": 0}, update_modified=True)
         mock_frappe.db.commit.assert_called_once()
 
     @patch("admission.api.sessions.nowdate", return_value=TODAY)
