@@ -67,6 +67,50 @@ def _is_advance(old, new):
     return n < o
 
 
+def _norm_time(v):
+    """Time (timedelta champ Frappe ou 'HH:MM[:SS]') → secondes depuis minuit. None si vide OU
+    minuit : un champ Time non renseigné revient en timedelta(0), et une épreuve ne débute jamais à
+    00:00 → on le traite comme non renseigné (sinon 0>0 = faux positif sur les sessions sans heures)."""
+    if not v:   # None, "", timedelta(0)
+        return None
+    if hasattr(v, "total_seconds"):
+        return int(v.total_seconds()) or None
+    p = str(v).split(":")
+    try:
+        total = int(p[0]) * 3600 + int(p[1] if len(p) > 1 else 0) * 60 + int(p[2] if len(p) > 2 else 0)
+        return total or None
+    except (ValueError, IndexError):
+        return None
+
+
+def coherence_errors(fields):
+    """A07 — contrôles de COHÉRENCE INTER-CHAMPS. Source unique, appliqués par le serveur.
+    Renvoie la liste des violations (vide = cohérent). Un champ absent n'engendre aucune erreur.
+    `fields` = dict portant opens_on/closes_on/exam_date/exam_call_time/exam_start_time/bac_results_date.
+    NB : la cohérence de `bac_results_date` reste À ÉTABLIR avec l'architecte → non contrôlée ici."""
+    errs = []
+    o, c, e = _norm_date(fields.get("opens_on")), _norm_date(fields.get("closes_on")), _norm_date(fields.get("exam_date"))
+    if o and c and not (c > o):
+        errs.append("La clôture des dépôts doit être postérieure à la date d'ouverture.")
+    if c and e and not (e > c):
+        errs.append("La date de l'épreuve doit être strictement postérieure à la clôture des dépôts.")
+    # Heures : uniquement pour une session À ÉPREUVE (exam_date présent). Sinon les champs Time
+    # non renseignés valent nowtime() (défaut Frappe) → comparaison sans objet, faux positifs.
+    if e:
+        ca, st = _norm_time(fields.get("exam_call_time")), _norm_time(fields.get("exam_start_time"))
+        if ca is not None and st is not None and not (st > ca):
+            errs.append("L'heure de début des épreuves doit être postérieure à l'heure d'appel.")
+    return errs
+
+
+def enforce_coherence(fields):
+    """Lève ValidationError si l'ensemble de dates/heures est incohérent (A07). Appelé par le
+    contrôleur validate() ET par les endpoints (proposition), pour un même verdict serveur."""
+    errs = coherence_errors(fields)
+    if errs:
+        frappe.throw(" ".join(errs), title="Dates incohérentes")
+
+
 def evaluate_change(state, field, old_value, new_value):
     """Verdict pur pour un changement d'un champ, selon l'état lifecycle (Draft/Open/Closed)."""
     if _same(field, old_value, new_value):

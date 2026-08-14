@@ -15,10 +15,6 @@ class AdmissionSession(Document):
 		# dérivé (Open ⟺ 1). Reconciliation à chaque save. Les inserts historiques (is_open posé,
 		# lifecycle_state absent) dérivent l'état ; les nouveaux (duplication) posent l'état.
 		self._sync_lifecycle_mirror()
-		# getdate() : les dates fraîchement posées (endpoints calendrier) peuvent être des chaînes
-		# non encore coercées ; comparer date-à-date évite un TypeError date>str.
-		if self.opens_on and self.closes_on and getdate(self.opens_on) > getdate(self.closes_on):
-			frappe.throw("Admission session opening date cannot be after closing date.")
 		if self.academic_year and not _ACADEMIC_YEAR_FORMAT.match(self.academic_year):
 			frappe.throw(
 				"academic_year doit être au format YYYY-YYYY (ex. 2026-2027). "
@@ -28,6 +24,11 @@ class AdmissionSession(Document):
 		# (avancer clôture/épreuve, toucher la structure d'une session publiée). Le verrou d'appel
 		# direct principal reste le retrait du write REST + le passage obligé par les endpoints.
 		self._enforce_change_rules()
+		# A07 : cohérence INTER-CHAMPS (source unique) sur TOUT save — création et édition. Remplace
+		# l'ancien contrôle opens/closes (élargi : closes>opens, exam>closes, début>appel).
+		from admission.api.calendar_rules import enforce_coherence
+		enforce_coherence({f: self.get(f) for f in (
+			"opens_on", "closes_on", "exam_date", "exam_call_time", "exam_start_time", "bac_results_date")})
 
 	def _sync_lifecycle_mirror(self):
 		if not self.lifecycle_state:

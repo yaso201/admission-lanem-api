@@ -88,11 +88,23 @@ def _shift_date(d, days):
     return str(add_days(getdate(d), days)) if d else None
 
 
+_LABEL_DATE_RE = re.compile(r"\s*\(concours[^)]*\)", re.IGNORECASE)
+
+
+def _strip_label_date(label):
+    """A06 : retire « (concours DD/MM/YYYY) » d'un libellé — la date vit dans exam_date, pas figée
+    dans le texte (elle divergerait à la duplication et sur la feuille d'émargement)."""
+    if not label:
+        return label
+    return _LABEL_DATE_RE.sub("", label).strip() or label
+
+
 def _compute_duplicates(session_names, shift_days, academic_year):
     """SOURCE de vérité de la duplication : consommée par l'aperçu ET la création. Ne crée rien.
     Décale toutes les dates ; reprend structure, heures, salle, libellés ; année mise à jour ;
     état Draft ; nouveaux codes uniques. Ne lit jamais candidatures/paiements."""
-    shift = cint(shift_days) if shift_days not in (None, "") else DEFAULT_SHIFT_DAYS
+    # A06 : 0 / None / "" → défaut 364 (un décalage nul créerait des copies aux dates identiques).
+    shift = cint(shift_days) or DEFAULT_SHIFT_DAYS
     taken = set()
     plans = []
     for code in session_names:
@@ -104,7 +116,8 @@ def _compute_duplicates(session_names, shift_days, academic_year):
             "source_label": src.label,
             "new_code": new_code,
             "code_adjusted": adjusted,
-            "label": src.label,
+            # A06 : on ne reprend PAS de date figée dans le libellé (elle divergerait de exam_date).
+            "label": _strip_label_date(src.label),
             "programme_code": src.programme_code,
             "programme_label": src.programme_label,
             "academic_year": target_ay,
@@ -271,6 +284,23 @@ def _propose_changes(name, changes):
     if refused:   # atomique : une restriction refuse toute la proposition
         msg = " ".join(r["reason"] for r in refused)
         frappe.throw(msg, title="Modification refusée")
+
+    # A07 : la proposition doit laisser un ensemble COHÉRENT (ex. une prolongation ne peut pas
+    # dépasser la date d'épreuve). État effectif = live + pending existant + nouvelles valeurs.
+    # Contrôlé ICI car le pending ne touche pas la valeur live → le validate() ne le verrait pas.
+    from admission.api.calendar_rules import coherence_errors
+    _DT = ("opens_on", "closes_on", "exam_date", "exam_call_time", "exam_start_time", "bac_results_date")
+    effective = {f: doc.get(f) for f in _DT}
+    for r in (doc.pending_changes or []):
+        if r.change_field in effective:
+            effective[r.change_field] = r.proposed_value
+    for field, val in immediate.items():
+        effective[field] = val
+    for field, (val, _v) in pending.items():
+        effective[field] = val
+    coh = coherence_errors(effective)
+    if coh:
+        frappe.throw(" ".join(coh), title="Dates incohérentes")
 
     for field, val in immediate.items():
         doc.set(field, val)   # résultats du bac : subie, appliquée direct

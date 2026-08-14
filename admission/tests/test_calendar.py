@@ -56,6 +56,9 @@ class TestCalendarState(FrappeTestCase):
             "closes_on": closes_on or "2026-12-01",
             "bac_results_date": "2027-01-15",
             "application_fee_xof": 10000,
+            # heures réelles : sinon les Time non renseignés valent nowtime() (défaut Frappe) →
+            # faux positif de cohérence dès qu'un exam_date est posé sur la session.
+            "exam_call_time": "07:30:00", "exam_start_time": "08:00:00",
         }
         if state is not None:
             vals["lifecycle_state"] = state
@@ -498,6 +501,95 @@ class TestCalendarReissue(FrappeTestCase):
         res = _validate_changes(self.session.name)
         self.assertFalse(res["reissue_triggered"])
         self.assertEqual(mock_sendmail.call_count, 0)
+
+
+class TestCoherenceA07(FrappeTestCase):
+    """A07 — cohérence INTER-CHAMPS dans la source unique, appliquée par le serveur."""
+
+    def setUp(self):
+        _purge()
+
+    def tearDown(self):
+        frappe.db.rollback()
+        _purge()
+
+    def _open(self, closes, exam):
+        return frappe.get_doc({
+            "doctype": "Admission Session", "session_code": f"{_MARK}-COH",
+            "label": "Coh", "programme_code": _PROG, "programme_label": "Cycle test",
+            "academic_year": "2026-2027", "opens_on": "2026-06-01", "closes_on": closes,
+            "bac_results_date": "2027-01-15", "application_fee_xof": 10000, "exam_date": exam,
+            "exam_call_time": "07:30:00", "exam_start_time": "08:00:00", "lifecycle_state": "Open",
+        }).insert(ignore_permissions=True)
+
+    def test_coherence_errors_unit(self):
+        from admission.api.calendar_rules import coherence_errors
+        self.assertTrue(coherence_errors({"closes_on": "2026-09-28", "exam_date": "2026-09-26"}))   # exam<=closes
+        self.assertTrue(coherence_errors({"closes_on": "2026-09-26", "exam_date": "2026-09-26"}))   # égal → refusé (strict)
+        self.assertFalse(coherence_errors({"closes_on": "2026-09-25", "exam_date": "2026-09-26"}))  # ok
+        self.assertTrue(coherence_errors({"opens_on": "2026-09-10", "closes_on": "2026-09-05"}))    # closes<opens
+        # heures : contrôle gated sur exam_date présent (session à épreuve)
+        self.assertTrue(coherence_errors({"exam_date": "2026-09-26", "exam_call_time": "08:00:00", "exam_start_time": "07:30:00"}))
+        self.assertFalse(coherence_errors({"exam_date": "2026-09-26", "exam_call_time": "07:30:00", "exam_start_time": "08:00:00"}))
+        self.assertFalse(coherence_errors({"exam_call_time": "08:00:00", "exam_start_time": "07:30:00"}))  # sans exam_date → ignoré
+        self.assertFalse(coherence_errors({"opens_on": "2026-06-01"}))   # champ partiel → aucune erreur
+        self.assertFalse(coherence_errors({}))
+
+    def test_validate_rejects_incoherent_save(self):
+        s = self._open(add_days(nowdate(), 10), add_days(nowdate(), 20))
+        doc = frappe.get_doc("Admission Session", s.name)
+        doc.closes_on = add_days(nowdate(), 25)   # clôture APRÈS l'épreuve → incohérent
+        with self.assertRaises(frappe.ValidationError):
+            doc.save(ignore_permissions=True)
+
+    def test_propose_extension_beyond_exam_refused(self):
+        from admission.api.calendar import _propose_changes
+        s = self._open(add_days(nowdate(), 10), add_days(nowdate(), 20))
+        with self.assertRaises(frappe.ValidationError):   # prolongation qui dépasse l'épreuve
+            _propose_changes(s.name, {"closes_on": str(add_days(nowdate(), 25))})
+        self.assertEqual(len(frappe.get_doc("Admission Session", s.name).pending_changes), 0)
+        # une prolongation qui RESTE avant l'épreuve passe (pending)
+        r = _propose_changes(s.name, {"closes_on": str(add_days(nowdate(), 15))})
+        self.assertIn("closes_on", r["pending"])
+
+
+class TestLabelA06(FrappeTestCase):
+    """A06 — pas de date figée dans le libellé (elle vit dans exam_date) + défaut décalage 364."""
+
+    def setUp(self):
+        _purge()
+
+    def tearDown(self):
+        frappe.db.rollback()
+        _purge()
+
+    def test_strip_label_date(self):
+        from admission.api.calendar import _strip_label_date
+        self.assertEqual(_strip_label_date("Prépa — Session 4 (concours 07/09/2026)"), "Prépa — Session 4")
+        self.assertEqual(_strip_label_date("Bachelor X — rentrée 2026"), "Bachelor X — rentrée 2026")  # intact
+
+    def _src(self):
+        return frappe.get_doc({
+            "doctype": "Admission Session", "session_code": f"{_MARK}-LBL",
+            "label": "Prépa — Session 4 (concours 07/09/2026)", "programme_code": _PROG,
+            "programme_label": "Cycle test", "academic_year": "2026-2027", "opens_on": "2026-06-01",
+            "closes_on": "2026-08-25", "bac_results_date": "2027-01-15", "application_fee_xof": 10000,
+            "exam_date": "2026-08-26", "exam_call_time": "07:30:00", "exam_start_time": "08:00:00",
+            "lifecycle_state": "Open",
+        }).insert(ignore_permissions=True)
+
+    def test_duplication_strips_label_date(self):
+        from admission.api.calendar import _compute_duplicates
+        src = self._src()
+        plan = _compute_duplicates([src.name], 364, None)["sessions"][0]
+        self.assertEqual(plan["label"], "Prépa — Session 4")
+        self.assertNotIn("concours", plan["label"])
+
+    def test_shift_zero_defaults_364(self):
+        from admission.api.calendar import _compute_duplicates
+        src = self._src()
+        self.assertEqual(_compute_duplicates([src.name], 0, None)["shift_days"], 364)
+        self.assertEqual(_compute_duplicates([src.name], None, None)["shift_days"], 364)
 
 
 class TestFieldPolicies(FrappeTestCase):
