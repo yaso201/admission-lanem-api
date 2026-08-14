@@ -19,6 +19,7 @@ class AdmissionApplicant(Document):
 			self.conditionnel = 1
 
 		self._validate_scholarships()
+		self._validate_notes_concours()
 
 		old = self.get_doc_before_save()
 		if old:
@@ -85,6 +86,17 @@ class AdmissionApplicant(Document):
 	def _gate_data_transfer_consent(self):
 		from admission.api.legal import _require_consent_record
 		_require_consent_record(self.name, "DATA_TRANSFER")
+
+	def _validate_notes_concours(self):
+		"""NOTES-CONCOURS (GN3, 2ᵉ couche) — plage/complétude re-vérifiées sur TOUT save d'un dossier
+		portant des notes (défense en profondeur ; le point d'entrée principal reste
+		saisir_note_concours). La sentinelle d'absence est acceptée telle quelle."""
+		if not self.notes_concours:
+			return
+		from admission.api.exam_grading import validate_entry
+		_, err = validate_entry(self.notes_concours)
+		if err:
+			frappe.throw(err, title="Notes invalides")
 
 	def _validate_scholarships(self):
 		validated = json.loads(self.validated_scholarships or "[]")

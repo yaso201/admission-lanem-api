@@ -26,6 +26,7 @@
   "exam_call_time",
   "exam_start_time",
   "exam_room",
+  "exam_coefficients",
   "pending_section",
   "pending_changes"
  ],
@@ -160,6 +161,12 @@
    "fieldtype": "Data",
    "label": "Salle",
    "description": "Facultatif — masqué sur la convocation si vide."
+  },
+  {
+   "fieldname": "exam_coefficients",
+   "fieldtype": "JSON",
+   "label": "Coefficients des épreuves",
+   "description": "NOTES-CONCOURS — pondération {épreuve: coefficient}, identique pour tous les candidats de la session. Posés via l'endpoint set_exam_coefficients ; VERROUILLÉS dès la première note saisie (GN2). Hors calendar_rules (verrou propre)."
   },
   {
    "fieldname": "pending_section",

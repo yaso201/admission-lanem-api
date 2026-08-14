@@ -5,6 +5,8 @@ donc `@frappe.whitelist()` sans allow_guest → session requise). Réutilise la 
 helpers de paiement existants (pas de duplication de la notif UF : portée par le hook on_payment_update).
 """
 
+import csv
+import io
 import json
 
 import frappe
@@ -45,6 +47,7 @@ from admission.api.receipt import send_payment_receipt
 
 from admission.api.permissions import roles_at_or_above
 from admission.api._actions import available_actions, can_control_pieces, can_manage_payments, action_context
+from admission.api import exam_grading
 
 # FIX-ROLES-HIERARCHIE — modele B ascendant : chaque action declare son NIVEAU MIN ;
 # roles_at_or_above l'expanse vers le haut (+ System Manager). Un superieur couvre l'inferieur.
@@ -398,6 +401,16 @@ def _notes_state(applicant_row):
     return "absentes"
 
 
+def _notes_payload(applicant, session_doc):
+    """NOTES-CONCOURS — bloc notes pour le front : valeurs + moyenne + signal éliminatoire (calculés
+    À LA LECTURE via exam_grading, jamais stockés, jamais décidés) + validées + coefficients de la
+    session. Absent → moyenne None (jamais 0). Le front reste un pur renderer."""
+    coefs = exam_grading.coefficients_of(session_doc) if session_doc else {}
+    return {**exam_grading.summary(getattr(applicant, "notes_concours", None), coefs),
+            "validees": bool(getattr(applicant, "notes_validated", 0)),
+            "coefficients": coefs}
+
+
 @frappe.whitelist(methods=["GET"])
 def whoami():
     """C4-FRONT (DEC-264) — identité de session pour le front management.
@@ -561,8 +574,7 @@ def get_dossier(dossier_id=None):
                     "has_file": bool(p.file)} for p in (applicant.pieces or [])],
         "frais": fees,
         "paiements": payments,
-        "notes": {"valeurs": json.loads(applicant.notes_concours) if applicant.notes_concours else None,
-                  "validees": bool(applicant.notes_validated)},
+        "notes": _notes_payload(applicant, session_doc),
         "bourses": {"demandees": _mirror_details(applicant.requested_scholarships),
                     "proposees": _mirror_details(applicant.proposed_scholarships),
                     "validees": _mirror_details(applicant.validated_scholarships)},
@@ -1257,35 +1269,50 @@ def _require_validated_notes_if_prepa(applicant):
     return None
 
 
-def _validate_notes_format(notes):
-    """Garde de format : `notes` = objet {label: nombre} (pas de JSON libre arbitraire).
+def coefficients_locked(session_name):
+    """GN2 — vrai dès qu'au moins un candidat de la session porte une note (ABS incluse : l'épreuve
+    a eu lieu). SOURCE UNIQUE du verrou des coefficients (endpoint + validate() de la session)."""
+    rows = frappe.get_all("Admission Applicant", filters={"session": session_name},
+                          fields=["notes_concours"], limit_page_length=0)
+    return any((r.notes_concours or "").strip() not in ("", "{}") for r in rows)
 
-    Retourne (parsed_dict, None) si valide, sinon (None, message d'erreur).
+
+def _session_coefficients(session_name):
+    """Coefficients d'épreuve effectifs d'une session (via exam_grading). {} si absents."""
+    return exam_grading.coefficients_of(frappe.get_doc("Admission Session", session_name))
+
+
+@frappe.whitelist()
+def set_exam_coefficients(session_id=None, coefficients=None):
+    """NOTES-CONCOURS (GN2) — pose/modifie les coefficients d'épreuve d'une session.
+
+    Responsable et au-dessus (RESP_UP ; l'Administratif ne définit pas la politique de notation —
+    arbitrage 3). Les 3 épreuves, strictement positives. VERROUILLÉ dès la 1ʳᵉ note saisie.
     """
-    if isinstance(notes, str):
-        try:
-            notes = json.loads(notes)
-        except (ValueError, TypeError):
-            return None, "Format de notes invalide (JSON attendu)."
-    if not isinstance(notes, dict) or not notes:
-        return None, "Les notes doivent être un objet non vide {épreuve: note}."
-    parsed = {}
-    for label, value in notes.items():
-        if not isinstance(label, str) or not label.strip():
-            return None, "Libellé d'épreuve invalide."
-        try:
-            parsed[label.strip()] = float(value)
-        except (ValueError, TypeError):
-            return None, f"Note non numérique pour '{label}'."
-    return parsed, None
+    frappe.only_for(RESP_UP)
+    if not session_id or not frappe.db.exists("Admission Session", session_id):
+        return _error("INVALID_SESSION", "Session inconnue.", 404)
+    parsed, err = exam_grading.validate_coefficients(coefficients)
+    if err:
+        return _error("COEF_INVALID", err, 400)
+    if coefficients_locked(session_id):
+        return _error("COEF_LOCKED", "Coefficients verrouillés : une note a déjà été saisie dans "
+                      "cette session. La pondération ne se change plus.", 409)
+    session = frappe.get_doc("Admission Session", session_id)
+    session.exam_coefficients = json.dumps(parsed, ensure_ascii=False)
+    session.save(ignore_permissions=True)
+    log_event("set_exam_coefficients", "success", dossier_id=session_id)
+    return _ok({"session_id": session_id, "coefficients": parsed})
 
 
 @frappe.whitelist()
 def saisir_note_concours(dossier_id=None, notes=None):
-    """C1-CONCOURS — saisie des notes de concours Prépa, NON validées (DEC-197).
+    """C1-CONCOURS / NOTES-CONCOURS — saisie des notes de concours Prépa, NON validées.
 
-    Administratif, dossiers **Prépa** uniquement (is_prepa_session), en étude (ETU). `notes` = objet
-    {épreuve: note numérique} (garde de format). Re-saisie → réinitialise la validation (intégrité).
+    Administratif et au-dessus, dossiers **Prépa** (is_prepa_session), en étude (ETU). `notes` = les
+    3 épreuves canoniques dans [0,20] (GN1/GN3) OU l'absence {"__absent__": true} (GN8). Les
+    coefficients de la session sont requis au préalable (arbitrage 1). Re-saisie → réinitialise la
+    validation (intégrité). Plage bloquante y compris par appel direct (2ᵉ couche = validate() dossier).
     """
     frappe.only_for(ADMIN_UP)
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
@@ -1298,16 +1325,245 @@ def saisir_note_concours(dossier_id=None, notes=None):
         return _error("NOT_PREPA", "Saisie de notes réservée aux dossiers Prépa (concours).", 409)
     if applicant.status != "ETU":
         return _error("INVALID_STATE", "Saisie de notes possible seulement en étude (ETU).", 409)
-    parsed, fmt_err = _validate_notes_format(notes)
-    if fmt_err:
-        return _error("NOTES_FORMAT_INVALID", fmt_err, 400)
+    if not exam_grading.coefficients_complete(_session_coefficients(applicant.session)):
+        return _error("COEF_REQUIRED", "Posez d'abord les coefficients des épreuves de la session "
+                      "avant de saisir les notes.", 409)
+    parsed, err = exam_grading.validate_entry(notes)
+    if err:
+        return _error("NOTES_INVALID", err, 400)
     applicant.notes_concours = json.dumps(parsed, ensure_ascii=False)
     applicant.notes_validated = 0          # re-saisie → re-validation requise (intégrité)
     applicant.notes_validated_by = None
     applicant.notes_validated_date = None
     applicant.save(ignore_permissions=True)
     log_event("saisir_note_concours", "success", dossier_id=applicant.name)
-    return _ok({"dossier_id": applicant.name, "notes": parsed})
+    return _ok({"dossier_id": applicant.name, "notes": parsed, "absent": exam_grading.is_absent(parsed)})
+
+
+# ── NOTES-CONCOURS : saisie EN MASSE (liste écran + export/import) ─────────────
+
+_CSV_HEADER = ["dossier_id", "numero_convocation", "nom"] + exam_grading.SUBJECT_KEYS + ["absent"]
+
+
+def _notes_roster_index(session_id):
+    """Convoqués d'une session (MÊME source et MÊME ordre alpha que la feuille d'émargement),
+    indexés par identifiant STABLE. Retourne (liste_ordonnée, by_id, by_num)."""
+    from admission.api.exam_documents import _convoques_of_session
+    _, convoques = _convoques_of_session(session_id)
+    by_id, by_num = {}, {}
+    for c in convoques:
+        by_id[c["dossier_id"]] = c
+        num = str(c.get("numero") or "").strip()
+        if num and num != "—":
+            by_num[num] = c
+    return convoques, by_id, by_num
+
+
+def _truthy(v):
+    return str(v).strip().lower() in ("1", "true", "vrai", "oui", "x", "abs", "absent") if v is not None else False
+
+
+def _row_to_entry(row):
+    """Saisie d'une ligne (écran ou import). ABS → absence ; sinon les 3 notes. Retourne
+    (None, None) = ligne VIDE (ignorée) · (None, msg) = problème · (dict, None) = valide. La
+    validation plage/complétude délègue à exam_grading (SOURCE UNIQUE)."""
+    if _truthy(row.get("absent") or row.get("abs")):
+        return exam_grading.make_absent(), None
+    entry = {}
+    for k in exam_grading.SUBJECT_KEYS:
+        v = row.get(k)
+        if v is not None and str(v).strip() != "":
+            entry[k] = v
+    if not entry:
+        return None, None   # aucune note ni ABS → non renseignée, ignorée (pas un problème)
+    return exam_grading.validate_entry(entry)
+
+
+def _match_row(row, by_id, by_num):
+    """Rapproche une ligne par IDENTIFIANT STABLE (dossier_id puis n° convocation), JAMAIS par nom —
+    un homonyme recevrait la note d'un autre (mandat §4/§6). (convoque, None) | (None, raison)."""
+    did = str(row.get("dossier_id") or "").strip()
+    if did:
+        return (by_id[did], None) if did in by_id else (None, f"Dossier « {did} » hors des convoqués de la session.")
+    num = str(row.get("numero_convocation") or row.get("numero") or "").strip()
+    if num:
+        return (by_num[num], None) if num in by_num else (None, f"N° de convocation « {num} » introuvable.")
+    return None, "Ligne sans identifiant (dossier_id ou n° de convocation)."
+
+
+def _row_ref(row):
+    return (str(row.get("dossier_id") or "").strip()
+            or str(row.get("numero_convocation") or row.get("numero") or "").strip() or "?")
+
+
+def _write_one_note(dossier_id, parsed):
+    """Écrit les notes d'UN candidat (atomique : les 3 ou aucune). Mêmes gardes que la saisie unitaire
+    (Prépa, ETU, périmètre). `parsed` déjà validé. Retourne True | message d'erreur."""
+    if not frappe.db.exists("Admission Applicant", dossier_id):
+        return "Dossier inconnu."
+    applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    if _guard_write_scope(applicant):
+        return "Hors de votre périmètre de consultation."
+    if not _is_prepa(applicant):
+        return "Dossier non Prépa."
+    if applicant.status != "ETU":
+        return f"Dossier non en étude (statut {applicant.status})."
+    try:
+        applicant.notes_concours = json.dumps(parsed, ensure_ascii=False)
+        applicant.notes_validated = 0
+        applicant.notes_validated_by = None
+        applicant.notes_validated_date = None
+        applicant.save(ignore_permissions=True)
+    except Exception:
+        return "Échec d'enregistrement (dossier rejeté par le contrôle)."
+    return True
+
+
+def _process_notes_rows(session_id, rows, write):
+    """Cœur commun APERÇU / ÉCRITURE. Rapproche + valide chaque ligne → 2 paniers. Écrit (PAR
+    candidat, atomique) si write=True. Un candidat non rapproché, incomplet, hors plage ou en double
+    → PROBLÈME, jamais deviné, jamais écrit. Le compte À ÉCRIRE est renvoyé d'abord (vigilance 2)."""
+    _, by_id, by_num = _notes_roster_index(session_id)
+    a_ecrire, problemes, seen = [], [], set()
+    for i, row in enumerate(rows or []):
+        row = row or {}
+        conv, m_err = _match_row(row, by_id, by_num)
+        if m_err:
+            problemes.append({"ligne": i + 1, "reference": _row_ref(row), "probleme": m_err})
+            continue
+        entry, e_err = _row_to_entry(row)
+        if e_err:
+            problemes.append({"ligne": i + 1, "dossier_id": conv["dossier_id"], "nom": conv["nom"], "probleme": e_err})
+            continue
+        if entry is None:
+            continue  # ligne non renseignée : ignorée
+        if conv["dossier_id"] in seen:
+            problemes.append({"ligne": i + 1, "dossier_id": conv["dossier_id"], "nom": conv["nom"],
+                              "probleme": "Candidat présent en double dans le fichier."})
+            continue
+        seen.add(conv["dossier_id"])
+        a_ecrire.append({"dossier_id": conv["dossier_id"], "nom": conv["nom"], "entry": entry,
+                         "absent": exam_grading.is_absent(entry)})
+    ecrits = 0
+    if write:
+        for item in a_ecrire:
+            r = _write_one_note(item["dossier_id"], item["entry"])
+            if r is True:
+                ecrits += 1
+            else:
+                problemes.append({"dossier_id": item["dossier_id"], "nom": item["nom"], "probleme": r})
+    apercu = [{"dossier_id": x["dossier_id"], "nom": x["nom"], "absent": x["absent"],
+               "notes": (None if x["absent"] else x["entry"])} for x in a_ecrire]
+    return {"compte_a_ecrire": len(a_ecrire), "a_ecrire": apercu, "ecrits": ecrits, "problemes": problemes}
+
+
+def _parse_csv(csv_text):
+    """CSV texte → lignes-dict. Tolère en-têtes techniques (maths…) OU libellés (Mathématiques…)."""
+    reader = csv.DictReader(io.StringIO(csv_text or ""))
+    label_to_key = {v.lower(): k for k, v in exam_grading.SUBJECT_LABELS.items()}
+    rows = []
+    for raw in reader:
+        row = {}
+        for header, value in raw.items():
+            if header is None:
+                continue
+            h = header.strip()
+            row[h if h in _CSV_HEADER else label_to_key.get(h.lower(), h)] = value
+        rows.append(row)
+    return rows
+
+
+def _coerce_rows(rows, csv_text):
+    """Normalise l'entrée : `rows` (liste de dicts, ou JSON string) OU `csv_text`."""
+    if rows:
+        if isinstance(rows, str):
+            try:
+                rows = json.loads(rows)
+            except (ValueError, TypeError):
+                return []
+        return rows if isinstance(rows, list) else []
+    return _parse_csv(csv_text) if csv_text else []
+
+
+@frappe.whitelist(methods=["GET"])
+def list_notes_roster(session_id=None):
+    """NOTES-CONCOURS (GN5) — convoqués d'une session pour la saisie à l'écran, MÊME ordre alpha que
+    la feuille d'émargement, avec l'état de notes de chacun + coefficients + définition des épreuves.
+    Lecture (ADMIN_UP)."""
+    frappe.only_for(ADMIN_UP)
+    if not session_id or not frappe.db.exists("Admission Session", session_id):
+        return _error("INVALID_SESSION", "Session inconnue.", 404)
+    coefs = exam_grading.coefficients_of(frappe.get_doc("Admission Session", session_id))
+    convoques, _, _ = _notes_roster_index(session_id)
+    candidats = []
+    for c in convoques:
+        row = frappe.db.get_value("Admission Applicant", c["dossier_id"],
+                                  ["notes_concours", "notes_validated"], as_dict=True) or {}
+        candidats.append({"dossier_id": c["dossier_id"], "numero_convocation": c["numero"],
+                          "nom": c["nom"], "validees": bool(row.get("notes_validated")),
+                          **exam_grading.summary(row.get("notes_concours"), coefs)})
+    return _ok({"session_id": session_id, "subjects": exam_grading.subjects_payload(),
+                "coefficients": coefs, "coefficients_verrouilles": coefficients_locked(session_id),
+                "candidats": candidats})
+
+
+@frappe.whitelist(methods=["GET"])
+def export_notes_template(session_id=None):
+    """NOTES-CONCOURS (GN7) — CSV des inscrits prêt à remplir, MÊME ordre que la feuille d'émargement,
+    colonnes de notes vides. Lecture (ADMIN_UP)."""
+    frappe.only_for(ADMIN_UP)
+    if not session_id or not frappe.db.exists("Admission Session", session_id):
+        return _error("INVALID_SESSION", "Session inconnue.", 404)
+    convoques, _, _ = _notes_roster_index(session_id)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(_CSV_HEADER)
+    for c in convoques:
+        w.writerow([c["dossier_id"], c["numero"], c["nom"]] + ["" for _ in exam_grading.SUBJECT_KEYS] + [""])
+    return _ok({"session_id": session_id, "filename": f"notes_{session_id}.csv", "csv": buf.getvalue()})
+
+
+@frappe.whitelist()
+def import_notes_preview(session_id=None, csv_text=None, rows=None):
+    """NOTES-CONCOURS (GN6) — APERÇU d'un import : ce qui SERA écrit (compte d'abord — vigilance 2)
+    et ce qui pose problème (non rapproché / incomplet / hors plage). N'ÉCRIT RIEN. ADMIN_UP."""
+    frappe.only_for(ADMIN_UP)
+    if not session_id or not frappe.db.exists("Admission Session", session_id):
+        return _error("INVALID_SESSION", "Session inconnue.", 404)
+    if not exam_grading.coefficients_complete(_session_coefficients(session_id)):
+        return _error("COEF_REQUIRED", "Posez d'abord les coefficients des épreuves de la session.", 409)
+    return _ok(_process_notes_rows(session_id, _coerce_rows(rows, csv_text), write=False))
+
+
+@frappe.whitelist()
+def saisir_notes_masse(session_id=None, rows=None, csv_text=None):
+    """NOTES-CONCOURS (GN5/GN6) — écriture EN MASSE (liste écran OU import confirmé). Écriture
+    PARTIELLE, ATOMIQUE PAR CANDIDAT : les valides passent, les problèmes sont rapportés et NON
+    écrits (arbitrage 2). ADMIN_UP. Coefficients requis (arbitrage 1)."""
+    frappe.only_for(ADMIN_UP)
+    if not session_id or not frappe.db.exists("Admission Session", session_id):
+        return _error("INVALID_SESSION", "Session inconnue.", 404)
+    if not exam_grading.coefficients_complete(_session_coefficients(session_id)):
+        return _error("COEF_REQUIRED", "Posez d'abord les coefficients des épreuves de la session.", 409)
+    res = _process_notes_rows(session_id, _coerce_rows(rows, csv_text), write=True)
+    log_event("saisir_notes_masse", "success", dossier_id=session_id)
+    return _ok(res)
+
+
+@frappe.whitelist(methods=["GET"])
+def list_prepa_sessions():
+    """NOTES-CONCOURS — sessions Prépa (à concours) pour le sélecteur de saisie des notes. ADMIN_UP."""
+    frappe.only_for(ADMIN_UP)
+    out = []
+    for s in frappe.get_all("Admission Session", filters={"is_prepa_session": 1},
+                            fields=["name", "label", "programme_label", "exam_date"],
+                            order_by="exam_date desc"):
+        coefs = exam_grading.coefficients_of(frappe.get_doc("Admission Session", s.name))
+        out.append({"session_id": s.name, "label": s.label, "programme_label": s.programme_label,
+                    "exam_date": str(s.exam_date or ""),
+                    "coefficients_set": exam_grading.coefficients_complete(coefs),
+                    "verrouilles": coefficients_locked(s.name)})
+    return _ok({"sessions": out})
 
 
 @frappe.whitelist()
@@ -1338,6 +1594,70 @@ def valider_notes_concours(dossier_id=None):
     applicant.save(ignore_permissions=True)
     log_event("valider_notes_concours", "success", dossier_id=applicant.name)
     return _ok({"dossier_id": applicant.name, "notes_validated": 1})
+
+
+def _pending_notes_of_session(session_name):
+    """Dossiers d'une session dont les notes sont SAISIES mais NON VALIDÉES (candidats à la validation
+    par lot). Requirement 3 : jamais un dossier sans notes, jamais déjà validé. Prépa, en étude (ETU).
+    Tri alphabétique (cohérence feuille d'émargement / tableau de revue)."""
+    rows = frappe.get_all("Admission Applicant",
+                          filters={"session": session_name, "status": "ETU", "notes_validated": 0},
+                          fields=["name", "applicant_name", "notes_concours"], limit_page_length=0)
+    pending = [a for a in rows if (a.notes_concours or "").strip() not in ("", "{}")]
+    pending.sort(key=lambda a: (a.applicant_name or a.name).lower())
+    return pending
+
+
+@frappe.whitelist(methods=["GET"])
+def valider_notes_masse_preview(session_id=None):
+    """NOTES-CONCOURS — APERÇU de la validation par lot : combien de dossiers seront validés, et
+    combien portent un signal éliminatoire (requirement 2 : le geste est explicite, le Responsable
+    SAIT ce qu'il approuve AVANT de confirmer). Responsable EXACT — Direction exclue (requirement 1).
+    N'ÉCRIT RIEN."""
+    frappe.only_for(RESP_EXACT)
+    if not session_id or not frappe.db.exists("Admission Session", session_id):
+        return _error("INVALID_SESSION", "Session inconnue.", 404)
+    coefs = _session_coefficients(session_id)
+    dossiers, avec_signal = [], 0
+    for a in _pending_notes_of_session(session_id):
+        s = exam_grading.summary(a.notes_concours, coefs)
+        if s["eliminatoire"]:
+            avec_signal += 1
+        dossiers.append({"dossier_id": a.name, "nom": a.applicant_name or a.name,
+                         "moyenne": s["moyenne"], "absent": s["absent"], "eliminatoire": s["eliminatoire"]})
+    return _ok({"session_id": session_id, "a_valider": len(dossiers), "avec_signal": avec_signal,
+                "dossiers": dossiers})
+
+
+@frappe.whitelist()
+def valider_notes_masse(session_id=None):
+    """NOTES-CONCOURS — validation EN LOT des notes d'une session, après revue d'ensemble du tableau
+    par le Responsable. MÊME acte que la validation unitaire, exercé en lot.
+
+    Requirement 1 : Responsable EXACT (Direction exclue) — pas de porte dérobée pour un autre rôle.
+    Requirement 3 : ne valide QUE les dossiers SAISIS-NON-VALIDÉS (jamais sans notes, jamais déjà
+    validé). Un dossier à signal ÉLIMINATOIRE est COMPTÉ, ANNONCÉ et VALIDÉ comme les autres — jamais
+    écarté ni traité différemment : valider des notes CONFIRME les notes, ce n'est PAS décider
+    l'admission (la décision reste un acte séparé, avec ses propres gardes)."""
+    frappe.only_for(RESP_EXACT)
+    if not session_id or not frappe.db.exists("Admission Session", session_id):
+        return _error("INVALID_SESSION", "Session inconnue.", 404)
+    coefs = _session_coefficients(session_id)
+    valides, avec_signal, user, now = 0, 0, frappe.session.user, now_datetime()
+    for a in _pending_notes_of_session(session_id):
+        doc = frappe.get_doc("Admission Applicant", a.name)
+        # re-garde (course) — requirement 3 : jamais sans notes, jamais déjà validé, ETU seulement
+        if doc.status != "ETU" or doc.notes_validated or (doc.notes_concours or "").strip() in ("", "{}"):
+            continue
+        if exam_grading.summary(doc.notes_concours, coefs)["eliminatoire"]:
+            avec_signal += 1
+        doc.notes_validated = 1
+        doc.notes_validated_by = user
+        doc.notes_validated_date = now
+        doc.save(ignore_permissions=True)
+        valides += 1
+    log_event("valider_notes_masse", "success", dossier_id=session_id)
+    return _ok({"session_id": session_id, "valides": valides, "avec_signal": avec_signal})
 
 
 @frappe.whitelist()

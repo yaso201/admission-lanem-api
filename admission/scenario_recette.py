@@ -141,9 +141,14 @@ def _instruit(dossier, persona, notes=True):
     r = staff.start_review(dossier_id=dossier)
     step(f"Estelle met le dossier de {persona} en étude", r.get("ok"), "SOU→ETU")
     if notes:
+        session = frappe.db.get_value("Admission Applicant", dossier, "session")
+        _as_staff("Karim (Responsable)")
+        staff.set_exam_coefficients(session_id=session,   # 1ʳᵉ session : pose ; suivantes : déjà verrouillé (toléré)
+                                    coefficients={"maths": 3, "physique": 2, "culture": 1})
+        _as_staff("Estelle (Administratif)")
         r = staff.saisir_note_concours(dossier_id=dossier,
-                                       notes={"Mathématiques": 14, "Culture générale": 12})
-        step(f"Estelle saisit les notes de concours de {persona} (Prépa)", r.get("ok"), "non validées")
+                                       notes={"maths": 14, "physique": 13, "culture": 12})
+        step(f"Estelle saisit les 3 notes de concours de {persona} (Prépa, /20)", r.get("ok"), "non validées")
         _as_staff("Karim (Responsable)")
         r = staff.valider_notes_concours(dossier_id=dossier)
         step(f"Karim valide les notes de {persona} (séparation saisie≠validation)", r.get("ok"), "notes_validated=1")

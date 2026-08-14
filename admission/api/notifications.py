@@ -169,8 +169,16 @@ def send_decision_notification(applicant, decision_label, motif=None, bourses=No
 
 def send_prepa_decision_notification(applicant, decision_label):
     """Notifie le candidat Prépa de la décision AVEC ses notes de concours (DEC-197).
-    NON-BLOQUANT. Signature INCHANGÉE."""
-    notes = [(str(k), str(v)) for k, v in _parse_notes(getattr(applicant, "notes_concours", None)).items()]
+    NON-BLOQUANT. Signature INCHANGÉE. Rend les LIBELLÉS d'épreuves (source unique exam_grading) et
+    « Absent(e) » pour une absence — jamais la sentinelle brute ni un 0 trompeur."""
+    from admission.api.exam_grading import summary, SUBJECT_LABELS
+    s = summary(getattr(applicant, "notes_concours", None), {})
+    if s["absent"]:
+        notes = [("Épreuve", "Absent(e)")]
+    elif s["valeurs"]:
+        notes = [(SUBJECT_LABELS.get(k, k), str(v)) for k, v in s["valeurs"].items()]
+    else:
+        notes = None
     kw, subject = _decision_kwargs(applicant, decision_label, notes=notes or None)
     _send_candidate_mail(applicant, subject, render_candidate_email(**kw), "prepa_decision_notification")
 

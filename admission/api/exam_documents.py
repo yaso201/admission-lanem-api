@@ -43,6 +43,7 @@ def _convoques_of_session(session_name):
             continue
         verifie = not pieces_requises_non_verifiees(frappe.get_doc("Admission Applicant", a.name))
         convoques.append({
+            "dossier_id": a.name,   # identifiant STABLE (réutilisé par la saisie de notes en masse)
             "numero": a.convocation_number or "—",
             "nom": (a.applicant_name or a.name),
             "parcours": a.programme_label or "",

@@ -29,6 +29,10 @@ class AdmissionSession(Document):
 		from admission.api.calendar_rules import enforce_coherence
 		enforce_coherence({f: self.get(f) for f in (
 			"opens_on", "closes_on", "exam_date", "exam_call_time", "exam_start_time", "bac_results_date")})
+		# NOTES-CONCOURS (GN2) : les coefficients d'épreuve sont VERROUILLÉS dès la 1ʳᵉ note saisie
+		# dans la session. 2ᵉ couche (défense en profondeur) — attrape aussi une édition Desk directe ;
+		# la 1ʳᵉ couche est l'endpoint set_exam_coefficients. Hors calendar_rules (verrou propre).
+		self._enforce_coefficient_lock()
 
 	def _sync_lifecycle_mirror(self):
 		if not self.lifecycle_state:
@@ -43,4 +47,18 @@ class AdmissionSession(Document):
 			return  # création : rien à contraindre (la duplication crée des brouillons)
 		from admission.api.calendar_rules import enforce_document_change
 		enforce_document_change(before, self)
+
+	def _enforce_coefficient_lock(self):
+		before = self.get_doc_before_save()
+		if not before:
+			return  # création : coefficients libres
+		if (before.get("exam_coefficients") or "") == (self.get("exam_coefficients") or ""):
+			return  # coefficients inchangés
+		from admission.api.staff import coefficients_locked
+		if coefficients_locked(self.name):
+			frappe.throw(
+				"Coefficients verrouillés : une note de concours a déjà été saisie dans cette "
+				"session. La pondération ne se change pas une fois la correction commencée.",
+				title="Coefficients verrouillés",
+			)
 
