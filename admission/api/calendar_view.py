@@ -23,7 +23,7 @@ READ_UP = roles_at_or_above("Admission Administratif")   # lecture : Administrat
 
 _LIST_FIELDS = [
     "name", "session_code", "label", "programme_code", "programme_label", "academic_year",
-    "lifecycle_state", "is_open", "is_prepa_session", "application_fee_xof",
+    "lifecycle_state", "is_open", "is_prepa_session", "application_fee_xof", "capacity",
     "opens_on", "closes_on", "bac_results_date",
     "exam_date", "exam_call_time", "exam_start_time", "exam_room",
 ]

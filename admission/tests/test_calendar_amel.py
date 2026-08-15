@@ -147,3 +147,56 @@ class TestCalAmel(FrappeTestCase):
         self.assertEqual([r2["cloture"], r2["epreuve"]], [0, 0])
         self.assertEqual(len(frappe.get_all("Admission Session Reminder",
                                             filters={"session": ["like", _MARK + "%"]})), n_before)
+
+
+class TestCapacityDecR(FrappeTestCase):
+    """CAL-AMEL-R (DEC-R, ACTIVÉE 15/08) : capacity = structure — éditable Draft (tracé),
+    figée dès publication (2 couches), affichage management seul, candidat INCHANGÉ."""
+
+    def setUp(self):
+        _purge()
+
+    def tearDown(self):
+        frappe.db.rollback()
+        _purge()
+
+    def test_capacity_draft_editable_et_tracee(self):
+        s = _mk("CAP", state="Draft")
+        calendar._update_draft(s.name, {"capacity": 150})
+        self.assertEqual(frappe.db.get_value("Admission Session", s.name, "capacity"), 150)
+        rows = _log(s.name, action_type="modification")
+        self.assertEqual([(rows[0].champ, rows[0].new_value)], [("capacity", "150")])
+
+    def test_capacity_figee_des_publication(self):
+        s = _mk("CAPO", state="Draft")
+        calendar._update_draft(s.name, {"capacity": 100})
+        calendar._open_session(s.name)
+        # couche 1 : update_draft refuse hors brouillon (déjà) ; proposition refusée (structure)
+        with self.assertRaises(frappe.ValidationError):
+            calendar._propose_changes(s.name, {"capacity": 200})
+        # couche 2 : édition directe → validate() refuse (STRUCTURE_FIELDS)
+        doc = frappe.get_doc("Admission Session", s.name)
+        doc.capacity = 200
+        with self.assertRaises(frappe.ValidationError):
+            doc.save(ignore_permissions=True)
+        # policies servies : Draft éditable / Open verrouillée
+        from admission.api.calendar_rules import field_policies
+        self.assertFalse(field_policies({"lifecycle_state": "Open"})["capacity"]["editable"])
+        self.assertTrue(field_policies({"lifecycle_state": "Draft"})["capacity"]["editable"])
+
+    def test_capacity_servie_management_et_dupliquee(self):
+        s = _mk("CAPV", state="Draft")
+        calendar._update_draft(s.name, {"capacity": 80})
+        row = calendar_view.session_detail(session=s.name)["data"]
+        self.assertEqual(row["capacity"], 80)
+        created = calendar._create_duplicates([s.name], 364, None)["created"]
+        self.assertEqual(frappe.db.get_value("Admission Session", created[0], "capacity"), 80)
+
+    def test_capacity_invisible_candidat(self):
+        from admission.api.public import list_sessions
+        s = _mk("CAPC", state="Open", closes=add_days(nowdate(), 30))
+        frappe.db.set_value("Admission Session", s.name, "capacity", 50, update_modified=False)
+        frappe.db.commit()
+        rows = [r for r in list_sessions(programme="ZAMELP")["data"]["sessions"] if r["id"] == s.name]
+        self.assertEqual(len(rows), 1)
+        self.assertNotIn("capacity", rows[0])   # catalogue candidat : AUCUN changement de contrat

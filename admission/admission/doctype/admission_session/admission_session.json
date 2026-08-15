@@ -18,6 +18,7 @@
   "bac_results_date",
   "fee_section",
   "application_fee_xof",
+  "capacity",
   "is_open",
   "lifecycle_state",
   "is_prepa_session",
@@ -110,6 +111,13 @@
    "label": "Application Fee XOF",
    "non_negative": 1,
    "reqd": 1
+  },
+  {
+   "fieldname": "capacity",
+   "fieldtype": "Int",
+   "label": "Places (capacité)",
+   "non_negative": 1,
+   "description": "CAL-AMEL-R (DEC-R) — OPTIONNEL : vide = illimité. Éditable en brouillon, FIGÉ dès publication (structure, calendar_rules). Affichage management seul (« X dossiers / N places ») — AUCUN blocage, invisible du candidat."
   },
   {
    "default": "0",

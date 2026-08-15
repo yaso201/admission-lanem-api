@@ -21,9 +21,10 @@ import frappe
 from frappe.utils import getdate
 
 # Champs figés dès la publication (« publié engage ») : structure + ouverture.
+# CAL-AMEL-R (DEC-R) : capacity = structure (éditable Draft, figée Open/Closed).
 STRUCTURE_FIELDS = {
     "programme_code", "programme_label", "academic_year",
-    "application_fee_xof", "label", "is_prepa_session", "opens_on",
+    "application_fee_xof", "label", "is_prepa_session", "opens_on", "capacity",
 }
 # Champs d'épreuve : toute modification réémet les convocations (elle affecte des convoqués).
 EXAM_SCHEDULE_FIELDS = {"exam_date", "exam_call_time", "exam_start_time", "exam_room"}
@@ -206,6 +207,7 @@ _POLICY_FIELDS = [
     ("exam_start_time", "Début des épreuves", "08:00:00", "09:00:00"),
     ("exam_room", "Salle", "Salle A", "Salle B"),
     ("bac_results_date", "Résultats du bac", "2000-01-01", "2000-12-31"),
+    ("capacity", "Places (capacité)", "100", "150"),   # DEC-R : structure → figée dès publication
 ]
 
 

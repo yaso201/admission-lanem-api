@@ -125,6 +125,7 @@ def _compute_duplicates(session_names, shift_days, academic_year):
             "programme_label": src.programme_label,
             "academic_year": target_ay,
             "application_fee_xof": src.application_fee_xof,
+            "capacity": src.capacity,   # DEC-R : la capacité est de la structure — copiée
             "is_prepa_session": src.is_prepa_session,
             "opens_on": _shift_date(src.opens_on, shift),
             "closes_on": _shift_date(src.closes_on, shift),
@@ -152,6 +153,7 @@ def _create_duplicates(session_names, shift_days, academic_year, code_overrides=
             "doctype": "Admission Session", "session_code": code, "label": p["label"],
             "programme_code": p["programme_code"], "programme_label": p["programme_label"],
             "academic_year": p["academic_year"], "application_fee_xof": p["application_fee_xof"],
+            "capacity": p["capacity"],
             "is_prepa_session": p["is_prepa_session"], "opens_on": p["opens_on"],
             "closes_on": p["closes_on"], "bac_results_date": p["bac_results_date"],
             "exam_date": p["exam_date"], "exam_call_time": p["exam_call_time"],
@@ -233,6 +235,7 @@ _DRAFT_EDITABLE = {
     "label", "programme_code", "programme_label", "academic_year", "application_fee_xof",
     "is_prepa_session", "opens_on", "closes_on", "bac_results_date",
     "exam_date", "exam_call_time", "exam_start_time", "exam_room",
+    "capacity",   # DEC-R : éditable en brouillon seulement (structure dès publication)
 }
 
 
@@ -256,7 +259,12 @@ def _update_draft(name, values):
         frappe.throw("La modification libre est réservée aux brouillons.", title="Modification refusée")
     for k, v in (values or {}).items():
         if k in _DRAFT_EDITABLE:
+            old = doc.get(k)
             doc.set(k, v)
+            # CAL-AMEL-R (DEC-P étendu) : l'édition de brouillon est TRACÉE (acte 'modification')
+            # — exigé pour capacity, appliqué à tout champ (« champ comme un autre »).
+            if str(old or "") != str(v or ""):
+                log_session_change(name, k, old, v, "modification")
     doc.save(ignore_permissions=True)
     frappe.db.commit()
     return {"session": name, "updated": [k for k in (values or {}) if k in _DRAFT_EDITABLE]}
