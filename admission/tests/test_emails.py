@@ -335,3 +335,22 @@ class TestReceiptEmailBody(TestCase):
         self.assertIn("Virement bancaire", html)
         self.assertIn("Ama &lt;script&gt;", html)   # fix audit : nom désormais ÉCHAPPÉ
         self.assertNotIn("<script>", html)
+
+
+class TestIntroStrongWhitelist(TestCase):
+    """Régression convocation (16/08) : l'intro d'auteur rend <strong> (gras voulu) mais
+    neutralise toute autre balise (anti-injection). Le défaut affichait « <strong>…</strong> »
+    en toutes lettres dans le mail de convocation (échappement en bloc de l'intro)."""
+
+    def test_strong_rendu_reste_neutralise(self):
+        from admission.api.email_template import render_candidate_email
+        html = render_candidate_email(
+            nom="Essogbé <b>André</b>", dossier="CAN-1", filiere="Prépa", status="convocation",
+            intro="<strong>La date de votre épreuve a été modifiée.</strong> Reste valable "
+                  "<script>alert(1)</script>.",
+            subject="s", preheader="p")
+        self.assertIn("<strong>La date de votre épreuve a été modifiée.</strong>", html)  # gras rendu
+        self.assertNotIn("&lt;strong&gt;", html)          # plus de balise littérale
+        self.assertNotIn("<script>", html)                # injection neutralisée
+        self.assertIn("&lt;script&gt;", html)
+        self.assertNotIn("<b>André</b>", html)            # invariant : le NOM reste échappé

@@ -453,7 +453,7 @@ def list_dossiers(q=None, programme=None, session=None, statuts=None, limit=200)
         filters=filters,
         fields=[
             "name", "applicant_name", "programme_code", "programme_label", "level_code",
-            "session", "status", "conditionnel", "bac_verified", "resoumis",
+            "session", "person_id", "status", "conditionnel", "bac_verified", "resoumis",
             "requested_scholarships", "proposed_scholarships", "validated_scholarships",
             "notes_concours", "notes_validated", "rang_liste_attente", "creation", "modified",
         ],
@@ -480,6 +480,31 @@ def list_dossiers(q=None, programme=None, session=None, statuts=None, limit=200)
                                  fields=["parent"]):
             missing_pieces[pc.parent] = missing_pieces.get(pc.parent, 0) + 1
 
+    # DOUBLONS-VUE (DEC-S) — seuls les AUTRES dossiers visibles avec le même person_id
+    # comptent. get_list conserve les DocPerms et le cloisonnement staff ; aucun compteur
+    # n'indique l'existence d'un dossier que l'agent n'a pas le droit de consulter.
+    visible_dossiers_by_person = {}
+    person_ids = sorted({
+        row.person_id.strip() for row in rows
+        if isinstance(getattr(row, "person_id", None), str) and row.person_id.strip()
+    })
+    if person_ids:
+        for linked in frappe.get_list(
+            "Admission Applicant",
+            filters={"anonymized": ("!=", 1), "person_id": ["in", person_ids]},
+            fields=["name", "person_id"],
+            limit_page_length=5000,
+        ):
+            person_id = linked.person_id.strip() if isinstance(linked.person_id, str) else ""
+            if person_id:
+                visible_dossiers_by_person.setdefault(person_id, set()).add(linked.name)
+
+    def _related_count(row):
+        person_id = getattr(row, "person_id", None)
+        if not isinstance(person_id, str) or not person_id.strip():
+            return 0
+        return len(visible_dossiers_by_person.get(person_id.strip(), set()) - {row.name})
+
     is_prepa_by_session = {}
     for s in {r.session for r in rows if r.session}:
         is_prepa_by_session[s] = bool(frappe.db.get_value("Admission Session", s, "is_prepa_session"))
@@ -500,11 +525,23 @@ def list_dossiers(q=None, programme=None, session=None, statuts=None, limit=200)
         "rang": r.rang_liste_attente,
         "paiement_a_confirmer": r.name in pending_offline,
         "pieces_manquantes": missing_pieces.get(r.name, 0),
+        "related_dossier_count": _related_count(r),
         "frais": fees_by_app.get(r.name, {}),
         "soumis_le": str(r.creation),
         "modifie_le": str(r.modified),
     } for r in rows]
     return _ok({"dossiers": dossiers, "total": len(dossiers), "limite": min(int(limit or 200), 500)})
+
+
+def _staff_convocation_available(applicant, session_doc):
+    """Prédicat serveur unique du bouton et du téléchargement de convocation staff."""
+    if not session_doc or not getattr(session_doc, "exam_date", None):
+        return False
+    from admission.api.sessions import _state
+    if _state(session_doc) != "Open":
+        return False
+    from admission.api.convocation import _frais1_confirmed_payment
+    return bool(_frais1_confirmed_payment(applicant))
 
 
 @frappe.whitelist(methods=["GET"])
@@ -522,6 +559,40 @@ def get_dossier(dossier_id=None):
     _viewer_roles = frappe.get_roles(frappe.session.user)   # FIX-PROGRESSION : disponibilité UX
 
     session_doc = frappe.get_doc("Admission Session", applicant.session) if applicant.session else None
+    person_id = applicant.person_id.strip() if isinstance(applicant.person_id, str) else ""
+    related_rows = []
+    if person_id:
+        # DEC-S — rapprochement strict person_id, hors dossier courant et permission-aware.
+        related_rows = frappe.get_list(
+            "Admission Applicant",
+            filters={
+                "anonymized": ("!=", 1),
+                "person_id": person_id,
+                "name": ["!=", applicant.name],
+            },
+            fields=["name", "programme_code", "programme_label", "session", "status", "creation"],
+            order_by="creation desc",
+            limit_page_length=5000,
+        )
+    related_session_ids = sorted({row.session for row in related_rows if row.session})
+    related_session_labels = {}
+    if related_session_ids:
+        related_session_labels = {
+            row.name: row.label for row in frappe.get_list(
+                "Admission Session",
+                filters={"name": ["in", related_session_ids]},
+                fields=["name", "label"],
+                limit_page_length=len(related_session_ids),
+            )
+        }
+    related_dossiers = [{
+        "dossier_id": row.name,
+        "programme": {"code": row.programme_code, "label": row.programme_label},
+        "session": {"id": row.session, "label": related_session_labels.get(row.session)},
+        "statut": row.status,
+        "soumis_le": str(row.creation),
+        "etat": "clos" if row.status in PAYMENT_FORBIDDEN_STATES else "actif",
+    } for row in related_rows]
     fees = frappe.get_all("Applicant Fee", filters={"applicant": dossier_id},
                           fields=["name", "fee_type", "amount_xof", "status"])
     payments = frappe.get_all("Applicant Fee Payment", filters={"applicant": dossier_id},
@@ -564,6 +635,7 @@ def get_dossier(dossier_id=None):
                     "label": session_doc.label if session_doc else None,
                     "academic_year": session_doc.academic_year if session_doc else None},
         "person_id": applicant.person_id,
+        "related_dossiers": related_dossiers,
         "bac_profile": applicant.bac_profile,
         "motif_incompletude": applicant.motif_incompletude,
         "motif_refus": applicant.motif_refus,
@@ -594,14 +666,10 @@ def get_dossier(dossier_id=None):
             ctx=action_context(applicant)),
         "can_control_pieces": can_control_pieces(applicant, _viewer_roles),
         "can_manage_payments": can_manage_payments(applicant, _viewer_roles),
-        # CONVOCATION-PREPA : édition au guichet disponible ssi session à date d'épreuve + paiement
-        # confirmé. `numero` posé à l'émission. Pilote le bouton « Convocation PDF ».
+        # CONVOCATION-PREPA : le serveur pilote le bouton. Règle exacte : session Open,
+        # date d'épreuve présente et frais de candidature confirmé.
         "convocation": {
-            "available": bool(
-                session_doc and getattr(session_doc, "exam_date", None)
-                and frappe.get_all("Applicant Fee Payment",
-                    filters={"applicant": applicant.name, "payment_status": ["in", ["Confirmed", "Paid"]]},
-                    limit=1)),
+            "available": _staff_convocation_available(applicant, session_doc),
             "numero": getattr(applicant, "convocation_number", None) or None,
         },
     })
@@ -637,19 +705,22 @@ def download_receipt(payment_id=None):
 @frappe.whitelist(methods=["GET"])
 def download_convocation(dossier_id=None):
     """CONVOCATION-PREPA — édition de la convocation par le personnel (indispensable au guichet).
-    Rôle staff + check_permission (miroir download_receipt). AUCUNE garde de session → fonctionne
-    au guichet du matin sur une session FERMÉE (GC5). Même PDF que le candidat (build_convocation_pdf)."""
+    Rôle staff + check_permission (miroir download_receipt). Même garde que `convocation.available` :
+    session Open avec date d'épreuve et frais de candidature confirmé. Même PDF que le candidat."""
     frappe.only_for(STAFF_ROLES)
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
     applicant = frappe.get_doc("Admission Applicant", dossier_id)
     applicant.check_permission("read")
     from admission.api.public import _session_doc
-    from admission.api.convocation import _frais1_confirmed_payment, build_convocation_pdf
+    from admission.api.convocation import build_convocation_pdf
+    from admission.api.sessions import _state
     session = _session_doc(applicant.session)
     if not session or not getattr(session, "exam_date", None):
         return _error("NO_CONVOCATION", "Cette session ne porte pas de date d'épreuve.", 404)
-    if not _frais1_confirmed_payment(applicant):
+    if _state(session) != "Open":
+        return _error("SESSION_CLOSED", "La convocation n'est pas disponible pour une session fermée.", 409)
+    if not _staff_convocation_available(applicant, session):
         return _error("NOT_CONFIRMED", "La convocation n'existe qu'après confirmation du paiement de candidature.", 409)
     pdf, numero = build_convocation_pdf(applicant, session)
     frappe.local.response.filename = f"convocation-{numero}.pdf"

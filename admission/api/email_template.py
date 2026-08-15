@@ -21,6 +21,15 @@ from frappe.utils import escape_html as _esc
 
 from admission.api.receipt import ECOLE
 
+
+def _intro(intro):
+    """Rendu de l'intro d'auteur : on échappe TOUT (anti-injection — invariant du gabarit) puis
+    on ré-autorise la SEULE balise <strong> voulue par les gabarits (mise en gras). Un <script>
+    ou toute autre balise injectée reste neutralisé(e) : défense en profondeur, pas de confiance
+    accordée aux appelants. Corrige l'affichage littéral « <strong>…</strong> » (convocations)."""
+    safe = _esc(intro or "")
+    return safe.replace("&lt;strong&gt;", "<strong>").replace("&lt;/strong&gt;", "</strong>")
+
 # ── Identité (SOURCE UNIQUE : receipt.ECOLE) ─────────────────────────────────
 SCHOOL = {
     "name": ECOLE["name"],
@@ -478,7 +487,7 @@ def render_candidate_email(
       </td></tr>
       <tr><td class="card sm-px" style="background:{PAPER};padding:28px 30px 4px;">
         <div class="t1" style="font-family:{FONT};font-size:15px;font-weight:600;color:{T1};">Bonjour {_esc(nom)},</div>
-        <div class="t2" style="font-family:{FONT};font-size:15px;line-height:1.6;color:{T2};margin-top:8px;">{_esc(intro)}</div>
+        <div class="t2" style="font-family:{FONT};font-size:15px;line-height:1.6;color:{T2};margin-top:8px;">{_intro(intro)}</div>
       </td></tr>
       <tr><td class="card" style="background:{PAPER};">
         <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
