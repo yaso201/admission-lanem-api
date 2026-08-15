@@ -1,0 +1,101 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-08-15 18:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "session",
+  "champ",
+  "old_value",
+  "new_value",
+  "action_type",
+  "author",
+  "at"
+ ],
+ "fields": [
+  {
+   "fieldname": "session",
+   "fieldtype": "Data",
+   "label": "Session",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "champ",
+   "fieldtype": "Data",
+   "label": "Champ",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "old_value",
+   "fieldtype": "Data",
+   "label": "Ancienne valeur"
+  },
+  {
+   "fieldname": "new_value",
+   "fieldtype": "Data",
+   "label": "Nouvelle valeur",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "action_type",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "options": "proposition\nvalidation\nrejet\nouverture\nduplication\nauto-fermeture",
+   "label": "Type d'acte",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "author",
+   "fieldtype": "Data",
+   "label": "Auteur",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "at",
+   "fieldtype": "Datetime",
+   "label": "Horodatage",
+   "in_list_view": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-15 18:00:00",
+ "modified_by": "Administrator",
+ "module": "Admission",
+ "name": "Admission Session Change Log",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Admission Administratif"
+  },
+  {
+   "read": 1,
+   "role": "Admission Responsable"
+  },
+  {
+   "read": 1,
+   "role": "Admission Direction"
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}

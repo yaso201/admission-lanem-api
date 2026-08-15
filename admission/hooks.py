@@ -170,6 +170,9 @@ scheduler_events = {
 		"admission.api.public.expire_stale_online_pending",
 		# SESSIONS-AUTO-FERMETURE : ferme les sessions échues (closes_on dépassé, Porto-Novo).
 		"admission.api.sessions.close_expired_sessions",
+		# CAL-AMEL (DEC-O) : rappels calendrier (clôture J-7/J-1, épreuve J-14/J-7 si salle/heures
+		# manquantes, pending > 7 j hebdo) — idempotents (Admission Session Reminder).
+		"admission.api.calendar_reminders.send_calendar_reminders",
 		# LOT M (M9) : relance SOP J+7 et préavis J-7 avant purge des brouillons.
 		"admission.api.notifications.remind_dormant_sop_dossiers",
 		"admission.api.retention.notify_expiring_drafts",

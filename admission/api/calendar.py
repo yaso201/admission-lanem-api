@@ -18,7 +18,7 @@ from frappe.utils import add_days, cint, getdate
 from admission.api.calendar_rules import is_machine_defaulted_time
 from admission.api.permissions import roles_at_or_above
 from admission.api.public import _ok, _error
-from admission.api.sessions import set_lifecycle, _state, session_display_status
+from admission.api.sessions import set_lifecycle, _state, session_display_status, log_session_change
 
 RESP_UP = roles_at_or_above("Admission Responsable")   # {Resp, Dir, SysMgr} — le Responsable saisit
 DIR_UP = roles_at_or_above("Admission Direction")       # {Dir, SysMgr} — la Direction valide
@@ -158,6 +158,7 @@ def _create_duplicates(session_names, shift_days, academic_year, code_overrides=
             "exam_start_time": p["exam_start_time"], "exam_room": p["exam_room"],
             "lifecycle_state": "Draft",   # systématiquement (§3)
         }).insert(ignore_permissions=True)
+        log_session_change(doc.name, "session", p["source"], doc.name, "duplication")   # DEC-P
         created.append(doc.name)
     frappe.db.commit()
     return {"created": created, "shift_days": plan["shift_days"]}
@@ -243,6 +244,7 @@ def _open_session(name):
         frappe.throw("Seule une session en brouillon peut être ouverte.", title="Ouverture refusée")
     doc.lifecycle_state = "Open"
     doc.save(ignore_permissions=True)
+    log_session_change(name, "lifecycle_state", "Draft", "Open", "ouverture")   # DEC-P
     frappe.db.commit()
     return {"session": name, "lifecycle_state": "Open"}
 
@@ -306,6 +308,9 @@ def _propose_changes(name, changes):
         frappe.throw(" ".join(coh), title="Dates incohérentes")
 
     for field, val in immediate.items():
+        # DEC-P : application immédiate (bac) journalisée comme 'validation' (la valeur
+        # S'APPLIQUE sans passer par la file — c'est l'effet, pas le circuit, qui est tracé)
+        log_session_change(name, field, doc.get(field), val, "validation")
         doc.set(field, val)   # résultats du bac : subie, appliquée direct
 
     if pending:
@@ -318,6 +323,7 @@ def _propose_changes(name, changes):
                 "current_value": _as_text(doc.get(field)), "proposed_value": _as_text(val),
                 "requested_by": frappe.session.user, "requested_on": now_datetime(),
             })
+            log_session_change(name, field, doc.get(field), val, "proposition")   # DEC-P
     doc.save(ignore_permissions=True)
     frappe.db.commit()
     return {"session": name, "applied": list(immediate), "pending": list(pending)}
@@ -333,6 +339,7 @@ def _validate_changes(name):
         return {"session": name, "applied": [], "reissue_triggered": False}
     applied, reissue = [], False
     for r in rows:
+        log_session_change(name, r.change_field, r.current_value, r.proposed_value, "validation")  # DEC-P
         doc.set(r.change_field, r.proposed_value)   # Frappe coerce chaîne → Date/Time
         applied.append(r.change_field)
         if r.change_field in EXAM_SCHEDULE_FIELDS:
@@ -350,6 +357,10 @@ def _reject_changes(name):
     """La Direction écarte les propositions (§5) : purge le pending, l'ancienne valeur demeure."""
     doc = frappe.get_doc("Admission Session", name)
     n = len(doc.pending_changes or [])
+    for r in (doc.pending_changes or []):
+        # DEC-P : le rejet trace CE QUI a été rejeté (ancienne = en vigueur, nouvelle = proposée
+        # écartée) — sans cette ligne, la purge du pending rendait l'acte amnésique.
+        log_session_change(name, r.change_field, r.current_value, r.proposed_value, "rejet")
     doc.set("pending_changes", [])
     doc.save(ignore_permissions=True)
     frappe.db.commit()

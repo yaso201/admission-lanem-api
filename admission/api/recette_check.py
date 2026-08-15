@@ -37,6 +37,7 @@ SCHEDULER_JOBS = (  # hooks.py scheduler_events.daily — garde anti-dérive
     "admission.api.notifications.send_pieces_reminders",
     # SESSIONS-AUTO-FERMETURE : fermeture quotidienne des sessions échues.
     "admission.api.sessions.close_expired_sessions",
+    "admission.api.calendar_reminders.send_calendar_reminders",   # CAL-AMEL (DEC-O)
 )
 
 

@@ -41,6 +41,17 @@ def _state(session) -> str:
     return "Open" if _field(session, "is_open") else "Closed"
 
 
+def log_session_change(session, champ, old, new, action_type):
+    """CAL-AMEL (DEC-P) — une ligne de journal APPEND-ONLY, MÊME transaction que l'acte (aucun
+    commit ici). Vit dans sessions.py (calendar.py importe déjà ce module — pas de cycle)."""
+    frappe.get_doc({
+        "doctype": "Admission Session Change Log", "session": session,
+        "champ": champ, "old_value": "" if old is None else str(old),
+        "new_value": "" if new is None else str(new), "action_type": action_type,
+        "author": frappe.session.user, "at": frappe.utils.now_datetime(),
+    }).insert(ignore_permissions=True)
+
+
 def set_lifecycle(name, state, update_modified=True):
     """Transition d'état au niveau base (chemins hors doc.save : auto-fermeture, clôture, endpoints).
     Pose lifecycle_state ET son miroir is_open ensemble — zéro divergence."""
@@ -98,9 +109,23 @@ def close_expired_sessions():
             continue
         if getdate(s.closes_on) < today:
             set_lifecycle(s.name, "Closed")
-            closed.append({"session": s.name, "closes_on": str(s.closes_on)})
+            # DEC-P : l'auto-fermeture n'est plus amnésique — journalisée comme tout acte
+            log_session_change(s.name, "lifecycle_state", "Open", "Closed", "auto-fermeture")
+            # DEC-Q : compteur des dossiers bloqués-paiement-en-attente à la clôture — donnée
+            # LOGGÉE (pas d'UI, pas de grâce) : nourrira la décision future. Prédicat : dossier
+            # en amont du paiement (BRO/SOU) SANS frais 1 payé.
+            bloques = frappe.db.sql("""
+                SELECT COUNT(*) FROM `tabAdmission Applicant` a
+                WHERE a.session = %s AND a.status IN ('BRO', 'SOU')
+                  AND NOT EXISTS (SELECT 1 FROM `tabApplicant Fee` f
+                                  WHERE f.applicant = a.name
+                                    AND f.fee_type IN ('application', 'competition')
+                                    AND f.status = 'Paid')""", s.name)[0][0]
+            closed.append({"session": s.name, "closes_on": str(s.closes_on),
+                           "bloques_paiement": int(bloques)})
             frappe.logger("session_lifecycle").info(
-                f"Session {s.name} fermée automatiquement (closes_on {s.closes_on} < {today})."
+                f"Session {s.name} fermée automatiquement (closes_on {s.closes_on} < {today}) — "
+                f"{bloques} dossier(s) bloqué(s)-paiement-en-attente (DEC-Q)."
             )
     if closed:
         frappe.db.commit()
