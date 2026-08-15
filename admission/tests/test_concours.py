@@ -323,16 +323,20 @@ class TestSaisirNoteConcours(TestCase):
             res = saisir_note_concours(dossier_id="CAN-2026-00001", notes=self.NOTES)
         self.assertEqual(res["error"]["code"], "INVALID_STATE")
 
-    def test_resaisie_resets_validation(self):
+    def test_resaisie_sur_validees_refusee(self):
+        # NOTES-FIX-2 (DEC-J, C7) : le CONTRAT change — re-saisir des notes VALIDÉES est REFUSÉ
+        # (verrou serveur). L'ancien comportement (reset silencieux de la validation) était
+        # l'anomalie NT-07. « Invalider » (RESP_EXACT, journalisé) est le seul chemin de rouverture.
         app = _app("ETU", notes_validated=1)  # déjà validées
         ok, err = _patches(); isp, coef = self._ctx()
         with patch(f"{STAFF}.frappe") as mf, ok, err, isp, coef:
             mf.db.exists.return_value = True
             mf.get_doc.return_value = app
             from admission.api.staff import saisir_note_concours
-            saisir_note_concours(dossier_id="CAN-2026-00001", notes={"maths": 15, "physique": 10, "culture": 8})
-        self.assertEqual(app.notes_validated, 0)            # ré-validation requise
-        self.assertIsNone(app.notes_validated_by)
+            res = saisir_note_concours(dossier_id="CAN-2026-00001", notes={"maths": 15, "physique": 10, "culture": 8})
+        self.assertEqual(res["error"]["code"], "NOTES_LOCKED")
+        self.assertEqual(app.notes_validated, 1)            # la validation TIENT
+        app.save.assert_not_called()                        # rien n'est écrit
 
 
 class TestSetExamCoefficients(TestCase):

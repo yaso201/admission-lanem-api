@@ -28,6 +28,8 @@ def _cleanup():
             frappe.db.delete("Applicant Fee Payment", {"applicant": a})
             frappe.db.delete("Applicant Fee", {"applicant": a})
             frappe.db.delete("Admission Applicant Transition Log", {"applicant": a})
+            # V-LEARN-PURGE-14 : le journal des notes est un doctype STANDALONE → purge explicite
+            frappe.db.delete("Admission Note Change Log", {"applicant": a})
             frappe.delete_doc("Admission Applicant", a, force=True, ignore_permissions=True)
         frappe.delete_doc("Admission Session", sess, force=True, ignore_permissions=True)
     frappe.db.commit()
@@ -206,14 +208,37 @@ def run():
         ok("D1 le point de passage UNIQUE valide la note importée",
            r.get("ok") and frappe.db.get_value("Admission Applicant", dan, "notes_validated") == 1, "validée")
 
-        # D2 — un IMPORT sur des notes DÉJÀ VALIDÉES remet en attente
+        # D2 (contrat DEC-J, NOTES-FIX-2) — un IMPORT sur des notes DÉJÀ VALIDÉES est REFUSÉ
+        # (verrou serveur, C7) ; « Invalider » (Responsable EXACT, journalisé) rouvre la saisie.
         frappe.set_user(ADM)
         res = staff.saisir_notes_masse(
             session_id=SESSION,
             csv_text=f"dossier_id,maths,physique,culture,absent\n{dan},10,10,10,\n")["data"]
-        ok("D2 ré-import (CSV) d'un dossier déjà validé accepté", res["ecrits"] == 1, f"ecrits={res['ecrits']}")
-        ok("D2 remet la note EN ATTENTE (notes_validated=0)",
-           frappe.db.get_value("Admission Applicant", dan, "notes_validated") == 0, "re-pending")
+        ok("D2 ré-import sur dossier VALIDÉ refusé (verrou DEC-J)",
+           res["ecrits"] == 0 and len(res["problemes"]) == 1, str([p["probleme"][:40] for p in res["problemes"]]))
+        ok("D2 la note validée est INTACTE",
+           json.loads(frappe.db.get_value("Admission Applicant", dan, "notes_concours"))["maths"] == 12.0,
+           "12 conservé")
+        try:
+            staff.invalider_notes_concours(dossier_id=dan)
+            adm_inv = True
+        except frappe.PermissionError:
+            adm_inv = False
+        ok("D2 l'Administratif ne peut PAS invalider (RESP_EXACT)", not adm_inv, "PermissionError")
+        frappe.set_user(RESP)
+        r = staff.invalider_notes_concours(dossier_id=dan)
+        ok("D2 « Invalider » (Responsable) rouvre la saisie",
+           r.get("ok") and frappe.db.get_value("Admission Applicant", dan, "notes_validated") == 0, "rouvert")
+        ok("D2 l'invalidation est JOURNALISÉE (append-only)",
+           frappe.db.count("Admission Note Change Log",
+                           {"applicant": dan, "action_type": "invalidation"}) == 1, "1 ligne journal")
+        frappe.set_user(ADM)
+        res = staff.saisir_notes_masse(
+            session_id=SESSION,
+            csv_text=f"dossier_id,maths,physique,culture,absent\n{dan},10,10,10,\n")["data"]
+        ok("D2 après invalidation le ré-import passe, note EN ATTENTE",
+           res["ecrits"] == 1 and frappe.db.get_value("Admission Applicant", dan, "notes_validated") == 0,
+           "écrit + pending")
 
         # D4 — la saisie GROUPÉE À L'ÉCRAN (rows) suit le MÊME chemin (saisir_notes_masse) → non validée
         frappe.set_user(ADM)

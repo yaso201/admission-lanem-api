@@ -1,0 +1,123 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-08-15 12:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "applicant",
+  "applicant_name",
+  "session",
+  "champ",
+  "old_value",
+  "new_value",
+  "action_type",
+  "origin",
+  "author",
+  "at"
+ ],
+ "fields": [
+  {
+   "fieldname": "applicant",
+   "fieldtype": "Link",
+   "options": "Admission Applicant",
+   "label": "Dossier",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "applicant_name",
+   "fieldtype": "Data",
+   "label": "Candidat",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "session",
+   "fieldtype": "Data",
+   "label": "Session",
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "champ",
+   "fieldtype": "Data",
+   "label": "Épreuve / champ",
+   "in_list_view": 1,
+   "description": "maths / physique / culture / absent / validation"
+  },
+  {
+   "fieldname": "old_value",
+   "fieldtype": "Data",
+   "label": "Ancienne valeur"
+  },
+  {
+   "fieldname": "new_value",
+   "fieldtype": "Data",
+   "label": "Nouvelle valeur",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "action_type",
+   "fieldtype": "Select",
+   "options": "saisie\ninvalidation",
+   "label": "Type d'acte",
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "origin",
+   "fieldtype": "Select",
+   "options": "unitaire\nmasse\nimport\ninvalidation",
+   "label": "Origine"
+  },
+  {
+   "fieldname": "author",
+   "fieldtype": "Data",
+   "label": "Auteur",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "at",
+   "fieldtype": "Datetime",
+   "label": "Horodatage",
+   "in_list_view": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-15 12:00:00",
+ "modified_by": "Administrator",
+ "module": "Admission",
+ "name": "Admission Note Change Log",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Admission Administratif"
+  },
+  {
+   "read": 1,
+   "role": "Admission Responsable"
+  },
+  {
+   "read": 1,
+   "role": "Admission Direction"
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}

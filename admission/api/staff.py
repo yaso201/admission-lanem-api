@@ -1345,11 +1345,10 @@ def saisir_note_concours(dossier_id=None, notes=None):
     parsed, err = exam_grading.validate_entry(notes)
     if err:
         return _error("NOTES_INVALID", err, 400)
-    applicant.notes_concours = json.dumps(parsed, ensure_ascii=False)
-    applicant.notes_validated = 0          # re-saisie → re-validation requise (intégrité)
-    applicant.notes_validated_by = None
-    applicant.notes_validated_date = None
-    applicant.save(ignore_permissions=True)
+    # NOTES-FIX-2 (DEC-J) : point de passage UNIQUE (verrou post-validation + journal + écriture)
+    lock = _apply_notes(applicant, parsed, "unitaire")
+    if lock:
+        return _error("NOTES_LOCKED", lock, 409)
     log_event("saisir_note_concours", "success", dossier_id=applicant.name)
     return _ok({"dossier_id": applicant.name, "notes": parsed, "absent": exam_grading.is_absent(parsed)})
 
@@ -1418,7 +1417,51 @@ def _row_ref(row):
             or str(row.get("numero_convocation") or row.get("numero") or "").strip() or "?")
 
 
-def _write_one_note(dossier_id, parsed):
+# NOTES-FIX-2 (DEC-J) : message UNIQUE du verrou — servi par les 3 chemins (unitaire/masse/import).
+_NOTES_LOCKED_MSG = ("Notes validées : la modification est verrouillée. « Invalider les notes » "
+                     "(Responsable) rouvre la saisie — l'acte est journalisé.")
+
+
+def _log_note_changes(applicant, old_raw, new_parsed, action_type, origin):
+    """NOTES-FIX-2 (DEC-J) — journal APPEND-ONLY, écrit dans la MÊME transaction que la note
+    (aucun commit ici : le save de la note et ses lignes de journal réussissent ou échouent
+    ensemble). Une ligne par CHAMP réellement changé (épreuves + absent)."""
+    old = exam_grading._load(old_raw) or {}
+    new = new_parsed or {}
+    old_abs, new_abs = exam_grading.is_absent(old), exam_grading.is_absent(new)
+    rows = []
+    if old_abs != new_abs:
+        rows.append(("absent", "oui" if old_abs else "non", "oui" if new_abs else "non"))
+    for k in exam_grading.SUBJECT_KEYS:
+        ov = None if old_abs else old.get(k)
+        nv = None if new_abs else new.get(k)
+        if (ov is None) != (nv is None) or (ov is not None and float(ov) != float(nv)):
+            rows.append((k, "" if ov is None else str(ov), "" if nv is None else str(nv)))
+    for champ, ov, nv in rows:
+        frappe.get_doc({
+            "doctype": "Admission Note Change Log", "applicant": applicant.name,
+            "applicant_name": applicant.applicant_name or applicant.name,
+            "session": applicant.session, "champ": champ, "old_value": ov, "new_value": nv,
+            "action_type": action_type, "origin": origin,
+            "author": frappe.session.user, "at": now_datetime(),
+        }).insert(ignore_permissions=True)
+
+
+def _apply_notes(applicant, parsed, origin):
+    """NOTES-FIX-2 — POINT DE PASSAGE UNIQUE de l'écriture d'une note (amont commun des 3
+    chemins, DEC-J) : verrou post-validation + journal + écriture. Retourne None | message."""
+    if applicant.notes_validated:
+        return _NOTES_LOCKED_MSG
+    _log_note_changes(applicant, applicant.notes_concours, parsed, "saisie", origin)
+    applicant.notes_concours = json.dumps(parsed, ensure_ascii=False)
+    applicant.notes_validated = 0
+    applicant.notes_validated_by = None
+    applicant.notes_validated_date = None
+    applicant.save(ignore_permissions=True)
+    return None
+
+
+def _write_one_note(dossier_id, parsed, origin="masse"):
     """Écrit les notes d'UN candidat (atomique : les 3 ou aucune). Mêmes gardes que la saisie unitaire
     (Prépa, ETU, périmètre). `parsed` déjà validé. Retourne True | message d'erreur."""
     if not frappe.db.exists("Admission Applicant", dossier_id):
@@ -1431,17 +1474,15 @@ def _write_one_note(dossier_id, parsed):
     if applicant.status != "ETU":
         return f"Dossier non en étude (statut {applicant.status})."
     try:
-        applicant.notes_concours = json.dumps(parsed, ensure_ascii=False)
-        applicant.notes_validated = 0
-        applicant.notes_validated_by = None
-        applicant.notes_validated_date = None
-        applicant.save(ignore_permissions=True)
+        err = _apply_notes(applicant, parsed, origin)
+        if err:
+            return err
     except Exception:
         return "Échec d'enregistrement (dossier rejeté par le contrôle)."
     return True
 
 
-def _process_notes_rows(session_id, rows, write):
+def _process_notes_rows(session_id, rows, write, origin="masse"):
     """Cœur commun APERÇU / ÉCRITURE. Rapproche + valide chaque ligne → 2 paniers. Écrit (PAR
     candidat, atomique) si write=True. Un candidat non rapproché, incomplet, hors plage ou en double
     → PROBLÈME, jamais deviné, jamais écrit. Le compte À ÉCRIRE est renvoyé d'abord (vigilance 2)."""
@@ -1469,7 +1510,7 @@ def _process_notes_rows(session_id, rows, write):
     ecrits = 0
     if write:
         for item in a_ecrire:
-            r = _write_one_note(item["dossier_id"], item["entry"])
+            r = _write_one_note(item["dossier_id"], item["entry"], origin)
             if r is True:
                 ecrits += 1
             else:
@@ -1636,7 +1677,9 @@ def saisir_notes_masse(session_id=None, rows=None, csv_text=None):
         moji = _csv_sanity(csv_text)   # DEC-I : même garde que l'aperçu (aucun contournement)
         if moji:
             return _error("CSV_MOJIBAKE", moji, 400)
-    res = _process_notes_rows(session_id, _coerce_rows(rows, csv_text), write=True)
+    # DEC-J : l'origine tracée au journal distingue la liste écran (rows) de l'import fichier
+    res = _process_notes_rows(session_id, _coerce_rows(rows, csv_text),
+                              write=True, origin=("import" if csv_text else "masse"))
     log_event("saisir_notes_masse", "success", dossier_id=session_id)
     return _ok(res)
 
@@ -1685,6 +1728,46 @@ def valider_notes_concours(dossier_id=None):
     applicant.save(ignore_permissions=True)
     log_event("valider_notes_concours", "success", dossier_id=applicant.name)
     return _ok({"dossier_id": applicant.name, "notes_validated": 1})
+
+
+@frappe.whitelist()
+def invalider_notes_concours(dossier_id=None):
+    """NOTES-FIX-2 (DEC-J) — INVALIDE des notes validées : rouvre la saisie. Acte EXPLICITE du
+    Responsable EXACT (symétrie avec la validation), JOURNALISÉ.
+
+    DEC-M : refusé si une décision est émise. Couplage réel : toute décision (ADM/REF/ATT) sort
+    le dossier de ETU, et TOUT le circuit notes (saisie, validation, invalidation) est borné à
+    ETU (W6) — la garde de statut EST la garde de décision ; DEC-M la nomme.
+    """
+    frappe.only_for(RESP_EXACT)
+    if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
+        return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
+    applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)
+    if scope_err:
+        return scope_err
+    if not _is_prepa(applicant):
+        return _error("NOT_PREPA", "Réservé aux dossiers Prépa.", 409)
+    if applicant.status != "ETU":
+        return _error("DECISION_EMISE", "Décision déjà émise sur ce dossier — l'invalidation des "
+                      "notes n'est plus possible (DEC-M).", 409)
+    if not applicant.notes_validated:
+        return _ok({"dossier_id": applicant.name, "idempotent": True, "notes_validated": 0})
+    # journal AVANT la bascule, même transaction (DEC-J)
+    frappe.get_doc({
+        "doctype": "Admission Note Change Log", "applicant": applicant.name,
+        "applicant_name": applicant.applicant_name or applicant.name,
+        "session": applicant.session, "champ": "validation",
+        "old_value": "validées", "new_value": "en attente",
+        "action_type": "invalidation", "origin": "invalidation",
+        "author": frappe.session.user, "at": now_datetime(),
+    }).insert(ignore_permissions=True)
+    applicant.notes_validated = 0
+    applicant.notes_validated_by = None
+    applicant.notes_validated_date = None
+    applicant.save(ignore_permissions=True)
+    log_event("invalider_notes_concours", "success", dossier_id=applicant.name)
+    return _ok({"dossier_id": applicant.name, "notes_validated": 0})
 
 
 def _pending_notes_of_session(session_name):
