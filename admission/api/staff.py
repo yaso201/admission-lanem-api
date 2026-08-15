@@ -8,6 +8,7 @@ helpers de paiement existants (pas de duplication de la notif UF : portée par l
 import csv
 import io
 import json
+import re
 
 import frappe
 from frappe.utils import now_datetime, add_days
@@ -1358,9 +1359,16 @@ def saisir_note_concours(dossier_id=None, notes=None):
 _CSV_HEADER = ["dossier_id", "numero_convocation", "nom"] + exam_grading.SUBJECT_KEYS + ["absent"]
 
 
+def _norm_num(num):
+    """NOTES-FIX-0 (DEC-K, tolérance) : Excel coerce les numéros en nombre et STRIPPE les zéros
+    de tête (« 08260005 » → « 8260005 ») — on normalise DES DEUX CÔTÉS (index et recherche)."""
+    return str(num or "").strip().lstrip("0")
+
+
 def _notes_roster_index(session_id):
     """Convoqués d'une session (MÊME source et MÊME ordre alpha que la feuille d'émargement),
-    indexés par identifiant STABLE. Retourne (liste_ordonnée, by_id, by_num)."""
+    indexés par identifiant STABLE. Retourne (liste_ordonnée, by_id, by_num) — by_num indexé
+    en forme NORMALISÉE (zéros de tête ignorés, DEC-K)."""
     from admission.api.exam_documents import _convoques_of_session
     _, convoques = _convoques_of_session(session_id)
     by_id, by_num = {}, {}
@@ -1368,7 +1376,7 @@ def _notes_roster_index(session_id):
         by_id[c["dossier_id"]] = c
         num = str(c.get("numero") or "").strip()
         if num and num != "—":
-            by_num[num] = c
+            by_num[_norm_num(num)] = c
     return convoques, by_id, by_num
 
 
@@ -1400,7 +1408,8 @@ def _match_row(row, by_id, by_num):
         return (by_id[did], None) if did in by_id else (None, f"Dossier « {did} » hors des convoqués de la session.")
     num = str(row.get("numero_convocation") or row.get("numero") or "").strip()
     if num:
-        return (by_num[num], None) if num in by_num else (None, f"N° de convocation « {num} » introuvable.")
+        key = _norm_num(num)   # DEC-K : tolère les zéros de tête strippés par Excel
+        return (by_num[key], None) if key in by_num else (None, f"N° de convocation « {num} » introuvable.")
     return None, "Ligne sans identifiant (dossier_id ou n° de convocation)."
 
 
@@ -1470,9 +1479,61 @@ def _process_notes_rows(session_id, rows, write):
     return {"compte_a_ecrire": len(a_ecrire), "a_ecrire": apercu, "ecrits": ecrits, "problemes": problemes}
 
 
+# NOTES-FIX-0 (DEC-I) — signatures de MOJIBAKE : séquences produites quand un fichier UTF-8 est
+# relu dans un mauvais encodage par un tableur puis RÉ-ENREGISTRÉ (données altérées de façon
+# irréversible → on REJETTE, on ne répare jamais en silence). Chaque marqueur avec son origine :
+_MOJIBAKE_MARKERS = (
+    "√",    # UTF-8 é/è/à… relu MacRoman (Excel Mac) : é→√©, è→√®, à→√†
+    "‚Ä",   # UTF-8 ponctuation (—, «, ') relue MacRoman : —→‚Äî, '→‚Äô
+    "Ã©",   # UTF-8 é relu Latin-1/CP1252 (Excel Windows mal réglé) : é→Ã©
+    "Ã¨",   # idem è→Ã¨
+    "Ã ",   # idem à→Ã  (avec espace insécable)
+)
+
+_MOJIBAKE_MESSAGE = ("Fichier ré-encodé par le tableur (accents altérés — ex. « é » devenu "
+                     "« √© »). Ces données sont corrompues de façon irréversible : réexportez le "
+                     "gabarit, ressaisissez, et enregistrez en « CSV UTF-8 » — ne réutilisez pas "
+                     "ce fichier.")
+
+
+def _csv_sanity(csv_text):
+    """DEC-I : import STRICT sur les données — un contenu mojibaké est rejeté GLOBALEMENT avec un
+    message actionnable (jamais réparé en silence : une « réparation » pourrait altérer un nom).
+    La mécanique (BOM, séparateur, zéros), elle, est TOLÉRÉE (_parse_csv). None = sain."""
+    for marker in _MOJIBAKE_MARKERS:
+        if marker in (csv_text or ""):
+            return _MOJIBAKE_MESSAGE
+    return None
+
+
+# NOTES-FIX-0 (DEC-K) — déballage de la protection Excel `="…"` : le SEUL patron qui empêche
+# réellement Excel de coercer un identifiant en nombre (les guillemets CSV ne protègent rien).
+# NE PAS « simplifier » : sans lui, 08260005 devient 8260005 au premier aller-retour tableur.
+# Appliqué à TOUTES les valeurs au parse (exigence : toute colonne identifiante, présente ou future).
+_EXCEL_GUARD = re.compile(r'^="?(.*?)"?$')
+
+
+def _unwrap(value):
+    if isinstance(value, str) and value.startswith("="):
+        m = _EXCEL_GUARD.match(value.strip())
+        if m:
+            return m.group(1)
+    return value
+
+
+def _sniff_delimiter(csv_text):
+    """Séparateur depuis la ligne d'en-tête : Excel en locale FR enregistre en « ; » — le refuser
+    rejetait des fichiers mécaniquement sains (NT-03, cause dominante prouvée à l'audit)."""
+    head = (csv_text or "").split("\n", 1)[0]
+    return ";" if head.count(";") > head.count(",") else ","
+
+
 def _parse_csv(csv_text):
-    """CSV texte → lignes-dict. Tolère en-têtes techniques (maths…) OU libellés (Mathématiques…)."""
-    reader = csv.DictReader(io.StringIO(csv_text or ""))
+    """CSV texte → lignes-dict. Tolère en-têtes techniques (maths…) OU libellés (Mathématiques…),
+    le BOM (Excel UTF-8), le séparateur « ; » (locale FR) et la protection `="…"` (NOTES-FIX-0 —
+    tolérant sur la MÉCANIQUE ; strict sur les DONNÉES : cf. _csv_sanity)."""
+    text = (csv_text or "").lstrip("﻿")
+    reader = csv.DictReader(io.StringIO(text), delimiter=_sniff_delimiter(text))
     label_to_key = {v.lower(): k for k, v in exam_grading.SUBJECT_LABELS.items()}
     rows = []
     for raw in reader:
@@ -1481,7 +1542,7 @@ def _parse_csv(csv_text):
             if header is None:
                 continue
             h = header.strip()
-            row[h if h in _CSV_HEADER else label_to_key.get(h.lower(), h)] = value
+            row[h if h in _CSV_HEADER else label_to_key.get(h.lower(), h)] = _unwrap(value)
         rows.append(row)
     return rows
 
@@ -1534,8 +1595,15 @@ def export_notes_template(session_id=None):
     w = csv.writer(buf)
     w.writerow(_CSV_HEADER)
     for c in convoques:
-        w.writerow([c["dossier_id"], c["numero"], c["nom"]] + ["" for _ in exam_grading.SUBJECT_KEYS] + [""])
-    return _ok({"session_id": session_id, "filename": f"notes_{session_id}.csv", "csv": buf.getvalue()})
+        # NOTES-FIX-0 (C6) : n'exporter QUE ce qu'on sait réimporter — jamais le placeholder
+        # d'affichage « — » (vide à la place) ; numéro protégé `="…"` contre la coercition Excel
+        # (zéros de tête, DEC-K — déballé symétriquement par _unwrap à l'import).
+        num = str(c.get("numero") or "").strip()
+        num_cell = "" if (not num or num == "—") else f'="{num}"'
+        w.writerow([c["dossier_id"], num_cell, c["nom"]] + ["" for _ in exam_grading.SUBJECT_KEYS] + [""])
+    # BOM UTF-8 : le standard de fait pour qu'Excel (Mac surtout) lise l'UTF-8 au lieu de MacRoman
+    # (NT-02 — sans lui, les accents s'affichent mojibakés et reviennent double-encodés).
+    return _ok({"session_id": session_id, "filename": f"notes_{session_id}.csv", "csv": "﻿" + buf.getvalue()})
 
 
 @frappe.whitelist()
@@ -1547,6 +1615,10 @@ def import_notes_preview(session_id=None, csv_text=None, rows=None):
         return _error("INVALID_SESSION", "Session inconnue.", 404)
     if not exam_grading.coefficients_complete(_session_coefficients(session_id)):
         return _error("COEF_REQUIRED", "Posez d'abord les coefficients des épreuves de la session.", 409)
+    if csv_text:
+        moji = _csv_sanity(csv_text)   # DEC-I : strict sur les DONNÉES, tolérant sur la mécanique
+        if moji:
+            return _error("CSV_MOJIBAKE", moji, 400)
     return _ok(_process_notes_rows(session_id, _coerce_rows(rows, csv_text), write=False))
 
 
@@ -1560,6 +1632,10 @@ def saisir_notes_masse(session_id=None, rows=None, csv_text=None):
         return _error("INVALID_SESSION", "Session inconnue.", 404)
     if not exam_grading.coefficients_complete(_session_coefficients(session_id)):
         return _error("COEF_REQUIRED", "Posez d'abord les coefficients des épreuves de la session.", 409)
+    if csv_text:
+        moji = _csv_sanity(csv_text)   # DEC-I : même garde que l'aperçu (aucun contournement)
+        if moji:
+            return _error("CSV_MOJIBAKE", moji, 400)
     res = _process_notes_rows(session_id, _coerce_rows(rows, csv_text), write=True)
     log_event("saisir_notes_masse", "success", dossier_id=session_id)
     return _ok(res)
