@@ -9,6 +9,7 @@ import csv
 import io
 import json
 import re
+import unicodedata
 
 import frappe
 from frappe.utils import now_datetime, add_days, getdate, nowdate
@@ -893,6 +894,7 @@ def list_dossiers(q=None, programme=None, session=None, statuts=None, limit=200)
         fields=[
             "name", "applicant_name", "programme_code", "programme_label", "level_code",
             "session", "person_id", "status", "conditionnel", "bac_verified", "resoumis",
+            "email", "phone", "date_of_birth",
             "requested_scholarships", "proposed_scholarships", "validated_scholarships",
             "notes_concours", "notes_validated", "rang_liste_attente", "creation", "modified",
         ],
@@ -900,8 +902,14 @@ def list_dossiers(q=None, programme=None, session=None, statuts=None, limit=200)
         limit_page_length=min(int(limit or 200), 500),
     )
     if q:
-        ql = str(q).strip().lower()
-        rows = [r for r in rows if ql in (r.applicant_name or "").lower() or ql in r.name.lower()]
+        def _search_text(value):
+            value = unicodedata.normalize("NFD", str(value or "").casefold())
+            return "".join(char for char in value if not unicodedata.combining(char))
+
+        ql = _search_text(q).strip()
+        rows = [r for r in rows if any(ql in _search_text(value) for value in (
+            r.applicant_name, r.name, getattr(r, "email", None), getattr(r, "phone", None),
+        ))]
 
     names = [r.name for r in rows]
     fees_by_app, pending_offline, missing_pieces = {}, set(), {}
@@ -951,6 +959,10 @@ def list_dossiers(q=None, programme=None, session=None, statuts=None, limit=200)
     dossiers = [{
         "dossier_id": r.name,
         "nom": r.applicant_name or "",
+        "email": getattr(r, "email", None) or "",
+        "tel": getattr(r, "phone", None) or "",
+        "date_naissance": str(getattr(r, "date_of_birth", None))
+            if getattr(r, "date_of_birth", None) else None,
         "programme": {"code": r.programme_code, "label": r.programme_label},
         "session": r.session,
         "level_code": r.level_code,
@@ -1070,6 +1082,8 @@ def get_dossier(dossier_id=None):
         "is_prepa": bool(session_doc.is_prepa_session) if session_doc else False,
         "identite": {"prenom": applicant.first_name, "nom": applicant.last_name,
                      "email": applicant.email, "tel": applicant.phone,
+                     "date_naissance": str(getattr(applicant, "date_of_birth", None))
+                     if getattr(applicant, "date_of_birth", None) else None,
                      "nom_complet": applicant.applicant_name},
         "programme": {"code": applicant.programme_code, "label": applicant.programme_label,
                       "level_code": applicant.level_code},

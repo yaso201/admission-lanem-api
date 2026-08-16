@@ -318,7 +318,8 @@ class TestCreateDossierConsentGate(TestCase):
             "level_code": "LIS-L1",
             "consent_data_processing": True,
             "consent_cgv": True,
-            "identite": {"prenom": "Test", "nom": "User", "email": "t@t.com", "tel": "+22990112233"},
+            "identite": {"prenom": "Test", "nom": "User", "email": "t@t.com", "tel": "+22990112233",
+                         "date_of_birth": "2000-01-01"},
         }
 
         privacy_doc = MagicMock()

@@ -151,7 +151,8 @@ def _create(runid, suffix, date_bac="2024-06-01", session=None):
     body = {
         "session": session or SESSION, "level_code": LEVEL,
         "identite": {"prenom": "Fixture", "nom": suffix.upper(), "email": email,
-                     "tel": "+22990000000", "date_bac": date_bac},
+                     "tel": "+22990000000", "date_of_birth": "2000-01-01",
+                     "date_bac": date_bac},
         "consent_data_processing": 1, "consent_cgv": 1,
         "idempotency_key": f"fixture-{runid}-{suffix}"}
     r = _payload(http.post(BASE + "create_dossier", json=body))

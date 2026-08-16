@@ -6,6 +6,7 @@ import secrets
 from datetime import date, timedelta
 
 import requests
+from redis.exceptions import RedisError
 
 import frappe
 from frappe.rate_limiter import rate_limit
@@ -112,6 +113,112 @@ TOKEN_SLIDING_RENEW_BELOW_DAYS = 6
 # otp_verified persistant).
 OTP_TTL_MINUTES = 10
 
+# DOSSIERS-IDENTITE (DEC-323/U) — seuils explicites, ajustables sans toucher à la
+# logique. Le quota e-mail est le garde principal ; le quota IP, plus large, protège
+# l'infrastructure tout en tenant compte des accès mutualisés (campus/cybercafés/NAT).
+IDENTITY_RECOVERY_EMAIL_REQUESTS_PER_HOUR = 3
+IDENTITY_RECOVERY_IP_REQUESTS_PER_HOUR = 20
+IDENTITY_RECOVERY_IP_VERIFICATIONS_PER_HOUR = 30
+IDENTITY_RECOVERY_MAX_OTP_ATTEMPTS = 5
+IDENTITY_RECOVERY_OTP_TTL_SECONDS = OTP_TTL_MINUTES * 60
+IDENTITY_RECOVERY_SESSION_TTL_SECONDS = 30 * 60
+
+# DEC-322/T — âge inclusif à la date du dépôt. Le champ du DocType reste
+# volontairement optionnel afin de ne pas invalider les dossiers historiques.
+DATE_OF_BIRTH_MIN_AGE = 14
+DATE_OF_BIRTH_MAX_AGE = 60
+
+_RECOVERY_GENERIC_MESSAGE = "Si cette adresse porte des candidatures, un code vient d'être envoyé"
+_RECOVERY_UNAVAILABLE_MESSAGE = "Service temporairement indisponible, réessayez"
+
+_INCREMENT_WINDOW_LUA = """
+local value = redis.call('INCR', KEYS[1])
+if value == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
+return value
+"""
+
+_VERIFY_RECOVERY_OTP_LUA = """
+local stored = redis.call('GET', KEYS[1])
+if not stored then return -1 end
+local attempts = redis.call('INCR', KEYS[2])
+if attempts == 1 then redis.call('EXPIRE', KEYS[2], ARGV[2]) end
+if stored == ARGV[1] then
+  redis.call('DEL', KEYS[1], KEYS[2])
+  return 1
+end
+if attempts >= tonumber(ARGV[3]) then
+  redis.call('DEL', KEYS[1], KEYS[2])
+  return -2
+end
+return 0
+"""
+
+
+def _recovery_service_unavailable():
+	return _error("IDENTITY_RECOVERY_UNAVAILABLE", _RECOVERY_UNAVAILABLE_MESSAGE, 503)
+
+
+def _identity_recovery_digest(value):
+	"""HMAC stable pour les clés Redis : aucune adresse/IP n'apparaît en clair."""
+	secret = frappe.conf.get("token_hmac_secret")
+	if not secret:
+		raise RedisError("token_hmac_secret absent")
+	return hmac.new(
+		str(secret).encode("utf-8"), str(value).encode("utf-8"), hashlib.sha256
+	).hexdigest()
+
+
+def _identity_recovery_cache():
+	"""Retourne Redis après une sonde réelle ; tout échec doit rester fail-closed."""
+	cache = frappe.cache
+	cache.ping()
+	return cache
+
+
+def _identity_recovery_key(cache, kind, value):
+	return cache.make_key(f"admission:identity-recovery:{kind}:{_identity_recovery_digest(value)}")
+
+
+def _increment_identity_window(cache, kind, value, seconds=3600):
+	key = _identity_recovery_key(cache, kind, value)
+	return int(cache.eval(_INCREMENT_WINDOW_LUA, 1, key, int(seconds)))
+
+
+def _request_ip():
+	return str(getattr(frappe.local, "request_ip", None) or "unknown")
+
+
+def _log_identity_ip_block(ip, counter, operation):
+	"""Journal sécurité demandé pour mesurer les faux positifs des IP mutualisées."""
+	try:
+		frappe.logger("admission-security").warning(json.dumps({
+			"step": "identity_recovery",
+			"status": "rate_limited_ip",
+			"operation": operation,
+			"ip": ip,
+			"counter": int(counter),
+			"at": str(now_datetime()),
+		}, ensure_ascii=False))
+	except Exception:
+		pass
+
+
+def _check_identity_rate_limits(cache, email=None, *, verification=False):
+	"""Applique les compteurs Redis indépendants e-mail/IP, sans clé PII."""
+	ip = _request_ip()
+	if email is not None:
+		email_count = _increment_identity_window(cache, "request-email", email)
+		if email_count > IDENTITY_RECOVERY_EMAIL_REQUESTS_PER_HOUR:
+			return _error("RECOVERY_RATE_LIMITED", "Trop de demandes. Réessayez plus tard.", 429)
+	kind = "verify-ip" if verification else "request-ip"
+	ip_count = _increment_identity_window(cache, kind, ip)
+	limit = (IDENTITY_RECOVERY_IP_VERIFICATIONS_PER_HOUR if verification
+			 else IDENTITY_RECOVERY_IP_REQUESTS_PER_HOUR)
+	if ip_count > limit:
+		_log_identity_ip_block(ip, ip_count, "verify" if verification else "request")
+		return _error("RECOVERY_RATE_LIMITED", "Trop de demandes. Réessayez plus tard.", 429)
+	return None
+
 
 class DossierTokenExpired(Exception):
 	"""Token de dossier expiré (TTL glissant 7j dépassé) — distinct d'un token invalide."""
@@ -180,6 +287,26 @@ def _validate_bac_date(value):
 	if d.year < current_year - 60 or d.year > current_year + 1:
 		return _error("BAC_DATE_INVALID", "Date du bac hors plage plausible.", 400)
 	return None
+
+
+def _validate_date_of_birth(value):
+	"""Date de naissance obligatoire pour les nouveaux dépôts, âge 14–60 inclus."""
+	if not value:
+		return None, _error("DOB_REQUIRED", "La date de naissance est requise.", 400)
+	try:
+		born = getdate(value)
+	except Exception:
+		return None, _error("DOB_INVALID", "Date de naissance invalide.", 400)
+	today = getdate(now_datetime())
+	age = today.year - born.year - ((today.month, today.day) < (born.month, born.day))
+	if age < DATE_OF_BIRTH_MIN_AGE or age > DATE_OF_BIRTH_MAX_AGE:
+		return None, _error(
+			"DOB_INVALID",
+			f"La date de naissance doit correspondre à un âge compris entre "
+			f"{DATE_OF_BIRTH_MIN_AGE} et {DATE_OF_BIRTH_MAX_AGE} ans.",
+			400,
+		)
+	return born, None
 
 
 def _validate_identity(first_name, last_name, email, phone, bac_date=None):
@@ -956,6 +1083,8 @@ def _serialize_dossier(applicant):
 			"nom": applicant.last_name,
 			"email": applicant.email,
 			"tel": applicant.phone,
+			"date_naissance": str(getattr(applicant, "date_of_birth", None))
+				if getattr(applicant, "date_of_birth", None) else None,
 			"date_bac": str(applicant.bac_date) if applicant.bac_date else None,
 		},
 		"pieces": [
@@ -1253,6 +1382,11 @@ def create_dossier():
 	last_name = identity.get("nom") or identity.get("last_name")
 	email = identity.get("email")
 	phone = identity.get("tel") or identity.get("phone")
+	date_of_birth, dob_err = _validate_date_of_birth(
+		identity.get("date_of_birth") or identity.get("date_naissance")
+	)
+	if dob_err:
+		return dob_err
 
 	# SEC-5 : valider l'identité AVANT l'appel campus (400 propre, pas de 500 ni d'appel inutile).
 	identity_err = _validate_identity(
@@ -1275,6 +1409,7 @@ def create_dossier():
 			"last_name": last_name,
 			"email": email,
 			"phone": phone,
+			"date_of_birth": date_of_birth,
 			"bac_date": identity.get("date_bac") or identity.get("bac_date"),
 			"programme_code": session.programme_code,
 			"programme_label": session.programme_label,
@@ -1651,39 +1786,150 @@ def get_dossier(dossier_id=None, token=None):
 	return _ok(_serialize_dossier(applicant))
 
 
-@frappe.whitelist(allow_guest=True, methods=["POST"])
-@rate_limit(key="email", limit=3, seconds=60 * 60)
-def recover_dossier(email=None):
-	"""LOT M (M7/A0.2) — « retrouver mon dossier » : renvoie un lien de reprise par e-mail.
-
-	ANTI-ÉNUMÉRATION : réponse UNIFORME que l'adresse corresponde ou non à un dossier
-	(aucune fuite d'existence). Le token est TOURNÉ (l'ancien lien meurt — un demandeur
-	illégitime ne gagne qu'un lien envoyé… à la boîte du candidat) et l'OTP est remis à
-	zéro : la double barrière s'applique à l'arrivée (SEC-4). Rate-limit par adresse.
-	"""
-	email = (email or _value("email") or "").strip().lower()
-	generic = _ok({"message": "Si un dossier actif correspond à cette adresse, un lien de reprise vient d'être envoyé."})
-	if not email or "@" not in email or len(email) > 140:
-		return generic
-	names = frappe.get_all(
+def _identity_recovery_names(email):
+	"""Tous les dossiers de l'adresse exacte, actifs ET clos, sauf données anonymisées."""
+	return frappe.get_all(
 		"Admission Applicant",
-		filters={"email": email, "anonymized": ("!=", 1), "status": ("not in", ["REF", "DES", "INS"])},
-		pluck="name", order_by="modified desc", limit=1,
+		filters={"email": email, "anonymized": ("!=", 1)},
+		pluck="name", order_by="creation desc", limit_page_length=500,
 	)
+
+
+def send_identity_recovery_otp(email):
+	"""Job court commun aux adresses connues/inconnues (anti-énumération temporelle)."""
+	email = str(email or "").strip().lower()
+	names = _identity_recovery_names(email) if validate_email_address(email) else []
 	if not names:
-		log_event("recover_dossier", "no_match", ref=email.split("@")[-1])  # domaine seul, pas de PII
-		return generic
+		log_event("identity_recovery_job", "no_match")
+		return
+	code = _generate_otp()
+	try:
+		cache = _identity_recovery_cache()
+		otp_key = _identity_recovery_key(cache, "otp", email)
+		attempt_key = _identity_recovery_key(cache, "attempts", email)
+		cache.setex(otp_key, IDENTITY_RECOVERY_OTP_TTL_SECONDS, _hash_otp(code))
+		cache.delete(attempt_key)
+	except RedisError:
+		log_event("identity_recovery_job", "redis_unavailable", level="error")
+		return
 	applicant = frappe.get_doc("Admission Applicant", names[0])
-	new_token = _generate_token()
-	applicant.dossier_token_hash = _hash(new_token)
-	applicant.token_expires_at = add_days(now_datetime(), TOKEN_TTL_DAYS)
-	applicant.otp_verified = 0  # nouvelle session → re-vérification OTP exigée (double barrière)
-	applicant.save(ignore_permissions=True)
-	frappe.db.commit()
-	from admission.api.notifications import send_recovery_link
-	send_recovery_link(applicant, new_token)
-	log_event("recover_dossier", "sent", dossier_id=applicant.name)
-	return generic
+	from admission.api.notifications import send_email_otp
+	send_email_otp(applicant, code, minutes=OTP_TTL_MINUTES)
+	log_event("identity_recovery_job", "sent", dossier_id=applicant.name)
+
+
+def _identity_recovery_summaries(names):
+	if not names:
+		return []
+	rows = frappe.get_all(
+		"Admission Applicant",
+		filters={"name": ["in", names], "anonymized": ("!=", 1)},
+		fields=["name", "programme_code", "programme_label", "session", "status", "creation"],
+		order_by="creation desc", limit_page_length=500,
+	)
+	session_ids = sorted({row.session for row in rows if row.session})
+	labels = {}
+	if session_ids:
+		labels = {
+			row.name: row.label for row in frappe.get_all(
+				"Admission Session", filters={"name": ["in", session_ids]},
+				fields=["name", "label"], limit_page_length=len(session_ids),
+			)
+		}
+	return [{
+		"dossier_id": row.name,
+		"programme": {"code": row.programme_code, "label": row.programme_label},
+		"session": {"id": row.session, "label": labels.get(row.session)},
+		"statut": row.status,
+		"soumis_le": str(row.creation),
+	} for row in rows]
+
+
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+def recover_dossier(email=None):
+	"""DEC-323/U — demande un OTP d'identité, sans révéler si l'adresse existe."""
+	email = str(email or _value("email") or "").strip().lower()[:254]
+	try:
+		cache = _identity_recovery_cache()
+		rate_err = _check_identity_rate_limits(cache, email)
+	except RedisError:
+		return _recovery_service_unavailable()
+	if rate_err:
+		return rate_err
+	# Même job, mêmes paramètres d'enfilage et même réponse pour adresse connue/inconnue.
+	frappe.enqueue(
+		"admission.api.public.send_identity_recovery_otp",
+		queue="short", email=email, enqueue_after_commit=True,
+	)
+	return _ok({"message": _RECOVERY_GENERIC_MESSAGE})
+
+
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+def verify_recovery_otp(email=None, otp=None):
+	"""Valide atomiquement l'OTP puis ouvre une consultation read-only de 30 minutes."""
+	email = str(email or _value("email") or "").strip().lower()[:254]
+	otp = str(otp or _value("otp") or "").strip()
+	if not re.fullmatch(r"\d{6}", otp):
+		return _error("RECOVERY_OTP_INVALID", "Code invalide ou expiré.", 403)
+	try:
+		cache = _identity_recovery_cache()
+		rate_err = _check_identity_rate_limits(cache, verification=True)
+		if rate_err:
+			return rate_err
+		otp_key = _identity_recovery_key(cache, "otp", email)
+		attempt_key = _identity_recovery_key(cache, "attempts", email)
+		outcome = int(cache.eval(
+			_VERIFY_RECOVERY_OTP_LUA, 2, otp_key, attempt_key, _hash_otp(otp),
+			IDENTITY_RECOVERY_OTP_TTL_SECONDS, IDENTITY_RECOVERY_MAX_OTP_ATTEMPTS,
+		))
+	except RedisError:
+		return _recovery_service_unavailable()
+	if outcome != 1:
+		return _error("RECOVERY_OTP_INVALID", "Code invalide ou expiré.", 403)
+
+	names = _identity_recovery_names(email)
+	summaries = _identity_recovery_summaries(names)
+	if not summaries:
+		return _ok({"recovery_token": None, "expires_in_seconds": 0, "dossiers": []})
+	token = _generate_token()
+	try:
+		cache.setex(
+			_identity_recovery_key(cache, "session", token),
+			IDENTITY_RECOVERY_SESSION_TTL_SECONDS,
+			json.dumps([item["dossier_id"] for item in summaries]),
+		)
+	except RedisError:
+		return _recovery_service_unavailable()
+	return _ok({
+		"recovery_token": token,
+		"expires_in_seconds": IDENTITY_RECOVERY_SESSION_TTL_SECONDS,
+		"dossiers": summaries,
+	})
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET"])
+def get_recovered_dossier(recovery_token=None, dossier_id=None):
+	"""Consultation seule : le jeton autorise uniquement les docnames mémorisés en Redis."""
+	recovery_token = recovery_token or _value("recovery_token")
+	dossier_id = dossier_id or _value("dossier_id")
+	if not recovery_token or not dossier_id:
+		return _error("RECOVERY_SESSION_INVALID", "Session de consultation invalide ou expirée.", 403)
+	try:
+		cache = _identity_recovery_cache()
+		raw = cache.get(_identity_recovery_key(cache, "session", recovery_token))
+	except RedisError:
+		return _recovery_service_unavailable()
+	if not raw:
+		return _error("RECOVERY_SESSION_INVALID", "Session de consultation invalide ou expirée.", 403)
+	try:
+		allowed = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
+	except (TypeError, ValueError, UnicodeDecodeError):
+		return _error("RECOVERY_SESSION_INVALID", "Session de consultation invalide ou expirée.", 403)
+	if dossier_id not in allowed:
+		return _error("RECOVERY_DOSSIER_FORBIDDEN", "Ce dossier n'appartient pas à cette consultation.", 403)
+	if not frappe.db.exists("Admission Applicant", {"name": dossier_id, "anonymized": ("!=", 1)}):
+		return _error("INVALID_DOSSIER", "Dossier indisponible.", 404)
+	return _ok(_serialize_dossier(frappe.get_doc("Admission Applicant", dossier_id)))
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])

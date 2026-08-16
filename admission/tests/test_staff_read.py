@@ -45,6 +45,7 @@ class TestListDossiers(TestCase):
     def _row(self, **kw):
         base = {"name": "CAN-1", "applicant_name": "Ama K", "programme_code": "LIS",
                 "programme_label": "Licence", "level_code": "LIS-L1", "session": "SES-1",
+                "email": "ama@example.bj", "phone": "+22990000001", "date_of_birth": "2000-01-01",
                 "status": "ETU", "conditionnel": 0, "bac_verified": 0,
                 "requested_scholarships": None, "proposed_scholarships": None,
                 "validated_scholarships": None, "notes_concours": None, "notes_validated": 0,
@@ -84,12 +85,32 @@ class TestListDossiers(TestCase):
     def test_search_filters_rows(self):
         ok, err = _patches()
         with patch(f"{STAFF}.frappe") as mf, ok, err:
-            mf.get_list.return_value = [self._row(), self._row(name="CAN-2", applicant_name="Zo B")]
+            mf.get_list.return_value = [
+                self._row(),
+                self._row(name="CAN-2", applicant_name="Zo B", email="zo@example.bj", phone="+22990000002"),
+            ]
             mf.get_all.return_value = []
             mf.db.get_value.return_value = 0
             from admission.api.staff import list_dossiers
             res = list_dossiers(q="ama")
         self.assertEqual(len(res["data"]["dossiers"]), 1)
+
+    def test_search_is_accent_insensitive_and_covers_email_phone(self):
+        ok, err = _patches()
+        rows = [
+            self._row(applicant_name="Aïcha Dossou", email="aicha@x.bj", phone="+22997000001"),
+            self._row(name="CAN-2", applicant_name="Zo B", email="zo@x.bj", phone="+22997000002"),
+        ]
+        with patch(f"{STAFF}.frappe") as mf, ok, err:
+            mf.get_list.return_value = rows
+            mf.get_all.return_value = []
+            mf.db.get_value.return_value = 0
+            from admission.api.staff import list_dossiers
+            by_name = list_dossiers(q="aicha")
+            by_email = list_dossiers(q="AICHA@X.BJ")
+            by_phone = list_dossiers(q="97000001")
+        self.assertEqual([len(x["data"]["dossiers"]) for x in (by_name, by_email, by_phone)], [1, 1, 1])
+        self.assertEqual(by_name["data"]["dossiers"][0]["date_naissance"], "2000-01-01")
 
 
 class TestGetDossierStaff(TestCase):
@@ -102,6 +123,7 @@ class TestGetDossierStaff(TestCase):
             app.session = None
             app.pieces = []
             app.notes_concours = None
+            app.date_of_birth = "2001-02-03"
             app.requested_scholarships = None
             app.proposed_scholarships = None
             app.validated_scholarships = None
@@ -114,6 +136,7 @@ class TestGetDossierStaff(TestCase):
             res = get_dossier(dossier_id="CAN-1")
             app.check_permission.assert_called_once_with("read")
         self.assertTrue(res["ok"])
+        self.assertEqual(res["data"]["identite"]["date_naissance"], "2001-02-03")
 
     def test_invalid_dossier(self):
         ok, err = _patches()

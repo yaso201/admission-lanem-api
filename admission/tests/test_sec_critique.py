@@ -378,7 +378,8 @@ class TestSec3TokenExpiry(TestCase):
         mock_frappe.form_dict = {
             "session": "SES-001", "level_code": "LIS-L1",
             "consent_data_processing": True, "consent_cgv": True,
-            "identite": {"prenom": "T", "nom": "U", "email": "t@t.com", "tel": "+22990112233"},
+            "identite": {"prenom": "T", "nom": "U", "email": "t@t.com", "tel": "+22990112233",
+                         "date_of_birth": "2000-01-01"},
         }
         privacy = MagicMock(); privacy.name = "LEGAL-PRIV"
         cgv = MagicMock(); cgv.name = "LEGAL-CGV"
@@ -665,7 +666,8 @@ class TestSec5Integration(TestCase):
         mock_frappe.form_dict = {
             "session": "SES-001", "level_code": "LIS-L1",
             "consent_data_processing": True, "consent_cgv": True,
-            "identite": {"prenom": "Jean", "nom": "K", "email": "pas-un-email", "tel": "+22990112233"},
+            "identite": {"prenom": "Jean", "nom": "K", "email": "pas-un-email", "tel": "+22990112233",
+                         "date_of_birth": "2000-01-01"},
         }
         with patch("admission.api.legal._get_active_legal_document", return_value=MagicMock(name="LEGAL")):
             from admission.api.public import create_dossier

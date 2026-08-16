@@ -7,7 +7,7 @@ Couverture :
     frais 1 vs frais 2 (libellés) ; _rib_attachment lit le VRAI PDF de l'app
  D. send_enrolled (campus URL) + send_purge_notice (préavis J-7)
  E. verify_otp mono-canal (A0.1) — email OBLIGATOIRE ; tel vérifié seulement si soumis
- F. recover_dossier (M7) — réponse UNIFORME (anti-énumération), rotation token + reset OTP
+ F. recover_dossier (DEC-323) — réponse UNIFORME et job identique connu/inconnu
  G. Relances scheduler (M9) — SOP J+7 (flag anti-double) + préavis purge BRO
  H. receipt._email_body — template paiement, montant/reçu, nom ÉCHAPPÉ (fix audit)
 
@@ -238,43 +238,35 @@ class TestVerifyOtpSingleChannel(TestCase):
         self.assertEqual(result["error"]["code"], "OTP_INVALID")
 
 
-# ── F. recover_dossier (M7) — anti-énumération + rotation ──────────────────────
+# ── F. recover_dossier (DEC-323) — anti-énumération + job commun ──────────────
 
 
 class TestRecoverDossier(TestCase):
+    @patch(f"{PUB}._check_identity_rate_limits", return_value=None)
+    @patch(f"{PUB}._identity_recovery_cache")
     @patch(f"{PUB}.frappe")
-    def test_no_match_returns_generic(self, mock_frappe):
-        mock_frappe.get_all.return_value = []
-        with patch("admission.api.notifications.send_recovery_link") as send:
-            from admission.api.public import recover_dossier
-            result = recover_dossier(email="inconnu@x.bj")
+    def test_request_returns_exact_generic_and_enqueues(self, mock_frappe, _cache, _rate):
+        from admission.api.public import recover_dossier
+        result = recover_dossier(email="inconnu@x.bj")
         self.assertTrue(result["ok"])
-        self.assertIn("Si un dossier actif correspond", result["data"]["message"])
-        send.assert_not_called()
+        self.assertEqual(
+            result["data"]["message"],
+            "Si cette adresse porte des candidatures, un code vient d'être envoyé",
+        )
+        mock_frappe.enqueue.assert_called_once_with(
+            "admission.api.public.send_identity_recovery_otp",
+            queue="short", email="inconnu@x.bj", enqueue_after_commit=True,
+        )
 
-    @patch(f"{PUB}.now_datetime", return_value=get_datetime(NOW))
-    @patch(f"{PUB}._generate_token", return_value="ROTATED-TOK")
+    @patch(f"{PUB}._check_identity_rate_limits", return_value=None)
+    @patch(f"{PUB}._identity_recovery_cache")
     @patch(f"{PUB}.frappe")
-    def test_match_rotates_token_resets_otp_same_response(self, mock_frappe, _gen, _now):
-        mock_frappe.get_all.return_value = ["CAN-001"]
-        applicant = MagicMock()
-        applicant.name = "CAN-001"
-        mock_frappe.get_doc.return_value = applicant
-        with patch("admission.api.notifications.send_recovery_link") as send:
-            from admission.api.public import _hash, recover_dossier
-            result = recover_dossier(email="ama@x.bj")
-        # Réponse IDENTIQUE au cas « aucun dossier » (aucun oracle d'existence).
-        self.assertIn("Si un dossier actif correspond", result["data"]["message"])
-        self.assertEqual(applicant.dossier_token_hash, _hash("ROTATED-TOK"))
-        self.assertEqual(applicant.otp_verified, 0)  # double barrière ré-armée
-        send.assert_called_once_with(applicant, "ROTATED-TOK")
-
-    @patch(f"{PUB}.frappe")
-    def test_invalid_email_returns_generic_without_lookup(self, mock_frappe):
+    def test_invalid_email_uses_same_job_and_response(self, mock_frappe, _cache, _rate):
         from admission.api.public import recover_dossier
         result = recover_dossier(email="pas-un-email")
         self.assertTrue(result["ok"])
-        mock_frappe.get_all.assert_not_called()
+        mock_frappe.enqueue.assert_called_once()
+        self.assertEqual(mock_frappe.enqueue.call_args.kwargs["email"], "pas-un-email")
 
 
 # ── G. Relances scheduler (M9) ─────────────────────────────────────────────────

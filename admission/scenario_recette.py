@@ -82,7 +82,8 @@ def _tunnel_to_sop(prenom, nom, email, date_bac, persona):
     r = _payload(http.post(BASE + "create_dossier", json={
         "session": SESSION_ID, "level_code": "PRE-A1",
         "identite": {"prenom": prenom, "nom": nom, "email": email,
-                     "tel": "+22990000020", "date_bac": date_bac},
+                     "tel": "+22990000020", "date_of_birth": "2000-01-01",
+                     "date_bac": date_bac},
         "consent_data_processing": 1, "consent_cgv": 1,
         "idempotency_key": f"scenario-{RUN_ID[0]}-{email}",
     }))
