@@ -593,18 +593,15 @@
   },
   {
    "read": 1,
-   "role": "Admission Administratif",
-   "write": 1
+   "role": "Admission Administratif"
   },
   {
    "read": 1,
-   "role": "Admission Responsable",
-   "write": 1
+   "role": "Admission Responsable"
   },
   {
    "read": 1,
-   "role": "Admission Direction",
-   "write": 1
+   "role": "Admission Direction"
   }
  ],
  "sort_field": "modified",

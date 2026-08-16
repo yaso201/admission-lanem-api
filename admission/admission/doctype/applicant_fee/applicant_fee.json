@@ -92,8 +92,7 @@
   },
   {
    "read": 1,
-   "role": "Admission Administratif",
-   "write": 1
+   "role": "Admission Administratif"
   },
   {
    "read": 1,

@@ -2,7 +2,7 @@
 
 W1 withdraw (Adm, 8 états Workflow, motif obligatoire, notif neutre, stamps) ·
 W4 close_session (Direction, dry-run sans écriture, mapping REF/DES, motifs+log+notifs,
-non-bloquant par dossier) · W5 set_waitlist_rank (Resp, ATT only, rang opposable) ·
+atomique sur toute la session) · W5 set_waitlist_rank (Resp, ATT only, rang opposable) ·
 W6 gate d'état valider_notes. Style unitaire mocké.
 """
 
@@ -129,14 +129,14 @@ class TestValiderNotesStateGate(TestCase):
 class TestCloseSession(TestCase):
     def _rows(self):
         import types
-        return [types.SimpleNamespace(name=f"CAN-{i}", status=s)
+        return [types.SimpleNamespace(name=f"CAN-{i}", status=s, notes_validated=1)
                 for i, s in enumerate(["BRO", "SOU", "ETU", "ATT", "ADM", "ACO", "INC", "ACC"], 1)]
 
     def test_dry_run_previews_without_writing(self):
         ok, err = _patches()
         with patch(f"{STAFF}.frappe") as mf, ok, err:
             mf.db.exists.return_value = True
-            sess = MagicMock(); sess.is_open = 1; sess.label = "Octobre 2026"
+            sess = MagicMock(); sess.is_open = 1; sess.is_prepa_session = 0; sess.label = "Octobre 2026"
             mf.get_doc.return_value = sess
             mf.get_all.return_value = self._rows()
             from admission.api.staff import close_session
@@ -146,18 +146,22 @@ class TestCloseSession(TestCase):
         self.assertEqual(res["data"]["total"], 8)
         self.assertEqual(res["data"]["bascules"]["ETU→REF"], 1)
         self.assertEqual(res["data"]["bascules"]["INC→DES"], 1)
+        self.assertTrue(res["data"]["can_execute"])
         mf.db.set_value.assert_not_called()      # PRÉVISUALISATION = zéro écriture
 
-    @patch("admission.admission.doctype.admission_applicant.admission_applicant.write_transition_log")
-    def test_execute_maps_notifies_and_logs(self, mlog):
+    def test_execute_maps_notifies_and_logs(self):
         ok, err = _patches()
+        applicants = {f"CAN-{i}": MagicMock(name=f"app-{i}") for i in range(1, 9)}
+        for name, app in applicants.items():
+            app.name = name
+            app.flags = MagicMock()
         with patch(f"{STAFF}.frappe") as mf, ok, err, \
              patch("admission.api.sessions.set_lifecycle") as mset, \
              patch(f"{STAFF}.send_decision_notification") as mref, \
              patch(f"{STAFF}.send_withdrawal_notification") as mdes:
             mf.db.exists.return_value = True
-            sess = MagicMock(); sess.is_open = 1; sess.label = "Octobre 2026"
-            mf.get_doc.side_effect = lambda dt, n=None: sess if dt == "Admission Session" else MagicMock()
+            sess = MagicMock(); sess.is_open = 1; sess.is_prepa_session = 0; sess.label = "Octobre 2026"
+            mf.get_doc.side_effect = lambda dt, n=None: sess if dt == "Admission Session" else applicants[n]
             mf.get_all.return_value = self._rows()
             from admission.api.staff import close_session
             res = close_session(session="SES-1", dry_run=0)
@@ -168,35 +172,33 @@ class TestCloseSession(TestCase):
         self.assertEqual(res["data"]["echecs"], 0)
         self.assertEqual(mref.call_count, 5)     # mails décision motivée
         self.assertEqual(mdes.call_count, 3)     # mails clôture neutre
-        self.assertEqual(mlog.call_count, 8)     # Transition Log manuel par dossier
-        self.assertEqual(mlog.call_args.kwargs.get("action"), "Session Close")
+        for app in applicants.values():
+            app.save.assert_called_once_with(ignore_permissions=True)
+            self.assertEqual(app.flags.transition_action, "Session Close")
         # Session fermée via la source unique set_lifecycle (état + miroir) — GESTION-CALENDRIER
         mset.assert_called_once_with("SES-1", "Closed")
-        dossier_writes = [c for c in mf.db.set_value.call_args_list
-                          if c[0][0] == "Admission Applicant"]
-        self.assertEqual(len(dossier_writes), 8)
-        sample = dossier_writes[0][0][2]
-        self.assertIn("decided_by", sample)
-        self.assertTrue(sample.get("motif_refus") or sample.get("motif_desistement"))
+        mf.db.commit.assert_not_called()         # commit porté par la requête, jamais par la boucle
         mf.only_for.assert_called_with(roles_at_or_above("Admission Direction"))
 
-    @patch("admission.admission.doctype.admission_applicant.admission_applicant.write_transition_log")
-    def test_one_failure_does_not_stop_the_batch(self, mlog):
+    def test_one_failure_rolls_back_the_whole_batch(self):
         ok, err = _patches()
+        apps = [MagicMock(name=f"app-{i}") for i in range(3)]
+        for i, app in enumerate(apps, 1):
+            app.name = f"CAN-{i}"
+            app.flags = MagicMock()
+        apps[1].save.side_effect = Exception("db down")
         with patch(f"{STAFF}.frappe") as mf, ok, err, \
-             patch(f"{STAFF}.send_decision_notification"), \
-             patch(f"{STAFF}.send_withdrawal_notification"):
+             patch(f"{STAFF}.send_decision_notification") as mref, \
+             patch(f"{STAFF}.send_withdrawal_notification") as mdes:
             mf.db.exists.return_value = True
-            sess = MagicMock(); sess.is_open = 0; sess.label = "X"
-            mf.get_doc.side_effect = lambda dt, n=None: sess if dt == "Admission Session" else MagicMock()
+            sess = MagicMock(); sess.is_open = 0; sess.is_prepa_session = 0; sess.label = "X"
+            by_name = {a.name: a for a in apps}
+            mf.get_doc.side_effect = lambda dt, n=None: sess if dt == "Admission Session" else by_name[n]
             mf.get_all.return_value = self._rows()[:3]
-            calls = {"n": 0}
-            def boom(*a, **k):
-                calls["n"] += 1
-                if calls["n"] == 2:
-                    raise Exception("db down")
-            mf.db.set_value.side_effect = boom
             from admission.api.staff import close_session
             res = close_session(session="SES-1", dry_run=0)
-        self.assertEqual(res["data"]["echecs"], 1)
-        self.assertEqual(res["data"]["refuses"] + res["data"]["desistes"], 2)
+        self.assertEqual(res["error"]["code"], "SESSION_CLOSE_FAILED")
+        mf.db.rollback.assert_called_once()
+        mf.db.commit.assert_not_called()
+        mref.assert_not_called()
+        mdes.assert_not_called()

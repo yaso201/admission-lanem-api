@@ -55,11 +55,17 @@ class TestConfirmGuards(TestCase):
         pay = MagicMock()
         pay.payment_status = "Confirmed"
         pay.name = "REC-2026-00001"
+        pay.applicant_fee = "FEE-1"
+        # Un rejeu déjà acquis n'est pas une nouvelle confirmation : il reste idempotent même
+        # après progression du dossier hors de la fenêtre de paiement.
+        applicant = MagicMock(); applicant.status = "ETU"
+        fee = MagicMock(); fee.fee_type = "application"
         with patch(f"{STAFF}.frappe") as mf, \
              patch(f"{STAFF}._resolve_pending_payment", return_value=pay), \
              patch(f"{STAFF}._ok", side_effect=lambda d: {"ok": True, **d}), \
              patch(f"{STAFF}._error", side_effect=lambda c, m, s=400: {"ok": False, "code": c}):
             mf.db.exists.return_value = True
+            mf.get_doc.side_effect = lambda dt, name=None: applicant if dt == "Admission Applicant" else fee
             from admission.api.staff import confirm_offline_payment
             res = confirm_offline_payment(dossier_id="CAN-2026-00001")
         self.assertTrue(res.get("idempotent"))
@@ -81,20 +87,24 @@ class TestConfirmGuards(TestCase):
         pay.payment_status = "Pending"
         pay.name = "REC-2026-00001"
         pay.applicant_fee = "FEE-1"
-        applicant = MagicMock(); fee = MagicMock()
+        applicant = MagicMock(); applicant.status = "SOP"
+        fee = MagicMock(); fee.fee_type = "application"
         with patch(f"{STAFF}.frappe") as mf, \
              patch(f"{STAFF}._resolve_pending_payment", return_value=pay), \
              patch(f"{STAFF}._assert_fee_unpaid", return_value=None), \
              patch(f"{STAFF}.apply_confirmed_payment_cascade") as casc, \
              patch(f"{STAFF}._ok", side_effect=lambda d: {"ok": True, **d}), \
              patch(f"{STAFF}._error", side_effect=lambda c, m, s=400: {"ok": False, "code": c}), \
-             patch(f"{STAFF}.now_datetime", return_value="2026-06-10 10:00:00"):
+             patch(f"{STAFF}.now_datetime", return_value="2026-06-10 10:00:00"), \
+             patch(f"{STAFF}.send_payment_receipt"):
             mf.db.exists.return_value = True
+            mf.session.user = "admin@lanem.bj"
             mf.get_doc.side_effect = lambda dt, name=None: applicant if dt == "Admission Applicant" else fee
             from admission.api.staff import confirm_offline_payment
             res = confirm_offline_payment(dossier_id="CAN-2026-00001", payment_mode="cash",
                                           justificatif="/private/files/recu.pdf")
         self.assertEqual(pay.payment_status, "Confirmed")
+        self.assertEqual(pay.confirmed_by, "admin@lanem.bj")
         self.assertEqual(pay.justificatif, "/private/files/recu.pdf")
         pay.save.assert_called_once()           # save → validate (justif) + hook notif UF
         casc.assert_called_once()                # cascade fee Paid + SOP→SOU

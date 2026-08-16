@@ -49,7 +49,14 @@ from admission.api.notifications import (
 from admission.api.receipt import send_payment_receipt
 
 from admission.api.permissions import roles_at_or_above
-from admission.api._actions import available_actions, can_control_pieces, can_manage_payments, action_context
+from admission.api._actions import (
+    action_context,
+    available_actions,
+    can_control_pieces,
+    can_manage_payments,
+    payment_allowed_states,
+    payment_state_allowed,
+)
 from admission.api import exam_grading
 
 # FIX-ROLES-HIERARCHIE — modele B ascendant : chaque action declare son NIVEAU MIN ;
@@ -325,24 +332,29 @@ def confirm_offline_payment(dossier_id=None, payment_mode=None, justificatif=Non
     frappe.only_for(CONFIRM_ROLES)
     if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
         return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
-    # AUDIT-RECETTE (F2) + D-CONF-01 : pas d'encaissement sur dossier TERMINAL — un Pending qui traîne
-    # sur un dossier désisté/refusé/rejeté/inscrit ne doit pas devenir de l'argent confirmé. Aligné sur
-    # la constante partagée PAYMENT_FORBIDDEN_STATES (symétrie avec la garde webhook).
-    current_status = frappe.db.get_value("Admission Applicant", dossier_id, "status")
-    if current_status in PAYMENT_FORBIDDEN_STATES:
-        return _error("INVALID_STATE",
-                      f"Confirmation impossible : dossier clos ({current_status}).", 409)
     # FIX-D-CONF-04 : garde de périmètre AVANT toute confirmation (l'argent est un effet fort).
-    scope_err = _guard_write_scope(frappe.get_doc("Admission Applicant", dossier_id))
+    applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)
     if scope_err:
         return scope_err
 
     payment = _resolve_pending_payment(dossier_id, payment_id)
     if not payment:
         return _error("NO_PENDING_PAYMENT", "Aucun paiement en attente à confirmer.", 404)
+    # Un acte déjà acquis reste idempotent, même si le dossier a avancé depuis : ce rejeu ne
+    # constitue pas une nouvelle confirmation et ne produit aucun effet.
     if payment.payment_status != "Pending":
         return _ok({"idempotent": True, "payment_id": payment.name, "status": payment.payment_status})
-
+    fee = frappe.get_doc("Applicant Fee", payment.applicant_fee) if payment.applicant_fee else None
+    if not fee:
+        return _error("INVALID_FEE", "Le paiement n'est relié à aucun frais valide.", 409)
+    if not payment_state_allowed(applicant.status, fee.fee_type):
+        allowed = "/".join(payment_allowed_states(fee.fee_type)) or "aucun état"
+        return _error(
+            "INVALID_STATE",
+            f"Confirmation du frais {fee.fee_type} possible seulement depuis {allowed}.",
+            409,
+        )
     if payment_mode:
         norm = OFFLINE_MODES.get(str(payment_mode).strip().lower())
         if not norm:
@@ -359,14 +371,13 @@ def confirm_offline_payment(dossier_id=None, payment_mode=None, justificatif=Non
     # garanti par l'index unique confirmed_fee, R3 — ici on remplace un 500 par un 409 propre).
     # Pré-check = garde amont B1 RÉUTILISÉE (_assert_fee_unpaid) : fee déjà crédité → 409 « déjà réglé »,
     # le Pending manuel reste INTACT (canal HUMAIN : le staff décide — rejeter/rembourser).
-    fee = frappe.get_doc("Applicant Fee", payment.applicant_fee) if payment.applicant_fee else None
-    if fee:
-        already = _assert_fee_unpaid(fee)
-        if already:
-            return already
+    already = _assert_fee_unpaid(fee)
+    if already:
+        return already
 
     payment.payment_status = "Confirmed"
     payment.paid_at = now_datetime()
+    payment.confirmed_by = frappe.session.user
     # save() → validate (justificatif obligatoire Cash/Bank) + hook on_payment_update (notif UF)
     try:
         payment.save(ignore_permissions=True)
@@ -377,7 +388,6 @@ def confirm_offline_payment(dossier_id=None, payment_mode=None, justificatif=Non
         log_event("payment_offline", "already_paid_race", dossier_id=dossier_id, level="warning")
         return _error("ALREADY_PAID", "Ce frais vient d'être réglé par un autre paiement.", 409)
 
-    applicant = frappe.get_doc("Admission Applicant", dossier_id)
     apply_confirmed_payment_cascade(applicant, fee)
     send_payment_receipt(payment, applicant=applicant, fee=fee)  # reçu PDF mailé (non-bloquant)
 
@@ -572,6 +582,9 @@ def accept_admission(dossier_id=None, bourses_validees=None):
         return scope_err
     if applicant.status != "ADM":
         return _error("INVALID_STATE", "Acceptation possible seulement depuis Admissible (ADM).", 409)
+    notes_gate = _require_validated_notes_if_prepa(applicant)
+    if notes_gate:
+        return notes_gate
     if bourses_validees is not None:
         bourses_err = _apply_validated_scholarships(applicant, bourses_validees)
         if bourses_err:
@@ -1832,6 +1845,9 @@ def set_exam_coefficients(session_id=None, coefficients=None):
     frappe.only_for(RESP_UP)
     if not session_id or not frappe.db.exists("Admission Session", session_id):
         return _error("INVALID_SESSION", "Session inconnue.", 404)
+    session = frappe.get_doc("Admission Session", session_id)
+    if not bool(getattr(session, "is_prepa_session", 0)):
+        return _error("NOT_PREPA", "Les coefficients sont réservés aux sessions Prépa.", 409)
     parsed, err = exam_grading.validate_coefficients(coefficients)
     if err:
         return _error("COEF_INVALID", err, 400)
@@ -1840,7 +1856,6 @@ def set_exam_coefficients(session_id=None, coefficients=None):
     if coefficients_frozen(session_id):
         return _error("COEF_LOCKED", "Coefficients verrouillés : une note a déjà été saisie dans "
                       "cette session. La pondération ne se change plus.", 409)
-    session = frappe.get_doc("Admission Session", session_id)
     session.exam_coefficients = json.dumps(parsed, ensure_ascii=False)
     session.save(ignore_permissions=True)
     log_event("set_exam_coefficients", "success", dossier_id=session_id)
@@ -2409,8 +2424,9 @@ def initiate_online_payment(dossier_id=None, idempotency_key=None, fee_type="app
     # candidat. Avant : initiation possible sur dossier REF/DES, et création du frais 2
     # AVANT toute acceptation (incohérence argent/états).
     is_enrollment = str(fee_type).strip().lower() == "enrollment"
-    allowed = ("ACC",) if is_enrollment else ("BRO", "SOP", "SOU")
-    if applicant.status not in allowed:
+    guarded_fee_type = "enrollment" if is_enrollment else "application"
+    allowed = payment_allowed_states(guarded_fee_type)
+    if not payment_state_allowed(applicant.status, guarded_fee_type):
         return _error(
             "INVALID_STATE",
             f"Initiation {'frais 2' if is_enrollment else 'frais 1'} possible seulement depuis {', '.join(allowed)}.",
@@ -2531,17 +2547,11 @@ def close_session(session=None, motif=None, dry_run=1):
     non aboutis selon SESSION_CLOSE_MAP, avec notification candidat (REF → mail décision
     motivée ; DES → mail clôture neutre). Motif générique par défaut, surchargé possible.
 
-    Transitions par db.set_value + Transition Log manuel (action « Session Close ») —
-    pattern établi (resubmit/cascade) : geste de masse système déclenché par la Direction ;
-    le Workflow ne porte pas ces sorties pour ce rôle et INC n'a aucune sortie. decided_by/
-    decision_date + motif posés par dossier (trace individuelle complète). Idempotent :
-    une session déjà clôturée sans dossier basculable renvoie des comptes à zéro.
+    Transitions par doc.save(ignore_permissions=True) : le contrôleur revalide les invariants et
+    journalise chaque transition. Le bypass du Workflow est privé à cet endpoint de masse ; il ne
+    bypass jamais le contrôleur. L'opération est atomique : aucun commit partiel.
     """
     from frappe.utils import cint
-    from admission.admission.doctype.admission_applicant.admission_applicant import (
-        write_transition_log,
-    )
-
     frappe.only_for(DIR_UP)
     if not session or not frappe.db.exists("Admission Session", session):
         return _error("INVALID_SESSION", "Session inconnue.", 404)
@@ -2554,46 +2564,73 @@ def close_session(session=None, motif=None, dry_run=1):
         "Admission Applicant",
         filters={"session": session, "anonymized": ("!=", 1),
                  "status": ["in", list(SESSION_CLOSE_MAP)]},
-        fields=["name", "status"],
+        fields=["name", "status", "notes_validated"],
     )
     preview = {}
     for r in rows:
         target = SESSION_CLOSE_MAP[r.status]
         preview.setdefault(f"{r.status}→{target}", 0)
         preview[f"{r.status}→{target}"] += 1
+    blocking = sorted(
+        r.name for r in rows
+        if bool(getattr(sess, "is_prepa_session", 0))
+        and SESSION_CLOSE_MAP[r.status] == "REF"
+        and not bool(getattr(r, "notes_validated", 0))
+    )
+    blocking_message = (
+        f"{len(blocking)} dossier{'s' if len(blocking) > 1 else ''} Prépa sans notes validées : "
+        + ", ".join(blocking)
+        if blocking else None
+    )
     if cint(dry_run):
         return _ok({"session": session, "is_open": bool(sess.is_open), "dry_run": True,
-                    "bascules": preview, "total": len(rows)})
+                    "bascules": preview, "total": len(rows),
+                    "can_execute": not blocking,
+                    "blocking_dossiers": blocking,
+                    "blocking_message": blocking_message})
+    if blocking:
+        return _error("PREPA_NOTES_NOT_VALIDATED", blocking_message, 409)
 
     motif = (str(motif).strip() if motif and str(motif).strip()
              else f"Clôture de la session {sess.label or session} — candidature non aboutie.")
-    if sess.is_open:
-        from admission.api.sessions import set_lifecycle
-        set_lifecycle(session, "Closed")   # GESTION-CALENDRIER : Fermée (miroir is_open=0)
-    done, failed = {"REF": 0, "DES": 0}, 0
-    for r in rows:
-        target = SESSION_CLOSE_MAP[r.status]
-        try:
+    done, changed = {"REF": 0, "DES": 0}, []
+    try:
+        # Le Workflow natif ne porte pas toutes les sorties de clôture. Ce flag serveur privé
+        # désactive sa topologie uniquement ; validate() et les invariants NT-S restent exécutés.
+        frappe.flags.nt_s_session_close = True
+        if sess.is_open:
+            from admission.api.sessions import set_lifecycle
+            set_lifecycle(session, "Closed")
+        for r in rows:
+            target = SESSION_CLOSE_MAP[r.status]
+            applicant = frappe.get_doc("Admission Applicant", r.name)
             values = {"status": target, "decided_by": frappe.session.user,
                       "decision_date": now_datetime()}
             values["motif_refus" if target == "REF" else "motif_desistement"] = motif
-            frappe.db.set_value("Admission Applicant", r.name, values)
+            applicant.update(values)
+            applicant.flags.transition_action = "Session Close"
+            applicant.save(ignore_permissions=True)
             _reject_pending_payments(r.name)  # F3 : clôture = plus rien d'encaissable
-            write_transition_log(r.name, r.status, target, actor=frappe.session.user,
-                                 source="staff_api", action="Session Close")
-            applicant = frappe.get_doc("Admission Applicant", r.name)
-            if target == "REF":
-                send_decision_notification(applicant, "refusé", motif=motif)
-            else:
-                send_withdrawal_notification(applicant, motif)
+            changed.append((applicant, target))
             done[target] += 1
-        except Exception:
-            failed += 1
-            frappe.logger("staff").warning(
-                f"Session close failed for {r.name}: {frappe.get_traceback()}")
-    frappe.db.commit()
+    except Exception:
+        frappe.db.rollback()
+        log_event("close_session", "rolled_back", ref=session, level="error")
+        return _error(
+            "SESSION_CLOSE_FAILED",
+            "Clôture annulée : aucune session ni aucun dossier n'a été modifié.",
+            500,
+        )
+    finally:
+        frappe.flags.nt_s_session_close = False
+
+    for applicant, target in changed:
+        if target == "REF":
+            send_decision_notification(applicant, "refusé", motif=motif)
+        else:
+            send_withdrawal_notification(applicant, motif)
     log_event("close_session", "success", session=session,
-              refused=done["REF"], withdrawn=done["DES"], failed=failed)
+              refused=done["REF"], withdrawn=done["DES"], failed=0)
     return _ok({"session": session, "is_open": False, "dry_run": False,
-                "refuses": done["REF"], "desistes": done["DES"], "echecs": failed,
+                "refuses": done["REF"], "desistes": done["DES"], "echecs": 0,
                 "bascules": preview, "total": len(rows)})

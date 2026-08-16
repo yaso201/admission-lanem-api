@@ -13,6 +13,7 @@
   "amount_xof",
   "payment_status",
   "paid_at",
+  "confirmed_by",
   "justificatif",
   "provider_section",
   "provider",
@@ -89,6 +90,15 @@
    "fieldtype": "Datetime",
    "in_list_view": 1,
    "label": "Paid At"
+  },
+  {
+   "description": "NT-S/DEC-F : compte ayant confirme manuellement le paiement ; source du signal paiement/decision par le meme acteur.",
+   "fieldname": "confirmed_by",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Confirmed By",
+   "options": "User",
+   "read_only": 1
   },
   {
    "description": "Scan du recu (espece = recu comptable, banque = preuve de virement). Obligatoire pour confirmer un paiement Cash/Bank ; non requis en Online (webhook fait foi).",
@@ -176,8 +186,7 @@
   },
   {
    "read": 1,
-   "role": "Admission Administratif",
-   "write": 1
+   "role": "Admission Administratif"
   },
   {
    "read": 1,

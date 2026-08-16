@@ -4,6 +4,26 @@ import frappe
 from frappe.model.document import Document
 from frappe.utils import now_datetime
 
+from admission.api._log import log_event
+
+
+# NT-S — une transition vers l'un de ces états porte une décision d'admission.
+_DECISION_STATES = frozenset({"ADM", "ATT", "ACO", "REF", "ACC"})
+_SENSITIVE_FIELDS = (
+	"status", "session",
+	"motif_incompletude", "motif_refus", "motif_rejet", "motif_desistement",
+	"decided_by", "decision_date", "rang_liste_attente",
+	"notes_concours", "notes_validated", "notes_validated_by", "notes_validated_date",
+	"conditionnel", "bac_verified", "bac_verified_by", "bac_verified_date", "resoumis",
+	"proposed_scholarships", "scholarships_proposed_by", "scholarships_proposed_date",
+	"validated_scholarships", "scholarships_validated_by", "scholarships_validated_date",
+	"pieces",
+)
+
+
+def _value(doc, fieldname):
+	return doc.get(fieldname) if hasattr(doc, "get") else getattr(doc, fieldname, None)
+
 
 class AdmissionApplicant(Document):
 	def autoname(self):
@@ -23,6 +43,8 @@ class AdmissionApplicant(Document):
 
 		old = self.get_doc_before_save()
 		if old:
+			self._enforce_prepa_decision_gate()
+			self._warn_sm_sensitive_write()
 			old_status = old.status
 			new_status = self.status
 			if old_status != new_status:
@@ -35,11 +57,80 @@ class AdmissionApplicant(Document):
 					self._gate_enrollment_fee_paid()
 					self._gate_data_transfer_consent()
 
+	def validate_workflow(self):
+		"""Clôture institutionnelle : bypass ciblé de la topologie, jamais des invariants métier."""
+		if getattr(frappe.flags, "nt_s_session_close", False):
+			return
+		return super().validate_workflow()
+
 	def on_update(self):
 		if getattr(self.flags, "status_changed_to", None) == "INS":
 			self._trigger_bridge()
 			self._trigger_double_check()
 		self._record_transition()
+		self._warn_same_actor_payment_decision()
+
+	def _enforce_prepa_decision_gate(self):
+		"""NT-S/DEC-B — invariant absolu, y compris SysMgr et save(ignore_permissions=True).
+
+		Toute nouvelle décision Prépa exige des notes validées. La règle vit ici afin que les
+		endpoints, le Workflow et les scripts passant par ``doc.save`` partagent la même garde.
+		"""
+		old = self.get_doc_before_save()
+		if not old or _value(old, "status") == self.status or self.status not in _DECISION_STATES:
+			return
+		# La validation doit précéder la décision. Vérifier aussi l'ancienne valeur interdit
+		# à un break-glass de forger ``notes_validated=1`` dans la même sauvegarde.
+		if _value(old, "notes_validated") and self.notes_validated:
+			return
+		is_prepa = frappe.db.get_value("Admission Session", self.session, "is_prepa_session")
+		if is_prepa:
+			frappe.throw(
+				"Décision impossible : les notes de concours ne sont pas validées.",
+				title="Notes non validées",
+			)
+
+	def _warn_sm_sensitive_write(self):
+		"""Journalise le break-glass SM sans exposer les anciennes/nouvelles valeurs.
+
+		Les endpoints internes utilisent ``ignore_permissions=True`` et ne sont donc pas du
+		break-glass. Un save générique SM reste possible, track_changes produit ``Version`` et ce
+		warning structuré rend l'acte visible. Les invariants absolus sont exécutés avant ce point.
+		"""
+		old = self.get_doc_before_save()
+		if not old or getattr(getattr(self, "flags", None), "ignore_permissions", False):
+			return
+		user = frappe.session.user
+		if "System Manager" not in frappe.get_roles(user):
+			return
+		changed = [field for field in _SENSITIVE_FIELDS if _value(old, field) != _value(self, field)]
+		if changed:
+			log_event(
+				"break_glass_sensitive_write", "allowed",
+				dossier_id=self.name, level="warning", actor=user,
+				doctype="Admission Applicant", fields=",".join(changed),
+			)
+
+	def _warn_same_actor_payment_decision(self):
+		"""NT-S/DEC-F — signale, sans bloquer, paiement et décision par le même compte."""
+		to_status = getattr(getattr(self, "flags", None), "status_changed_to", None)
+		if to_status not in _DECISION_STATES:
+			return
+		try:
+			user = frappe.session.user
+			payment = frappe.db.exists(
+				"Applicant Fee Payment",
+				{"applicant": self.name, "payment_status": "Confirmed", "confirmed_by": user},
+			)
+			if payment:
+				log_event(
+					"actor_separation", "same_actor_payment_decision",
+					dossier_id=self.name, ref=payment, level="warning",
+					actor=user, decision_status=to_status,
+				)
+		except Exception:
+			# Signal d'audit non bloquant : la décision métier ne dépend jamais du logger.
+			pass
 
 	def _record_transition(self):
 		"""SOCLE-0-AUDIT — journalise la transition de status (append-only, non-bloquant)."""
@@ -51,6 +142,7 @@ class AdmissionApplicant(Document):
 		self.flags.transition_recorded = True  # idempotence : 1 transition = 1 entrée
 		try:
 			source, action = _detect_transition_context()
+			action = getattr(self.flags, "transition_action", None) or action
 			write_transition_log(
 				self.name,
 				getattr(self.flags, "transition_from", None),

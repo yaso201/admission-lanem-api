@@ -22,8 +22,15 @@ from admission.api.permissions import roles_at_or_above
 
 # États où le désistement (withdraw) est offert (miroir WITHDRAW_STATES / renderActions front).
 _WITHDRAW_STATES = {"BRO", "SOP", "SOU", "ETU", "ATT", "ADM", "ACO", "ACC"}
-# Dossiers clos : aucune gestion de paiement (miroir PAYMENT_FORBIDDEN_STATES back).
-_PAYMENT_FORBIDDEN = {"ABS", "REF", "REJ", "DES", "INS"}
+# NT-S/DEC-C — bornes uniques des actes de paiement, consommées par les endpoints et l'UX.
+_PAYMENT_STATES_BY_FEE_TYPE = {
+    "application": ("BRO", "SOP", "SOU"),
+    "competition": ("BRO", "SOP", "SOU"),
+    "enrollment": ("ACC",),
+}
+_PAYMENT_MANAGE_STATES = frozenset(
+    state for states in _PAYMENT_STATES_BY_FEE_TYPE.values() for state in states
+)
 
 
 def _has_requested(applicant):
@@ -32,6 +39,15 @@ def _has_requested(applicant):
         return bool(json.loads(applicant.requested_scholarships or "[]"))
     except (ValueError, TypeError):
         return False
+
+
+def payment_allowed_states(fee_type):
+    """États autorisés pour le type de frais ; tuple vide pour un type inconnu."""
+    return _PAYMENT_STATES_BY_FEE_TYPE.get(str(fee_type or "").strip().lower(), ())
+
+
+def payment_state_allowed(status, fee_type):
+    return status in payment_allowed_states(fee_type)
 
 
 # FIX-ROLES-HYBRIDE-WORKFLOW — chaque règle : (applicant, is_prepa, ctx) -> (rôle_base, MODE) ou None.
@@ -129,6 +145,8 @@ def can_control_pieces(applicant, roles):
 
 
 def can_manage_payments(applicant, roles):
-    """Confirmation/initiation de paiement : garde back CONFIRM_ROLES + dossier non clos
-    (PAYMENT_FORBIDDEN_STATES). Le front garde sa logique per-paiement (pending)."""
-    return applicant.status not in _PAYMENT_FORBIDDEN and _authorized(("Admission Administratif", _ASC), roles or [])
+    """UX paiement : union exacte des états où frais 1 ou frais 2 est actionnable.
+
+    Le détail par type reste re-gardé par ``payment_state_allowed`` dans chaque endpoint.
+    """
+    return applicant.status in _PAYMENT_MANAGE_STATES and _authorized(("Admission Administratif", _ASC), roles or [])
