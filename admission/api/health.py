@@ -15,6 +15,7 @@ import json
 import frappe
 from frappe.rate_limiter import rate_limit
 
+from admission import __version__
 from admission.api._log import log_event
 from admission.api.public import _error, _ok
 
@@ -98,7 +99,12 @@ def check():
     healthy, checks = _run_checks()
     if not healthy:
         frappe.local.response["http_status_code"] = 503
-    return {"ok": healthy, "status": "healthy" if healthy else "degraded", "checks": checks}
+    return {
+        "ok": healthy,
+        "status": "healthy" if healthy else "degraded",
+        "version": __version__,
+        "checks": checks,
+    }
 
 
 # ── ingestion erreurs front (endpoint public durci) ───────────────────────────
