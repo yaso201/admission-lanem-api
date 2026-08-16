@@ -215,12 +215,31 @@ def duplicate_create(sessions=None, shift_days=DEFAULT_SHIFT_DAYS, academic_year
     return _ok(_create_duplicates(names, shift_days, academic_year, code_overrides))
 
 
+def _session_guard(session):
+    """CAL-14 (DEC-4) : distingue un identifiant de session MANQUANT/invalide d'une session
+    INTROUVABLE, et JOURNALISE l'id reçu. Motif : le front CAL-14 pouvait envoyer l'état de
+    l'accordéon (« 1 ») à la place de l'identifiant — un « Session inconnue » unique masquait un
+    mauvais paramètre en le faisant passer pour une session disparue. Log en `error` (PAS `warning` :
+    hors dev-server, default_log_level=ERROR rendrait un warning muet en prod — leçon REPRISE-DOSSIER).
+    Renvoie la réponse `_error` à retourner, ou None si l'identifiant est présent ET existe."""
+    if not session:
+        frappe.logger("calendar").error(
+            f"action calendrier refusée : identifiant de session manquant/vide (reçu {session!r})")
+        return _error("SESSION_ID_MISSING", "Identifiant de session manquant ou invalide.", 400)
+    if not frappe.db.exists("Admission Session", session):
+        frappe.logger("calendar").error(
+            f"action calendrier refusée : session introuvable (id reçu {session!r})")
+        return _error("SESSION_NOT_FOUND", "Session introuvable.", 404)
+    return None
+
+
 @frappe.whitelist(methods=["POST"])
 def delete_draft(session=None):
     """Supprime une session en brouillon (le filet, §3 #3)."""
     frappe.only_for(RESP_UP)
-    if not session:
-        return _error("NO_SESSION", "Session manquante.", 400)
+    err = _session_guard(session)
+    if err:
+        return err
     return _ok(_delete_draft(session))
 
 
@@ -389,8 +408,9 @@ def _as_text(v):
 def open_session(session=None):
     """Ouvre une session (Draft → Open) — acte de la DIRECTION (GK4)."""
     frappe.only_for(DIR_UP)
-    if not session or not frappe.db.exists("Admission Session", session):
-        return _error("INVALID_SESSION", "Session inconnue.", 404)
+    err = _session_guard(session)
+    if err:
+        return err
     return _ok(_open_session(session))
 
 
@@ -398,8 +418,9 @@ def open_session(session=None):
 def update_draft(session=None, values=None):
     """Modifie librement un brouillon — le Responsable saisit."""
     frappe.only_for(RESP_UP)
-    if not session or not frappe.db.exists("Admission Session", session):
-        return _error("INVALID_SESSION", "Session inconnue.", 404)
+    err = _session_guard(session)
+    if err:
+        return err
     if isinstance(values, str):
         try:
             values = json.loads(values)
@@ -412,8 +433,9 @@ def update_draft(session=None, values=None):
 def propose_changes(session=None, changes=None):
     """Propose des changements de dates sur une session publiée — le Responsable saisit."""
     frappe.only_for(RESP_UP)
-    if not session or not frappe.db.exists("Admission Session", session):
-        return _error("INVALID_SESSION", "Session inconnue.", 404)
+    err = _session_guard(session)
+    if err:
+        return err
     if isinstance(changes, str):
         try:
             changes = json.loads(changes)
@@ -428,8 +450,9 @@ def propose_changes(session=None, changes=None):
 def validate_changes(session=None):
     """Valide les modifications en attente (applique + réémet si épreuve) — la DIRECTION valide."""
     frappe.only_for(DIR_UP)
-    if not session or not frappe.db.exists("Admission Session", session):
-        return _error("INVALID_SESSION", "Session inconnue.", 404)
+    err = _session_guard(session)
+    if err:
+        return err
     return _ok(_validate_changes(session))
 
 
@@ -437,6 +460,7 @@ def validate_changes(session=None):
 def reject_changes(session=None):
     """Écarte les modifications en attente — la DIRECTION valide (ou rejette)."""
     frappe.only_for(DIR_UP)
-    if not session or not frappe.db.exists("Admission Session", session):
-        return _error("INVALID_SESSION", "Session inconnue.", 404)
+    err = _session_guard(session)
+    if err:
+        return err
     return _ok(_reject_changes(session))
