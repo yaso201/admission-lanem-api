@@ -10,7 +10,7 @@ from redis.exceptions import RedisError
 
 import frappe
 from frappe.rate_limiter import rate_limit
-from frappe.utils import add_days, add_to_date, get_datetime, getdate, now_datetime, validate_email_address
+from frappe.utils import add_days, add_to_date, cint, get_datetime, getdate, now_datetime, validate_email_address
 
 from admission.api._config import _get_campus_config, _pii_transport_allowed  # HELPERS-DEDUP + DAT-2 garde transport
 from admission.api._log import log_event  # OBS-2 : log structuré + corrélation dossier_id
@@ -128,6 +128,38 @@ IDENTITY_RECOVERY_SESSION_TTL_SECONDS = 30 * 60
 # règle : le claim (DEC-333), la garde d'écriture (_require_candidate_editable) et le
 # flag `reprenable` servi au front (pur renderer) la consomment tous les trois.
 CANDIDATE_EDITABLE_STATUSES = ("BRO", "INC")
+
+
+def _online_payment_enabled():
+	"""OUVERTURE-SOP (DEC-334) — drapeau serveur d'INITIATION du paiement en ligne.
+
+	Absent = OUVERT : choix de COMPATIBILITÉ (les benches dev et les suites existantes
+	fonctionnent sans conf) ; en production le drapeau est TOUJOURS posé explicitement
+	(0 à l'ouverture — compte marchand FedaPay plafonné 5 000 XOF —, 1 quand FedaPay
+	valide le compte). Bascule = une commande de configuration + restart, JAMAIS un
+	déploiement :
+
+	    bench --site <site> set-config online_payment_enabled 1   # (ou 0)
+	    bench restart
+
+	Ne gate QUE l'initiation (submit_payment_online / submit_enrollment_payment_online).
+	Jamais le webhook (DEC-336 : une transaction initiée avant la coupure se confirme)
+	ni le flux SOP (declare_*_offline — la voie espèces/virement reste ouverte)."""
+	return bool(cint(frappe.conf.get("online_payment_enabled", 1)))
+
+
+def _require_online_payment_enabled():
+	"""Garde d'initiation (DEC-334/335) : refus dédié, AVANT auth (fail-fast, état global
+	non sensible — aucun oracle). Message orienté action : une nouveauté à venir, jamais
+	une panne ; le candidat est dirigé vers la voie SOP qui, elle, fonctionne."""
+	if _online_payment_enabled():
+		return None
+	return _error(
+		"ONLINE_PAYMENT_DISABLED",
+		"Le paiement en ligne arrive prochainement. Réglez par espèces ou virement bancaire, "
+		"puis déclarez votre paiement : votre dossier sera validé dès confirmation par nos services.",
+		503,
+	)
 
 # DEC-322/T — âge inclusif à la date du dépôt. Le champ du DocType reste
 # volontairement optionnel afin de ne pas invalider les dossiers historiques.
@@ -1348,6 +1380,9 @@ def _build_frais_data(session_doc, level_code=None):
 		"simulation_disclaimer": disclaimer_text,
 		"simulation_disclaimer_version": disclaimer_hash,
 		"textes_legaux": _get_active_legal_texts_meta(),
+		# DEC-334/335 : le front LIT l'état du paiement en ligne, il ne le décide pas —
+		# bouton retiré et message « prochainement » quand False (pur renderer).
+		"online_payment_enabled": _online_payment_enabled(),
 	}
 	# LOT RIB-SETTINGS : coordonnées d'encaissement (source unique Admission Settings,
 	# rôle Admission Finance). None → le front MASQUE le canal virement.
@@ -2132,6 +2167,11 @@ def request_data_deletion(dossier_id=None, token=None, confirm=None):
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 @rate_limit(key="dossier_id", limit=10, seconds=60 * 60)
 def submit_payment_online(dossier_id=None, token=None, idempotency_key=None, consent_refund=None):
+	# DEC-334 : le SERVEUR est l'autorité — initiation fermée par configuration, même si
+	# le front est contourné. Tout premier contrôle : fail-fast, zéro effet de bord.
+	disabled = _require_online_payment_enabled()
+	if disabled:
+		return disabled
 	dossier_id = dossier_id or _value("dossier_id")
 	token = token or _value("token")
 	idempotency_key = idempotency_key or _value("idempotency_key")
@@ -2436,6 +2476,11 @@ def expire_stale_online_pending(older_than_hours=48):
 @rate_limit(key="dossier_id", limit=10, seconds=60 * 60)
 def submit_enrollment_payment_online(dossier_id=None, token=None, idempotency_key=None, acompte_xof=None,
                                      consent_refund=None, consent_data_transfer=None):
+	# DEC-334 : même autorité serveur que submit_payment_online — les DEUX initiations
+	# en ligne (frais 1 ET frais 2) sont derrière le même drapeau.
+	disabled = _require_online_payment_enabled()
+	if disabled:
+		return disabled
 	dossier_id = dossier_id or _value("dossier_id")
 	token = token or _value("token")
 	idempotency_key = idempotency_key or _value("idempotency_key")
