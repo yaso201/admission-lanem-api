@@ -472,6 +472,7 @@ class TestSec4OtpEnforce(TestCase):
         mock_frappe.request = None
         applicant = MagicMock()
         applicant.otp_verified = 0
+        applicant.status = "BRO"  # DEC-332 (REPRISE-DOSSIER) : gaté ÉTAT, toujours pas OTP
         mock_get.return_value = applicant
         from admission.api.public import classify_bac
         result = classify_bac(bac_date="2025-07-01", session=None, dossier_id="CAN-001", token="tok")

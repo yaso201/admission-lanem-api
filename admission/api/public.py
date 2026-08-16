@@ -123,6 +123,12 @@ IDENTITY_RECOVERY_MAX_OTP_ATTEMPTS = 5
 IDENTITY_RECOVERY_OTP_TTL_SECONDS = OTP_TTL_MINUTES * 60
 IDENTITY_RECOVERY_SESSION_TTL_SECONDS = 30 * 60
 
+# REPRISE-DOSSIER (DEC-332) — états où le CANDIDAT peut modifier son dossier. SOP et
+# au-delà : lecture seule, toute correction passe par le personnel. Source UNIQUE de la
+# règle : le claim (DEC-333), la garde d'écriture (_require_candidate_editable) et le
+# flag `reprenable` servi au front (pur renderer) la consomment tous les trois.
+CANDIDATE_EDITABLE_STATUSES = ("BRO", "INC")
+
 # DEC-322/T — âge inclusif à la date du dépôt. Le champ du DocType reste
 # volontairement optionnel afin de ne pas invalider les dossiers historiques.
 DATE_OF_BIRTH_MIN_AGE = 14
@@ -229,9 +235,11 @@ def _get_applicant(dossier_id, token=None, check_expiry=True):
 		frappe.throw("dossier_id requis.")
 	# SEC-1 : token OBLIGATOIRE sur tout accès dossier. Pas de court-circuit :
 	# un token absent/vide ne doit JAMAIS renvoyer un dossier (sinon IDOR/fuite PII).
-	# Le token manquant est rejeté avant même de charger le doc.
+	# Le token manquant est rejeté avant même de charger le doc. Message DISTINCT du cas
+	# « invalide » : la réponse client reste générique (INVALID_DOSSIER), mais le journal
+	# (catch bavard) doit pouvoir classer la cause réelle.
 	if not token:
-		frappe.throw("Jeton de dossier invalide.")
+		frappe.throw("Jeton de dossier absent.")
 	doc = frappe.get_doc("Admission Applicant", dossier_id)
 	# Comparaison à temps constant du hash du token (anti timing-oracle).
 	if not hmac.compare_digest(str(doc.dossier_token_hash or ""), _hash(token)):
@@ -267,6 +275,28 @@ def _require_otp_verified(applicant):
 	if not applicant.otp_verified:
 		return _error("OTP_REQUIRED", "Vérification OTP requise avant cette action.", 403)
 	return None
+
+
+def _log_invalid_dossier(step, dossier_id, exc):
+	"""Catch bavard (V-LEARN-CAL-03, REPRISE-DOSSIER) — la cause RÉELLE part au journal
+	AVANT le message générique. Un catch muet a transformé un défaut d'une ligne en
+	reconnaissance complète : ne plus jamais collapser sans trace. La réponse client reste
+	« Identifiants de dossier invalides. » (anti-énumération) ; le journal, lui, distingue
+	jeton absent / jeton invalide / dossier inexistant. Les messages de _get_applicant ne
+	contiennent JAMAIS le jeton soumis — rien de secret ne peut fuiter ici.
+
+	Niveau `error` À DESSEIN : le défaut frappe hors dev-server est logging.ERROR — un
+	catch bavard en `warning` serait filtré en prod, c'est-à-dire muet déguisé.
+
+	Purge message_log : frappe.get_doc pose « … not found » dans message_log (DoesNotExist)
+	→ sans purge, la réponse HTTP générique embarque `_server_messages` qui révèle
+	l'EXISTENCE du dossier (oracle d'énumération constaté au traceur HTTP)."""
+	log_event(step, "invalid_dossier", dossier_id=dossier_id,
+		reason=f"{type(exc).__name__}: {str(exc)[:160]}", level="error")
+	try:
+		frappe.clear_messages()
+	except Exception:
+		pass
 
 
 # ── SEC-5 : validation des entrées (helpers centralisés, pré-effets-de-bord) ──
@@ -444,6 +474,35 @@ def requise_effective(piece):
 	if sr == "required":
 		return True
 	return bool(piece.required)
+
+
+def _require_candidate_editable(applicant, piece_row=None):
+	"""REPRISE-DOSSIER (DEC-332, condition 2 du GO) — l'état est revérifié à CHAQUE écriture
+	candidat, pas seulement à l'émission du jeton : un dossier passé BRO→SOP pendant une
+	session d'édition ouverte voit ses écritures suivantes refusées.
+
+	BRO/INC modifiables. Exceptions NOMINATIVES = flux conçus existants, rien d'autre :
+	- SOU + pièce REJETÉE ou À FOURNIR (missing requise_effective) — miroir EXACT de
+	  pieces_recap (Lot 3c : correction initiée par le personnel, le dossier reste SOU) ;
+	- ACO + pièce `diplome_bac` — dépôt du diplôme du bac conditionnel (C1-ACO/DEC-214).
+	Conséquence assumée (resserrement DEC-332) : en SOU, une pièce déjà `uploaded` (sous
+	revue staff, non rejetée) ne peut plus être remplacée par le candidat.
+	"""
+	if applicant.status in CANDIDATE_EDITABLE_STATUSES:
+		return None
+	if piece_row is not None:
+		if applicant.status == "SOU" and (
+			piece_row.status == "rejected"
+			or (piece_row.status == "missing" and requise_effective(piece_row))
+		):
+			return None
+		if applicant.status == "ACO" and piece_row.piece_code == "diplome_bac":
+			return None
+	return _error(
+		"STATE_READ_ONLY",
+		"Ce dossier n'est plus modifiable en ligne. Contactez l'administration pour toute correction.",
+		409,
+	)
 
 
 def pieces_requises_non_verifiees(applicant):
@@ -1469,7 +1528,8 @@ def request_otp(dossier_id=None, token=None):
 		# Renouvellement : on tolère un token EXPIRÉ (hash toujours vérifié → SEC-1 intact)
 		# pour pouvoir relancer un OTP ; sinon un token expiré serait irrécupérable.
 		applicant = _get_applicant(dossier_id, token, check_expiry=False)
-	except Exception:
+	except Exception as exc:
+		_log_invalid_dossier("request_otp", dossier_id, exc)
 		return _error("INVALID_DOSSIER", "Identifiants de dossier invalides.", 403)
 	email_otp = _generate_otp()
 	phone_otp = _generate_otp()
@@ -1506,7 +1566,8 @@ def verify_otp(dossier_id=None, token=None, email_otp=None, phone_otp=None):
 		# Renouvellement : token expiré toléré (hash vérifié → SEC-1 intact) ; c'est l'OTP
 		# (envoyé à l'email/tél du candidat) qui sert de second facteur pour renouveler.
 		applicant = _get_applicant(dossier_id, token, check_expiry=False)
-	except Exception:
+	except Exception as exc:
+		_log_invalid_dossier("verify_otp", dossier_id, exc)
 		return _error("INVALID_DOSSIER", "Identifiants de dossier invalides.", 403)
 	# SEC-OTP : le CODE OTP expire (10 min, distinct du token 7j). Code expiré → refus + redemander.
 	otp_exp = get_datetime(applicant.otp_expires_at) if applicant.otp_expires_at else None
@@ -1557,8 +1618,14 @@ def classify_bac(bac_date=None, session=None, dossier_id=None, token=None):
 			applicant = _get_applicant(dossier_id, token)
 		except DossierTokenExpired:
 			return _error("TOKEN_EXPIRED", "Lien de dossier expiré. Demandez un nouveau code OTP.", 403)
-		except Exception:
+		except Exception as exc:
+			_log_invalid_dossier("classify_bac", dossier_id, exc)
 			return _error("INVALID_DOSSIER", "Identifiants de dossier invalides.", 403)
+		# DEC-332 (condition 2) : la (re)classification écrit bac_date/profil et resynchronise
+		# les pièces — refusée hors BRO/INC (aucune exception : pas un flux 3c/ACO).
+		state_err = _require_candidate_editable(applicant)
+		if state_err:
+			return state_err
 		applicant.bac_date = bac_date
 		applicant.bac_profile = profile
 		applicant.conditionnel = 1 if profile == "bac_attente" else 0
@@ -1626,8 +1693,16 @@ def upload_piece_file(dossier_id=None, token=None, piece_code=None):
 	otp_err = _require_otp_verified(applicant)
 	if otp_err:
 		return otp_err
-	if not piece_code or piece_code not in {row.piece_code for row in applicant.pieces}:
+	piece_row = next(
+		(row for row in (applicant.pieces or []) if row.piece_code == piece_code), None
+	) if piece_code else None
+	if piece_row is None:
 		return _error("PIECE_NOT_EXPECTED", "Cette pièce n'est pas attendue pour ce dossier.", 400)
+	# DEC-332 (condition 2) : garde d'état AVANT toute manipulation de fichier —
+	# un dossier sorti de BRO/INC (hors exceptions 3c/ACO) ne stocke plus rien.
+	state_err = _require_candidate_editable(applicant, piece_row)
+	if state_err:
+		return state_err
 	files = getattr(frappe.request, "files", None) if getattr(frappe, "request", None) else None
 	storage = files.get("file") if files else None
 	if storage is None or not getattr(storage, "filename", None):
@@ -1781,7 +1856,8 @@ def get_dossier(dossier_id=None, token=None):
 		applicant = _get_applicant(dossier_id, token)
 	except DossierTokenExpired:
 		return _error("TOKEN_EXPIRED", "Lien de dossier expiré. Demandez un nouveau code OTP.", 403)
-	except Exception:
+	except Exception as exc:
+		_log_invalid_dossier("get_dossier", dossier_id, exc)
 		return _error("INVALID_DOSSIER", "Identifiants de dossier invalides.", 403)
 	return _ok(_serialize_dossier(applicant))
 
@@ -1842,6 +1918,9 @@ def _identity_recovery_summaries(names):
 		"session": {"id": row.session, "label": labels.get(row.session)},
 		"statut": row.status,
 		"soumis_le": str(row.creation),
+		# REPRISE-DOSSIER : le front est un PUR RENDERER (patron FIX-PROGRESSION) — la règle
+		# d'états modifiables (DEC-332) vit ici, le bouton « Reprendre » s'affiche ssi True.
+		"reprenable": row.status in CANDIDATE_EDITABLE_STATUSES,
 	} for row in rows]
 
 
@@ -1929,7 +2008,80 @@ def get_recovered_dossier(recovery_token=None, dossier_id=None):
 		return _error("RECOVERY_DOSSIER_FORBIDDEN", "Ce dossier n'appartient pas à cette consultation.", 403)
 	if not frappe.db.exists("Admission Applicant", {"name": dossier_id, "anonymized": ("!=", 1)}):
 		return _error("INVALID_DOSSIER", "Dossier indisponible.", 404)
-	return _ok(_serialize_dossier(frappe.get_doc("Admission Applicant", dossier_id)))
+	doc = frappe.get_doc("Admission Applicant", dossier_id)
+	data = _serialize_dossier(doc)
+	# Clé ADDITIVE (hors _serialize_dossier, partagé avec get_dossier) : le détail consulté
+	# porte la même règle DEC-332 que les résumés — le front reste un pur renderer.
+	data["reprenable"] = doc.status in CANDIDATE_EDITABLE_STATUSES
+	return _ok(data)
+
+
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+def claim_recovered_dossier(recovery_token=None, dossier_id=None):
+	"""REPRISE-DOSSIER (DEC-333, option B) — émission d'un jeton d'ÉDITION mono-dossier.
+
+	La consultation est large, l'édition est étroite. Trois contrôles SERVEUR, aucun
+	raccourci (condition 1 du GO) :
+	1. session de consultation (OTP identité) valide et non expirée — Redis, TTL 30 min ;
+	2. le dossier demandé APPARTIENT à cette session (liste résolue par verify_recovery_otp,
+	   jamais le paramètre d'URL du front, qui n'est qu'un indice de pré-sélection) ;
+	3. l'état autorise l'écriture (DEC-332 : BRO/INC) — revérifié ensuite à CHAQUE
+	   écriture par _require_candidate_editable (condition 2).
+
+	Le jeton émis est un jeton de dossier ORDINAIRE (aucune mécanique nouvelle) : rotation
+	du hash sur CE doc (portée mono-dossier par construction, patron reissue_candidate_access),
+	TTL 7 j glissants, l'ancien lien tokenisé meurt. otp_verified est ALIMENTÉ ici — l'OTP
+	d'identité vient de prouver le contrôle de la même adresse e-mail que celle du dossier
+	(même canal et même niveau de preuve que verify_otp) : l'invariant d'écriture
+	(jeton valide + otp_verified=1) n'est pas assoupli.
+
+	Limite ASSUMÉE du modèle d'identité (condition 4, documentée au rapport) : la résolution
+	se fait par e-mail seul — une adresse partagée (cybercafé, famille) ouvre l'édition des
+	brouillons de tous ses dossiers. Piste ultérieure : corroboration DOB au claim.
+	"""
+	recovery_token = recovery_token or _value("recovery_token")
+	dossier_id = dossier_id or _value("dossier_id")
+	if not recovery_token or not dossier_id:
+		return _error("RECOVERY_SESSION_INVALID", "Session de consultation invalide ou expirée.", 403)
+	try:
+		cache = _identity_recovery_cache()
+		rate_err = _check_identity_rate_limits(cache, verification=True)
+		if rate_err:
+			return rate_err
+		raw = cache.get(_identity_recovery_key(cache, "session", recovery_token))
+	except RedisError:
+		return _recovery_service_unavailable()
+	if not raw:
+		return _error("RECOVERY_SESSION_INVALID", "Session de consultation invalide ou expirée.", 403)
+	try:
+		allowed = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
+	except (TypeError, ValueError, UnicodeDecodeError):
+		return _error("RECOVERY_SESSION_INVALID", "Session de consultation invalide ou expirée.", 403)
+	if dossier_id not in allowed:
+		return _error("RECOVERY_DOSSIER_FORBIDDEN", "Ce dossier n'appartient pas à cette consultation.", 403)
+	if not frappe.db.exists("Admission Applicant", {"name": dossier_id, "anonymized": ("!=", 1)}):
+		return _error("INVALID_DOSSIER", "Dossier indisponible.", 404)
+	doc = frappe.get_doc("Admission Applicant", dossier_id)
+	if doc.status not in CANDIDATE_EDITABLE_STATUSES:
+		log_event("claim_recovered_dossier", "state_read_only", dossier_id=doc.name,
+			statut=doc.status, level="warning")
+		return _error(
+			"STATE_READ_ONLY",
+			"Ce dossier n'est plus modifiable en ligne. Contactez l'administration pour toute correction.",
+			409,
+		)
+	new_token = _generate_token()
+	doc.dossier_token_hash = _hash(new_token)
+	doc.token_expires_at = add_days(now_datetime(), TOKEN_TTL_DAYS)
+	doc.otp_verified = 1
+	doc.otp_verified_at = now_datetime()
+	doc.save(ignore_permissions=True)
+	frappe.db.commit()
+	# Condition 3 du GO : acte d'accès en ÉCRITURE journalisé — dossier + identité non-PII
+	# (préfixe du HMAC de l'adresse, jamais l'e-mail en clair) + horodatage (log_event).
+	log_event("claim_recovered_dossier", "success", dossier_id=doc.name,
+		identity=_identity_recovery_digest(doc.email or "")[:12])
+	return _ok({"dossier_id": doc.name, "token": new_token, "statut": doc.status})
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])

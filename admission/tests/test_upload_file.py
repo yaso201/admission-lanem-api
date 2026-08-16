@@ -34,6 +34,7 @@ def _applicant(pieces=("cni", "diplome-bac"), otp=1):
     a = MagicMock()
     a.name = "CAN-2026-00001"
     a.otp_verified = otp
+    a.status = "BRO"  # DEC-332 (REPRISE-DOSSIER) : le dépôt présuppose un état modifiable
     rows = []
     for code in pieces:
         row = MagicMock()
