@@ -800,3 +800,63 @@ class TestCal09DecE(FrappeTestCase):
         self.assertIsNone(call)
         self.assertIsNone(start)
         execute()  # idempotent : 2e passage sans effet ni erreur
+
+
+class TestSessionGuardCAL14(FrappeTestCase):
+    """CAL-14 (DEC-4) — la garde des actes de session DISTINGUE « identifiant manquant/invalide »
+    (400) de « session introuvable » (404), et journalise l'id reçu. Le front CAL-14 envoyait
+    l'état d'accordéon (« 1 ») à la place de l'identifiant → un « Session inconnue » unique 404
+    faisait passer un mauvais paramètre pour une session disparue."""
+
+    def _status(self):
+        return frappe.local.response.get("http_status_code")
+
+    def test_missing_id_is_400_not_404(self):
+        from admission.api.calendar import _session_guard
+        for empty in (None, "", 0):
+            r = _session_guard(empty)
+            self.assertFalse(r["ok"])
+            self.assertEqual(r["error"]["code"], "SESSION_ID_MISSING")
+            self.assertEqual(self._status(), 400)   # id manquant = mauvaise requête, PAS 404
+
+    def test_unknown_id_is_404(self):
+        from admission.api.calendar import _session_guard
+        r = _session_guard("ZZCAL-DOES-NOT-EXIST")
+        self.assertEqual(r["error"]["code"], "SESSION_NOT_FOUND")
+        self.assertEqual(self._status(), 404)
+
+    def test_accordion_state_value_is_not_found_not_silent(self):
+        # LE cas exact du bug : l'id reçu est « 1 » (état d'accordéon) → introuvable explicite.
+        from admission.api.calendar import _session_guard
+        self.assertEqual(_session_guard("1")["error"]["code"], "SESSION_NOT_FOUND")
+
+    def test_valid_existing_passes(self):
+        from admission.api.calendar import _session_guard
+        s = frappe.get_doc({
+            "doctype": "Admission Session", "session_code": f"{_MARK}-GUARD", "label": "Guard",
+            "programme_code": "X", "programme_label": "X", "academic_year": "2099-2100",
+            "lifecycle_state": "Draft", "opens_on": nowdate(), "closes_on": add_days(nowdate(), 30),
+            "bac_results_date": add_days(nowdate(), 40),
+        }).insert(ignore_permissions=True)
+        frappe.db.commit()
+        try:
+            self.assertIsNone(_session_guard(s.name))   # présent ET existe → None
+        finally:
+            frappe.db.delete("Admission Session", {"name": s.name})
+            frappe.db.commit()
+
+    def test_endpoints_route_through_guard(self):
+        # open_session / delete_draft passent par la garde (only_for mické pour isoler la garde).
+        from admission.api import calendar as cal
+        with patch.object(cal.frappe, "only_for"):
+            self.assertEqual(cal.open_session(session="")["error"]["code"], "SESSION_ID_MISSING")
+            self.assertEqual(cal.delete_draft(session="1")["error"]["code"], "SESSION_NOT_FOUND")
+
+    def test_guard_logs_error_level(self):
+        # DEC-4 : journalisation en ERROR (pas warning — sinon muet en prod, default_log_level=ERROR).
+        from admission.api.calendar import _session_guard
+        with patch("admission.api.calendar.frappe.logger") as mlog:
+            _session_guard("")
+            _session_guard("1")
+            self.assertEqual(mlog.return_value.error.call_count, 2)
+            mlog.return_value.warning.assert_not_called()
