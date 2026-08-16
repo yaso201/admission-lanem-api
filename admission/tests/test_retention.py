@@ -124,6 +124,19 @@ class TestPurgeAbandoned(TestCase):
         self.assertEqual(filters.get("status"), "BRO")
 
 
+class TestPurgeTerminalAbs(TestCase):
+    @patch(f"{RET}.anonymize_applicant")
+    @patch(f"{RET}.now_datetime", return_value=get_datetime(NOW))
+    @patch(f"{RET}.frappe")
+    def test_abs_uses_terminal_appeal_retention(self, mock_frappe, _now, _anon):
+        mock_frappe.db.get_single_value.return_value = None
+        mock_frappe.get_all.side_effect = [[], []]
+        from admission.api.retention import purge_terminal_dossiers
+        purge_terminal_dossiers()
+        first_filters = mock_frappe.get_all.call_args_list[0].kwargs["filters"]
+        self.assertIn("ABS", first_filters["status"][1])
+
+
 class TestConsentImmutableDelete(TestCase):
     @patch(f"{CONSENT}.frappe")
     def test_on_trash_blocks_deletion(self, mock_frappe):

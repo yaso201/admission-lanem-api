@@ -89,7 +89,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "BRO\nSOP\nSOU\nINC\nETU\nATT\nADM\nACO\nACC\nINS\nREF\nREJ\nDES",
+   "options": "BRO\nSOP\nSOU\nINC\nETU\nATT\nADM\nACO\nACC\nINS\nABS\nREF\nREJ\nDES",
    "reqd": 1
   },
   {

@@ -23,7 +23,7 @@ from admission.api.permissions import roles_at_or_above
 # États où le désistement (withdraw) est offert (miroir WITHDRAW_STATES / renderActions front).
 _WITHDRAW_STATES = {"BRO", "SOP", "SOU", "ETU", "ATT", "ADM", "ACO", "ACC"}
 # Dossiers clos : aucune gestion de paiement (miroir PAYMENT_FORBIDDEN_STATES back).
-_PAYMENT_FORBIDDEN = {"REF", "REJ", "DES", "INS"}
+_PAYMENT_FORBIDDEN = {"ABS", "REF", "REJ", "DES", "INS"}
 
 
 def _has_requested(applicant):
@@ -58,6 +58,9 @@ _ACTION_RULES = {
     "saisir_note_concours":  lambda a, p, c: ("Admission Administratif", _ASC) if a.status == "ETU" and p and not a.notes_validated else None,
     "withdraw":              lambda a, p, c: ("Admission Administratif", _ASC) if a.status in _WITHDRAW_STATES else None,
     # ── décision « maker » : EXACT Responsable (Direction EXCLUE — SoD) ──
+    "transfer_session":      lambda a, p, c: ("Admission Responsable", _EXA) if p and a.status in ("SOU", "INC", "ETU") and (c or {}).get("transfer_ready", False) else None,
+    "mark_absent":           lambda a, p, c: ("Admission Responsable", _EXA) if p and a.status == "ETU" and (c or {}).get("absence_mark_ready", False) else None,
+    "transfer_justified_absence": lambda a, p, c: ("Admission Responsable", _EXA) if p and a.status == "ABS" and (c or {}).get("absence_transfer_ready", False) else None,
     "valider_notes_concours":lambda a, p, c: ("Admission Responsable", _EXA) if a.status == "ETU" and p and a.notes_concours and not a.notes_validated else None,
     "propose_scholarships":  lambda a, p, c: ("Admission Responsable", _EXA) if a.status in ("ETU", "ATT") and _has_requested(a) else None,
     "set_waitlist_rank":     lambda a, p, c: ("Admission Responsable", _EXA) if a.status == "ATT" else None,

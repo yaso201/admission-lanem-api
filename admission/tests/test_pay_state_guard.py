@@ -96,7 +96,7 @@ class TestPromotionStateGuard(TestCase):
     def test_p3_each_terminal_state_refused(self, mf, mfind, _mver, mcasc):
         """P3 : REF / REJ / INS → chaque état terminal refuse la promotion."""
         from admission.api.webhook import payment
-        for state in ("REF", "REJ", "INS"):
+        for state in ("ABS", "REF", "REJ", "INS"):
             with self.subTest(state=state):
                 mcasc.reset_mock()
                 pending = _pending()

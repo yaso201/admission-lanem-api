@@ -134,7 +134,8 @@ def purge_abandoned_dossiers():
 def purge_terminal_dossiers():
 	"""Anonymise les dossiers terminaux au-delà de leur délai de conservation.
 
-	REF/DES (refus/désistement) après délai de recours ; INS (transféré au campus) après délai.
+	ABS/REF/DES (absence définitive/refus/désistement) après délai de recours ;
+	INS (transféré au campus) après délai.
 	Consent + Paiement préservés par l'anonymiseur (carve-out).
 	"""
 	now = now_datetime()
@@ -142,7 +143,9 @@ def purge_terminal_dossiers():
 	ref_des = frappe.get_all(
 		"Admission Applicant",
 		filters={
-			"status": ["in", ["REF", "DES"]],
+			# TRANSFERT-SESSION : à J+8, ABS est définitif. Sans cette inclusion le
+			# dossier sortirait de toutes les purges terminales et serait conservé sans fin.
+			"status": ["in", ["ABS", "REF", "DES"]],
 			"modified": ["<", ref_des_cutoff],
 			"anonymized": ["!=", 1],
 		},

@@ -11,7 +11,7 @@ import json
 import re
 
 import frappe
-from frappe.utils import now_datetime, add_days
+from frappe.utils import now_datetime, add_days, getdate, nowdate
 
 from admission.api._log import log_event
 from admission.api.public import (
@@ -32,6 +32,7 @@ from admission.api.public import (
     notify_pieces_blocked,
     pieces_recap,
     _record_piece_verdict,
+    _validate_piece_file,
     _generate_token,
     _hash,
     TOKEN_TTL_DAYS,
@@ -62,6 +63,11 @@ RESP_EXACT = ("Admission Responsable", "System Manager")  # décisions maker (Di
 CONFIRM_ROLES = ADMIN_UP                                  # actions confirm = niveau min Administratif
 OFFLINE_MODES = {"cash": "Cash", "bank": "Bank"}
 
+# TRANSFERT-SESSION — décisions DEC-V à DEC-AB.
+TRANSFER_ELIGIBLE_STATES = ("SOU", "INC", "ETU")
+TRANSFER_REASON_CODES = ("maladie", "accident", "urgence familiale", "force majeure", "autre")
+ABSENCE_TRANSFER_DAYS = 7
+
 
 def _guard_write_scope(applicant):
     """FIX-D-CONF-04 — applique le cloisonnement (permissions.has_permission) à l'ÉCRITURE. Les mutations
@@ -79,6 +85,211 @@ def _guard_write_scope(applicant):
         return _error("FORBIDDEN_SCOPE",
                       "Action hors de votre périmètre de consultation (cloisonnement activé).", 403)
     return None
+
+
+def _frais1_confirmed(applicant):
+    """Même prédicat que la convocation : un frais 1 réellement confirmé, jamais déduit du statut."""
+    from admission.api.convocation import _frais1_confirmed_payment
+    return bool(_frais1_confirmed_payment(applicant))
+
+
+def _capacity_snapshot(session_doc, incoming=1):
+    """CAL-AMEL-R / DEC-AA — information uniquement, jamais une garde bloquante."""
+    before = int(frappe.db.count("Admission Applicant", {"session": session_doc.name}) or 0)
+    raw_capacity = getattr(session_doc, "capacity", None)
+    capacity = int(raw_capacity) if raw_capacity not in (None, "") else None
+    after = before + int(incoming or 0)
+    exceeded = capacity is not None and after > capacity
+    return {
+        "before": before,
+        "after": after,
+        "capacity": capacity,
+        "exceeded": exceeded,
+        "warning": (
+            f"{after} / {capacity} places — capacité dépassée, transfert néanmoins autorisé."
+            if exceeded else None
+        ),
+    }
+
+
+def _transfer_target_row(session_doc):
+    cap = _capacity_snapshot(session_doc, incoming=1)
+    return {
+        "session_id": session_doc.name,
+        "label": session_doc.label,
+        "academic_year": session_doc.academic_year,
+        "exam_date": str(session_doc.exam_date) if session_doc.exam_date else None,
+        "applicant_count": cap["before"],
+        "capacity": cap["capacity"],
+        "would_exceed_capacity": cap["exceeded"],
+        "capacity_warning": cap["warning"],
+    }
+
+
+def _available_transfer_targets(applicant):
+    """DEC-X/GK9 — même programme, selectable serveur, épreuve strictement future."""
+    from admission.api.sessions import is_session_selectable
+
+    today = getdate(nowdate())
+    rows = frappe.get_all(
+        "Admission Session",
+        filters={"programme_code": applicant.programme_code, "name": ["!=", applicant.session]},
+        fields=[
+            "name", "label", "academic_year", "programme_code", "exam_date", "capacity",
+            "lifecycle_state", "is_open", "closes_on",
+        ],
+        order_by="exam_date asc",
+        limit_page_length=500,
+    )
+    return [
+        _transfer_target_row(row) for row in rows
+        if row.exam_date and getdate(row.exam_date) > today and is_session_selectable(row)
+    ]
+
+
+def _target_session_or_error(applicant, target_session):
+    from admission.api.sessions import is_session_selectable
+
+    if not target_session or not frappe.db.exists("Admission Session", target_session):
+        return None, _error("INVALID_TARGET_SESSION", "Session cible inconnue.", 404)
+    if target_session == applicant.session:
+        return None, _error("SAME_SESSION", "La session cible doit différer de la session actuelle.", 409)
+    target = frappe.get_doc("Admission Session", target_session)
+    if target.programme_code != applicant.programme_code:
+        return None, _error("PROGRAMME_MISMATCH", "La session cible doit porter le même programme.", 409)
+    if not getattr(target, "exam_date", None) or getdate(target.exam_date) <= getdate(nowdate()):
+        return None, _error("TARGET_NOT_FUTURE", "L'épreuve de la session cible doit être future.", 409)
+    if not is_session_selectable(target):
+        return None, _error("TARGET_NOT_SELECTABLE", "La session cible n'est pas sélectionnable.", 409)
+    return target, None
+
+
+def _validate_transfer_attachment(file_ref, applicant):
+    if not file_ref:
+        return None, None
+    file_name, err = _validate_piece_file(file_ref, applicant)
+    if err:
+        return None, err
+    return frappe.db.get_value("File", file_name, "file_url"), None
+
+
+def _record_transfer(applicant, from_session, to_session, transfer_type, *, status_before,
+                     reason_code=None, reason_detail=None, justificatif=None, batch_ref=None,
+                     capacity=None, convocation_reissued=False):
+    return frappe.get_doc({
+        "doctype": "Admission Applicant Transfer Log",
+        "applicant": applicant.name,
+        "transfer_type": transfer_type,
+        "from_session": from_session,
+        "to_session": to_session,
+        "status_before": status_before,
+        "status_after": applicant.status,
+        "reason_code": reason_code,
+        "reason_detail": reason_detail,
+        "justificatif": justificatif,
+        "transferred_at": now_datetime(),
+        "actor": frappe.session.user,
+        "batch_ref": batch_ref,
+        "capacity_before": (capacity or {}).get("before"),
+        "capacity_after": (capacity or {}).get("after"),
+        "convocation_reissued": 1 if convocation_reissued else 0,
+    }).insert(ignore_permissions=True)
+
+
+def _move_applicant_session(applicant, target, transfer_type, *, status_after=None,
+                            reason_code=None, reason_detail=None, justificatif=None,
+                            batch_ref=None, incoming=1):
+    """Déplace le dossier et ses frais dans la transaction courante; aucun appel UF (DEC-AB)."""
+    origin = frappe.get_doc("Admission Session", applicant.session)
+    from_session = applicant.session
+    status_before = applicant.status
+    capacity = _capacity_snapshot(target, incoming=incoming)
+
+    applicant.session = target.name
+    if status_after:
+        applicant.status = status_after
+    applicant.save(ignore_permissions=True)
+
+    # DEC-W/DEC-AB : le frais suit le dossier, les paiements restent liés au même Applicant Fee.
+    # Aucune nouvelle ligne de frais, aucune seconde notification UF.
+    fee_names = frappe.get_all("Applicant Fee", filters={"applicant": applicant.name}, pluck="name")
+    for fee_name in fee_names:
+        frappe.db.set_value("Applicant Fee", fee_name, "session", target.name)
+
+    from admission.api.convocation import reissue_transfer_convocation
+    reissued = reissue_transfer_convocation(applicant, target, origin, transfer_type)
+    log = _record_transfer(
+        applicant, from_session, target.name, transfer_type,
+        status_before=status_before, reason_code=reason_code, reason_detail=reason_detail,
+        justificatif=justificatif, batch_ref=batch_ref, capacity=capacity,
+        convocation_reissued=reissued,
+    )
+    log_event(
+        "transfer_session", "success", dossier_id=applicant.name, ref=log.name,
+        transfer_type=transfer_type, from_session=from_session, to_session=target.name,
+    )
+    return {
+        "dossier_id": applicant.name,
+        "from_session": from_session,
+        "to_session": target.name,
+        "status": applicant.status,
+        "fee_count": len(fee_names),
+        "convocation_reissued": bool(reissued),
+        "capacity": capacity,
+        "transfer_log": log.name,
+    }
+
+
+def _transfer_action_context(applicant, session_doc):
+    if not session_doc or not bool(getattr(session_doc, "is_prepa_session", 0)):
+        return {"transfer_ready": False, "absence_mark_ready": False,
+                "absence_transfer_ready": False}
+    today = getdate(nowdate())
+    exam_date = getdate(session_doc.exam_date) if getattr(session_doc, "exam_date", None) else None
+    paid = _frais1_confirmed(applicant)
+    voluntary_used = frappe.db.count(
+        "Admission Applicant Transfer Log",
+        {"applicant": applicant.name, "transfer_type": "voluntary"},
+    )
+    targets = _available_transfer_targets(applicant)
+    return {
+        "transfer_ready": bool(
+            applicant.status in TRANSFER_ELIGIBLE_STATES and paid and not voluntary_used
+            and exam_date and today < exam_date and targets
+        ),
+        "absence_mark_ready": bool(applicant.status == "ETU" and paid and exam_date and today >= exam_date),
+        "absence_transfer_ready": bool(
+            applicant.status == "ABS" and paid and exam_date
+            and exam_date <= today <= getdate(add_days(exam_date, ABSENCE_TRANSFER_DAYS)) and targets
+        ),
+    }
+
+
+def _transfer_payload(applicant, session_doc):
+    logs = frappe.get_all(
+        "Admission Applicant Transfer Log",
+        filters={"applicant": applicant.name},
+        fields=[
+            "name", "transfer_type", "from_session", "to_session", "status_before",
+            "status_after", "reason_code", "reason_detail", "justificatif", "transferred_at",
+            "actor", "batch_ref", "capacity_before", "capacity_after", "convocation_reissued",
+        ],
+        order_by="transferred_at desc",
+        limit_page_length=50,
+    )
+    voluntary_used = sum(1 for row in logs if row.transfer_type == "voluntary")
+    exam_date = getdate(session_doc.exam_date) if session_doc and session_doc.exam_date else None
+    return {
+        "eligible_states": list(TRANSFER_ELIGIBLE_STATES),
+        "voluntary_used": voluntary_used,
+        "voluntary_remaining": max(0, 1 - voluntary_used),
+        "absence_deadline": (
+            str(add_days(exam_date, ABSENCE_TRANSFER_DAYS)) if applicant.status == "ABS" and exam_date else None
+        ),
+        "reason_codes": list(TRANSFER_REASON_CODES),
+        "targets": _available_transfer_targets(applicant) if bool(getattr(session_doc, "is_prepa_session", 0)) else [],
+        "history": logs,
+    }
 
 
 def _resolve_pending_payment(dossier_id, payment_id=None):
@@ -374,6 +585,234 @@ def accept_admission(dossier_id=None, bourses_validees=None):
                 "validated_scholarships": json.loads(applicant.validated_scholarships or "[]")})
 
 
+# ── TRANSFERT-SESSION : transfert individuel, ABS et annulation institutionnelle ─────────────
+
+@frappe.whitelist()
+def transfer_session(dossier_id=None, target_session=None):
+    """Transfert anticipé volontaire, au plus une fois, jusqu'à J-1 inclus."""
+    frappe.only_for(RESP_EXACT)
+    if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
+        return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
+    applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)
+    if scope_err:
+        return scope_err
+    if not _is_prepa(applicant):
+        return _error("NOT_PREPA", "Le transfert de session est réservé aux dossiers à concours.", 409)
+    if applicant.status not in TRANSFER_ELIGIBLE_STATES:
+        return _error(
+            "INVALID_STATE",
+            f"Transfert possible seulement depuis {', '.join(TRANSFER_ELIGIBLE_STATES)}.", 409,
+        )
+    if not _frais1_confirmed(applicant):
+        return _error("FEE_NOT_PAID", "Le frais de candidature doit être confirmé.", 409)
+    origin = frappe.get_doc("Admission Session", applicant.session)
+    if not origin.exam_date or getdate(nowdate()) >= getdate(origin.exam_date):
+        return _error(
+            "VOLUNTARY_WINDOW_CLOSED",
+            "Le transfert anticipé ferme le jour de l'épreuve (autorisé jusqu'à J-1 inclus).", 409,
+        )
+    if frappe.db.count(
+        "Admission Applicant Transfer Log",
+        {"applicant": applicant.name, "transfer_type": "voluntary"},
+    ):
+        return _error("VOLUNTARY_QUOTA_USED", "Le transfert volontaire unique a déjà été utilisé.", 409)
+    target, err = _target_session_or_error(applicant, target_session)
+    if err:
+        return err
+    return _ok(_move_applicant_session(applicant, target, "voluntary"))
+
+
+@frappe.whitelist()
+def mark_absent(dossier_id=None):
+    """DEC-Z/INV-HUMAN — décision manuelle Responsable ETU→ABS, après l'épreuve seulement."""
+    frappe.only_for(RESP_EXACT)
+    if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
+        return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
+    applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)
+    if scope_err:
+        return scope_err
+    if not _is_prepa(applicant):
+        return _error("NOT_PREPA", "L'absence au concours ne concerne que les dossiers Prépa.", 409)
+    if applicant.status != "ETU":
+        return _error("INVALID_STATE", "L'absence se décide seulement depuis En étude (ETU).", 409)
+    if not _frais1_confirmed(applicant):
+        return _error("NOT_CONVOKED", "Le dossier ne porte pas de frais 1 confirmé.", 409)
+    session = frappe.get_doc("Admission Session", applicant.session)
+    if not session.exam_date or getdate(nowdate()) < getdate(session.exam_date):
+        return _error("ABS_TOO_EARLY", "L'absence ne peut être décidée qu'après l'épreuve.", 409)
+    applicant.status = "ABS"
+    applicant.save(ignore_permissions=True)
+    log_event("mark_absent", "success", dossier_id=applicant.name, session=applicant.session)
+    return _ok({
+        "dossier_id": applicant.name,
+        "status": "ABS",
+        "transfer_deadline": str(add_days(getdate(session.exam_date), ABSENCE_TRANSFER_DAYS)),
+    })
+
+
+@frappe.whitelist()
+def transfer_justified_absence(dossier_id=None, target_session=None, reason_code=None,
+                               reason_detail=None, justificatif=None):
+    """ABS→ETU dans les 7 jours suivant l'épreuve, avec motif écrit et pièce facultative."""
+    frappe.only_for(RESP_EXACT)
+    if not dossier_id or not frappe.db.exists("Admission Applicant", dossier_id):
+        return _error("INVALID_DOSSIER", "Dossier inconnu.", 404)
+    applicant = frappe.get_doc("Admission Applicant", dossier_id)
+    scope_err = _guard_write_scope(applicant)
+    if scope_err:
+        return scope_err
+    if applicant.status != "ABS":
+        return _error("INVALID_STATE", "Le transfert justifié exige un dossier Absent (ABS).", 409)
+    if not _is_prepa(applicant):
+        return _error("NOT_PREPA", "Le transfert d'absence concerne les dossiers Prépa.", 409)
+    if not _frais1_confirmed(applicant):
+        return _error("NOT_CONVOKED", "Le dossier ne porte pas de frais 1 confirmé.", 409)
+    session = frappe.get_doc("Admission Session", applicant.session)
+    if not session.exam_date:
+        return _error("NO_EXAM", "La session d'origine ne porte pas de date d'épreuve.", 409)
+    exam_date, today = getdate(session.exam_date), getdate(nowdate())
+    deadline = getdate(add_days(exam_date, ABSENCE_TRANSFER_DAYS))
+    if today < exam_date or today > deadline:
+        return _error(
+            "ABSENCE_WINDOW_CLOSED",
+            f"Le transfert pour absence justifiée était possible jusqu'au {deadline} inclus.", 409,
+        )
+    reason_code = str(reason_code or "").strip().lower()
+    reason_detail = str(reason_detail or "").strip()
+    if reason_code not in TRANSFER_REASON_CODES:
+        return _error("REASON_INVALID", "Catégorie de motif invalide.", 400)
+    if not reason_detail:
+        return _error("REASON_REQUIRED", "Le commentaire du motif est obligatoire.", 400)
+    file_url, file_err = _validate_transfer_attachment(justificatif, applicant)
+    if file_err:
+        return file_err
+    target, err = _target_session_or_error(applicant, target_session)
+    if err:
+        return err
+
+    # DEC-J : invalide explicitement une éventuelle validation puis journalise la disparition
+    # de la sentinelle d'absence avant le retour ABS→ETU. Aucun contournement du verrou notes.
+    _clear_absence_note_for_transfer(applicant)
+    return _ok(_move_applicant_session(
+        applicant, target, "justified_absence", status_after="ETU",
+        reason_code=reason_code, reason_detail=reason_detail, justificatif=file_url,
+    ))
+
+
+def _institutional_candidates(source_session):
+    rows = frappe.get_list(
+        "Admission Applicant",
+        filters={
+            "session": source_session,
+            "status": ["in", list(TRANSFER_ELIGIBLE_STATES)],
+            "anonymized": ["!=", 1],
+        },
+        fields=["name"],
+        limit_page_length=5000,
+    )
+    out = []
+    for row in rows:
+        applicant = frappe.get_doc("Admission Applicant", row.name)
+        if _frais1_confirmed(applicant):
+            out.append(applicant)
+    return out
+
+
+def _institutional_context(source_session, target_session):
+    if not source_session or not frappe.db.exists("Admission Session", source_session):
+        return None, None, None, _error("INVALID_SESSION", "Session d'origine inconnue.", 404)
+    from admission.api import permissions as _perm
+    if not _perm.value_in_scope(source_session, axis_required="session"):
+        return None, None, None, _error(
+            "FORBIDDEN_SCOPE",
+            "Session d'origine hors de votre périmètre (cloisonnement activé).",
+            403,
+        )
+    source = frappe.get_doc("Admission Session", source_session)
+    if not bool(source.is_prepa_session):
+        return None, None, None, _error("NOT_PREPA", "La session d'origine n'est pas à concours.", 409)
+    probe = frappe._dict(session=source.name, programme_code=source.programme_code)
+    target, err = _target_session_or_error(probe, target_session)
+    if err:
+        return None, None, None, err
+    candidates = _institutional_candidates(source.name)
+    return source, target, candidates, None
+
+
+@frappe.whitelist(methods=["GET"])
+def institutional_transfer_targets(source_session=None):
+    """Cibles institutionnelles : même règle serveur que le transfert individuel."""
+    frappe.only_for(RESP_EXACT)
+    if not source_session or not frappe.db.exists("Admission Session", source_session):
+        return _error("INVALID_SESSION", "Session d'origine inconnue.", 404)
+    from admission.api import permissions as _perm
+    if not _perm.value_in_scope(source_session, axis_required="session"):
+        return _error(
+            "FORBIDDEN_SCOPE",
+            "Session d'origine hors de votre périmètre (cloisonnement activé).",
+            403,
+        )
+    source = frappe.get_doc("Admission Session", source_session)
+    if not bool(source.is_prepa_session):
+        return _error("NOT_PREPA", "La session d'origine n'est pas à concours.", 409)
+    probe = frappe._dict(session=source.name, programme_code=source.programme_code)
+    return _ok({"source_session": source.name, "targets": _available_transfer_targets(probe)})
+
+
+@frappe.whitelist(methods=["GET"])
+def institutional_transfer_preview(source_session=None, target_session=None):
+    """Aperçu sans écriture du lot d'annulation institutionnelle."""
+    frappe.only_for(RESP_EXACT)
+    source, target, candidates, err = _institutional_context(source_session, target_session)
+    if err:
+        return err
+    capacity = _capacity_snapshot(target, incoming=len(candidates))
+    return _ok({
+        "source_session": source.name,
+        "target_session": target.name,
+        "eligible": len(candidates),
+        "dossiers": [a.name for a in candidates],
+        "capacity": capacity,
+    })
+
+
+@frappe.whitelist()
+def institutional_transfer(source_session=None, target_session=None):
+    """Transfère en lot les dossiers actifs payés; ne ferme pas la session calendrier."""
+    frappe.only_for(RESP_EXACT)
+    source, target, candidates, err = _institutional_context(source_session, target_session)
+    if err:
+        return err
+    batch_ref = frappe.generate_hash(length=12)
+    results = []
+    for applicant in candidates:
+        scope_err = _guard_write_scope(applicant)
+        if scope_err:
+            return scope_err
+        results.append(_move_applicant_session(
+            applicant, target, "institutional", reason_code="autre",
+            reason_detail=f"Annulation institutionnelle de la session {source.name}.",
+            batch_ref=batch_ref,
+        ))
+    reissued = sum(1 for row in results if row["convocation_reissued"])
+    log_event(
+        "institutional_transfer", "success", ref=batch_ref,
+        from_session=source.name, to_session=target.name, transferred=len(results),
+    )
+    return _ok({
+        "batch_ref": batch_ref,
+        "source_session": source.name,
+        "target_session": target.name,
+        "transferred": len(results),
+        "convocations_reissued": reissued,
+        "logs": len(results),
+        "capacity": _capacity_snapshot(target, incoming=0),
+        "results": results,
+    })
+
+
 # ── C4-FRONT : endpoints d'appoint (lecture role-gardée pour le front management) ──
 # Le front REFLÈTE la sécurité serveur (UX role-aware) — il ne la porte pas : chaque
 # endpoint reste role-gardé ici. Les LISTES passent par frappe.get_list → respectent les
@@ -605,6 +1044,9 @@ def get_dossier(dossier_id=None):
                                  fields=["from_status", "to_status", "action", "transition_at",
                                          "actor", "source"],
                                  order_by="transition_at desc", limit_page_length=50)
+    transfer_payload = _transfer_payload(applicant, session_doc)
+    action_ctx = action_context(applicant)
+    action_ctx.update(_transfer_action_context(applicant, session_doc))
 
     def _mirror_details(keys_json):
         keys = json.loads(keys_json or "[]")
@@ -655,6 +1097,7 @@ def get_dossier(dossier_id=None):
                   "captured_date": str(applicant.promo_captured_date or "")},
         "acompte_xof": float(applicant.acompte_xof or 0),
         "transitions": transitions,
+        "transfer": transfer_payload,
         "soumis_le": str(applicant.creation),
         # FIX-PROGRESSION — disponibilité (UX) dérivée des gardes (source unique _actions).
         # Le front devient pur renderer : il rend ce que le back autorise, il ne devine plus.
@@ -663,7 +1106,7 @@ def get_dossier(dossier_id=None):
         "available_actions": available_actions(
             applicant, _viewer_roles,
             is_prepa=bool(session_doc.is_prepa_session) if session_doc else False,
-            ctx=action_context(applicant)),
+            ctx=action_ctx),
         "can_control_pieces": can_control_pieces(applicant, _viewer_roles),
         "can_manage_payments": can_manage_payments(applicant, _viewer_roles),
         # CONVOCATION-PREPA : le serveur pilote le bouton. Règle exacte : session Open,
@@ -1532,6 +1975,46 @@ def _apply_notes(applicant, parsed, origin):
     return None
 
 
+def _invalidate_notes(applicant, origin="invalidation"):
+    """DEC-J — point commun d'invalidation explicite, journal puis déverrouillage."""
+    if not applicant.notes_validated:
+        return False
+    frappe.get_doc({
+        "doctype": "Admission Note Change Log", "applicant": applicant.name,
+        "applicant_name": applicant.applicant_name or applicant.name,
+        "session": applicant.session, "champ": "validation",
+        "old_value": "validées", "new_value": "en attente",
+        "action_type": "invalidation", "origin": origin,
+        "author": frappe.session.user, "at": now_datetime(),
+    }).insert(ignore_permissions=True)
+    applicant.notes_validated = 0
+    applicant.notes_validated_by = None
+    applicant.notes_validated_date = None
+    applicant.save(ignore_permissions=True)
+    return True
+
+
+def _clear_absence_note_for_transfer(applicant):
+    """TRANSFERT-SESSION — invalide puis retire la sentinelle ABS via le patron DEC-J.
+
+    Deux lignes sont produites si la note était validée : `validation` puis `absent`. Les deux
+    écritures et le déplacement restent dans la même transaction de requête.
+    """
+    _invalidate_notes(applicant, origin="transfert_absence")
+    if not exam_grading.is_absent(applicant.notes_concours):
+        return False
+    _log_note_changes(
+        applicant, applicant.notes_concours, None,
+        action_type="invalidation", origin="transfert_absence",
+    )
+    applicant.notes_concours = None
+    applicant.notes_validated = 0
+    applicant.notes_validated_by = None
+    applicant.notes_validated_date = None
+    applicant.save(ignore_permissions=True)
+    return True
+
+
 def _write_one_note(dossier_id, parsed, origin="masse"):
     """Écrit les notes d'UN candidat (atomique : les 3 ou aucune). Mêmes gardes que la saisie unitaire
     (Prépa, ETU, périmètre). `parsed` déjà validé. Retourne True | message d'erreur."""
@@ -1824,19 +2307,7 @@ def invalider_notes_concours(dossier_id=None):
                       "notes n'est plus possible (DEC-M).", 409)
     if not applicant.notes_validated:
         return _ok({"dossier_id": applicant.name, "idempotent": True, "notes_validated": 0})
-    # journal AVANT la bascule, même transaction (DEC-J)
-    frappe.get_doc({
-        "doctype": "Admission Note Change Log", "applicant": applicant.name,
-        "applicant_name": applicant.applicant_name or applicant.name,
-        "session": applicant.session, "champ": "validation",
-        "old_value": "validées", "new_value": "en attente",
-        "action_type": "invalidation", "origin": "invalidation",
-        "author": frappe.session.user, "at": now_datetime(),
-    }).insert(ignore_permissions=True)
-    applicant.notes_validated = 0
-    applicant.notes_validated_by = None
-    applicant.notes_validated_date = None
-    applicant.save(ignore_permissions=True)
+    _invalidate_notes(applicant, origin="invalidation")
     log_event("invalider_notes_concours", "success", dossier_id=applicant.name)
     return _ok({"dossier_id": applicant.name, "notes_validated": 0})
 

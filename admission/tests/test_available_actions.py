@@ -32,6 +32,15 @@ SM = ["Admission SM"]
 
 
 class TestAvailableActions(TestCase):
+    def test_transfer_actions_are_responsable_exact_and_context_gated(self):
+        ctx = {"transfer_ready": True, "absence_mark_ready": True,
+               "absence_transfer_ready": True}
+        self.assertIn("transfer_session", available_actions(_a(status="ETU"), RESP, is_prepa=True, ctx=ctx))
+        self.assertIn("mark_absent", available_actions(_a(status="ETU"), RESP, is_prepa=True, ctx=ctx))
+        self.assertIn("transfer_justified_absence", available_actions(_a(status="ABS"), RESP, is_prepa=True, ctx=ctx))
+        self.assertNotIn("transfer_session", available_actions(_a(status="ETU"), DIR, is_prepa=True, ctx=ctx))
+        self.assertNotIn("transfer_session", available_actions(_a(status="ETU"), RESP, is_prepa=True, ctx={}))
+
     def test_admin_sou_intake(self):
         acts = available_actions(_a(status="SOU"), ADMIN, is_prepa=False)
         self.assertIn("start_review", acts)

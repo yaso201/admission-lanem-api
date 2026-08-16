@@ -67,7 +67,7 @@
   {
    "fieldname": "origin",
    "fieldtype": "Select",
-   "options": "unitaire\nmasse\nimport\ninvalidation",
+   "options": "unitaire\nmasse\nimport\ninvalidation\ntransfert_absence",
    "label": "Origine"
   },
   {

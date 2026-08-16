@@ -384,7 +384,7 @@ FRAIS1_FEE_TYPES = {"application", "competition"}
 # devinée) : complément des WITHDRAW_STATES, moins INC (réversible, frais 1 déjà réglé). Garde
 # PARTAGÉE : promotion webhook (garant — _promote_payment, couvre Pending ET Rejected), initiation
 # (submit_payment_online), confirmation offline (staff.confirm_offline_payment).
-PAYMENT_FORBIDDEN_STATES = frozenset({"DES", "REF", "REJ", "INS"})
+PAYMENT_FORBIDDEN_STATES = frozenset({"ABS", "DES", "REF", "REJ", "INS"})
 
 
 # ── PERF-1 : cache couche catalogue (frappe.cache natif) + invalidation anti-périmé ──

@@ -18,6 +18,7 @@ STATES = [
 	("ACO", "Warning", "Admission Responsable"),
 	("ACC", "Success", "Admission Direction"),
 	("INS", "Success", "Admission Direction"),
+	("ABS", "Danger", "Admission Responsable"),
 	("REF", "Danger", "Admission Direction"),
 	("REJ", "Danger", "Admission Administratif"),
 	("DES", "Inverse", "Admission Administratif"),
@@ -59,6 +60,8 @@ def _build_transitions():
 	for s in _WITHDRAW_STATES:
 		fan(s, "Withdraw", "DES", _ASCENDING)
 	# décision maker — EXACT Responsable
+	fan("ETU", "Mark Absent", "ABS", _MAKER)
+	fan("ABS", "Transfer Justified Absence", "ETU", _MAKER)
 	fan("ETU", "Waitlist", "ATT", _MAKER)
 	fan("ETU", "Mark Admissible", "ADM", _MAKER)
 	fan("ATT", "Mark Admissible", "ADM", _MAKER)

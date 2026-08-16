@@ -309,9 +309,85 @@ def _send_reissue(applicant, session):
                             now_datetime(), update_modified=False)
         applicant.convocation_sent_at = now_datetime()
         log_event("convocation", "reissued", dossier_id=applicant.name, ref=numero)
+        return True
     except Exception:
         frappe.log_error(title="Convocation reissue failed", message=frappe.get_traceback())
         log_event("convocation", "reissue_failed", dossier_id=applicant.name, level="error")
+        return False
+
+
+def reissue_transfer_convocation(applicant, session, from_session, transfer_type):
+    """TRANSFERT-SESSION — réémet la convocation avec les données de la session cible.
+
+    Le numéro est conservé, conformément au patron GK6. Le message nomme les deux sessions et
+    demande explicitement d'ignorer l'ancienne version. L'échec PDF/SMTP reste non bloquant.
+    """
+    try:
+        pdf, numero = build_convocation_pdf(applicant, session)
+        email = getattr(applicant, "email", None)
+        if email:
+            frappe.sendmail(
+                recipients=[email],
+                subject="Transfert de session — nouvelle convocation",
+                message=_transfer_reissue_email_body(
+                    applicant, session, from_session, numero, transfer_type
+                ),
+                attachments=[{"fname": f"convocation-{numero}.pdf", "fcontent": pdf}],
+            )
+        sent_at = now_datetime()
+        frappe.db.set_value(
+            "Admission Applicant", applicant.name, "convocation_sent_at", sent_at,
+            update_modified=False,
+        )
+        applicant.convocation_sent_at = sent_at
+        log_event("convocation", "reissued_transfer", dossier_id=applicant.name, ref=numero)
+        return True
+    except Exception:
+        frappe.log_error(title="Convocation transfer reissue failed", message=frappe.get_traceback())
+        log_event(
+            "convocation", "reissue_transfer_failed", dossier_id=applicant.name, level="error"
+        )
+        return False
+
+
+def _transfer_reissue_email_body(applicant, session, from_session, numero, transfer_type):
+    from admission.api.email_template import _portal_link, render_candidate_email
+
+    nom = getattr(applicant, "applicant_name", "") or ""
+    origin_label = getattr(from_session, "label", "") or getattr(from_session, "name", "")
+    target_label = getattr(session, "label", "") or getattr(session, "name", "")
+    date_ep = _fmt_date_fr(session.exam_date, weekday=True)
+    cause = {
+        "voluntary": "Votre demande de transfert de session a été enregistrée.",
+        "justified_absence": "Votre absence justifiée a été acceptée et votre dossier transféré.",
+        "institutional": "LaNEM a annulé votre session d'origine et transféré votre dossier.",
+    }.get(transfer_type, "Votre dossier a été transféré vers une nouvelle session.")
+    return render_candidate_email(
+        nom=nom,
+        dossier=applicant.name,
+        filiere=getattr(session, "programme_label", "") or "",
+        status="convocation",
+        intro=(
+            f"<strong>{cause}</strong> La convocation jointe remplace intégralement la version "
+            "précédente, qui doit être ignorée. Votre numéro de convocation est conservé."
+        ),
+        meta=[
+            ("Session d'origine", origin_label),
+            ("Nouvelle session", target_label),
+            ("Numéro de convocation", numero, True),
+            ("Nouvelle date de l'épreuve", date_ep),
+            ("Heure d'appel", _fmt_time_fr(getattr(session, "exam_call_time", None))),
+            ("Début des épreuves", _fmt_time_fr(getattr(session, "exam_start_time", None))),
+        ],
+        attachment={
+            "label": "Nouvelle convocation au concours",
+            "fname": f"convocation-{numero}.pdf",
+        },
+        secondary={"label": "Ouvrir mon espace de suivi", "url": _portal_link(applicant)},
+        signoff="L'équipe des admissions, LaNEM",
+        preheader=f"Nouvelle session : {target_label} · épreuve le {date_ep}.",
+        subject="Transfert de session — nouvelle convocation",
+    )
 
 
 def _reissue_email_body(applicant, session, numero):

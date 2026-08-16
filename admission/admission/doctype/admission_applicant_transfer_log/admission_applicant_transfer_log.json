@@ -1,0 +1,156 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-08-16 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "applicant",
+  "transfer_type",
+  "from_session",
+  "to_session",
+  "status_before",
+  "status_after",
+  "reason_section",
+  "reason_code",
+  "reason_detail",
+  "justificatif",
+  "audit_section",
+  "transferred_at",
+  "actor",
+  "batch_ref",
+  "capacity_before",
+  "capacity_after",
+  "convocation_reissued"
+ ],
+ "fields": [
+  {
+   "fieldname": "applicant",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Dossier",
+   "options": "Admission Applicant",
+   "reqd": 1
+  },
+  {
+   "fieldname": "transfer_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Type de transfert",
+   "options": "voluntary\njustified_absence\ninstitutional",
+   "reqd": 1
+  },
+  {
+   "fieldname": "from_session",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Session d'origine",
+   "options": "Admission Session",
+   "reqd": 1
+  },
+  {
+   "fieldname": "to_session",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Session cible",
+   "options": "Admission Session",
+   "reqd": 1
+  },
+  {
+   "fieldname": "status_before",
+   "fieldtype": "Data",
+   "label": "Statut avant",
+   "reqd": 1
+  },
+  {
+   "fieldname": "status_after",
+   "fieldtype": "Data",
+   "label": "Statut après",
+   "reqd": 1
+  },
+  {
+   "fieldname": "reason_section",
+   "fieldtype": "Section Break",
+   "label": "Motif"
+  },
+  {
+   "fieldname": "reason_code",
+   "fieldtype": "Select",
+   "label": "Catégorie",
+   "options": "\nmaladie\naccident\nurgence familiale\nforce majeure\nautre"
+  },
+  {
+   "fieldname": "reason_detail",
+   "fieldtype": "Small Text",
+   "label": "Commentaire"
+  },
+  {
+   "fieldname": "justificatif",
+   "fieldtype": "Attach",
+   "label": "Justificatif"
+  },
+  {
+   "fieldname": "audit_section",
+   "fieldtype": "Section Break",
+   "label": "Traçabilité"
+  },
+  {
+   "fieldname": "transferred_at",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Transféré le",
+   "reqd": 1
+  },
+  {
+   "fieldname": "actor",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Auteur",
+   "options": "User",
+   "reqd": 1
+  },
+  {
+   "fieldname": "batch_ref",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Référence de lot"
+  },
+  {
+   "fieldname": "capacity_before",
+   "fieldtype": "Int",
+   "label": "Occupation cible avant"
+  },
+  {
+   "fieldname": "capacity_after",
+   "fieldtype": "Int",
+   "label": "Occupation cible après"
+  },
+  {
+   "default": "0",
+   "fieldname": "convocation_reissued",
+   "fieldtype": "Check",
+   "label": "Convocation réémise"
+  }
+ ],
+ "in_create": 0,
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-08-16 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Admission",
+ "name": "Admission Applicant Transfer Log",
+ "owner": "Administrator",
+ "permissions": [
+  {"read": 1, "role": "System Manager"},
+  {"read": 1, "role": "Admission Administratif"},
+  {"read": 1, "role": "Admission Responsable"},
+  {"read": 1, "role": "Admission Direction"}
+ ],
+ "sort_field": "transferred_at",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}

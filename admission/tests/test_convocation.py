@@ -141,3 +141,24 @@ class TestConvocation(FrappeTestCase):
         self.assertNotEqual(a, b)
         # compteur continu (annuel) : le 2e numéro suit le 1er malgré le mois différent
         self.assertEqual(int(b[4:]), int(a[4:]) + 1)
+
+    def test_transfer_reissue_keeps_number_and_explicitly_replaces_old_document(self):
+        from admission.api.convocation import reissue_transfer_convocation
+
+        origin = self._session(exam_date="2026-09-12")
+        origin.label = "Session origine"
+        app = self._applicant(origin)
+        app.convocation_number = "09260042"
+        target = frappe._dict(
+            name="TARGET", label="Session cible", programme_label="Cycle Préparatoire",
+            exam_date="2026-10-17", exam_call_time="07:30:00", exam_start_time="08:00:00",
+        )
+        with patch(f"{CONV}.build_convocation_pdf", return_value=(b"%PDF", "09260042")), \
+             patch("frappe.sendmail") as sendmail:
+            self.assertTrue(reissue_transfer_convocation(app, target, origin, "voluntary"))
+
+        mail = sendmail.call_args.kwargs
+        self.assertEqual(mail["attachments"][0]["fname"], "convocation-09260042.pdf")
+        self.assertIn("remplace intégralement", mail["message"])
+        self.assertIn("Session origine", mail["message"])
+        self.assertIn("Session cible", mail["message"])
