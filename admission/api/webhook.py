@@ -1,31 +1,31 @@
-"""Webhook paiement KkiaPay (LOT KKIAPAY — ferme ADM-DEBT-74).
+"""Webhook paiement FedaPay (PAIEMENT-FEDAPAY — DEC-216 révisée ; remplace KkiaPay).
 
-Contrat provider (doc + plugin officiel) : POST JSON brut
-  {transactionId, isPaymentSucces, event: transaction.success|transaction.failed,
-   amount, method, stateData: {reference, sdk}, failureCode?...}
-+ en-tête `x-kkiapay-secret` = hash secret saisi au dashboard (comparaison constant-time).
+Contrat provider (FedaPay) : POST JSON brut
+  {name: "transaction.approved"|"transaction.canceled"|..., entity: {id, status: approved|pending|
+   declined|canceled, amount, reference, custom_metadata: {provider_reference}}}
++ en-tête `x-fedapay-signature` = `t=<ts>,s=<hash>` où hash = HMAC-SHA256(webhook_secret,
+  "<ts>.<corps brut>") — comparaison constant-time (fedapay.valid_webhook_signature).
 
-Modèle de sécurité (celui du plugin WooCommerce officiel, durci) :
-  1. en-tête secret valide (fail-closed SEC-2 : pas de secret configuré → REJET) ;
+Modèle de sécurité (inchangé — seul le contrat provider change) :
+  1. signature valide (fail-closed SEC-2 : pas de secret configuré → REJET) ;
   2. le payload n'est JAMAIS cru sur parole : re-vérification serveur
-     `kkiapay.verify_transaction(transactionId)` (3 clés marchand) — status SUCCESS
+     `fedapay.verify_transaction(id)` (clé secrète marchand) — status SUCCESS (approved)
      ET montant >= Pending attendu ;
-  3. promotion UNIQUEMENT : le Pending lié par `stateData.reference`
+  3. promotion UNIQUEMENT : le Pending lié par `entity.custom_metadata.provider_reference`
      (= provider_reference posé par prepare_online_payment) est promu Confirmed.
      Plus AUCUN insert fallback : un webhook sans Pending lié = 409 (tout paiement
      online passe par l'initiation — garde W3).
-Idempotent : replay sur Confirmed/Paid → ok sans effet ; retentatives KkiaPay
-(5 × ~500 ms) couvertes. `transaction.failed` → Pending→Rejected (silencieux, même
-pattern que expire_stale_online_pending).
+Idempotent : replay sur Confirmed/Paid → ok sans effet ; retentatives FedaPay couvertes.
+Événement d'échec (canceled/declined) → Pending→Rejected (silencieux, même pattern que
+expire_stale_online_pending).
 """
 
-import hmac
 import json
 
 import frappe
 from frappe.utils import now_datetime
 
-from admission.api.kkiapay import verify_transaction
+from admission.api.fedapay import verify_transaction, valid_webhook_signature
 from admission.api.public import (
 	_error,
 	_ok,
@@ -37,18 +37,19 @@ from admission.api.notify_uf import notify_uf_payment  # PC2-quater : notif UF p
 from admission.api._log import log_event  # OBS-2 : log structuré + corrélation (provider_reference / dossier_id)
 
 
-def _valid_header_secret(received):
-	secret = frappe.conf.get("admission_payment_webhook_secret")
-	if not secret:
-		# SEC-2 : fail-CLOSED. Sans secret configuré, aucune notification de paiement
-		# n'est authentifiable → on REJETTE (jamais d'acceptation par défaut).
-		return False
-	return hmac.compare_digest(str(secret), str(received or ""))
+def _raw_body():
+	"""Corps HTTP BRUT (bytes) — nécessaire pour vérifier la signature HMAC sur les octets exacts."""
+	return getattr(getattr(frappe, "request", None), "data", None)
 
 
-def _parse_payload():
-	"""Corps JSON BRUT (KkiaPay poste du JSON, pas du form-encodé). None = invalide."""
-	raw = getattr(getattr(frappe, "request", None), "data", None)
+def _valid_signature(raw_body, header):
+	# SEC-2 fail-CLOSED : sans webhook_secret configuré OU signature absente/invalide → REJET
+	# (jamais d'acceptation par défaut). Toute la logique HMAC vit dans fedapay.
+	return valid_webhook_signature(raw_body, header)
+
+
+def _parse_payload(raw):
+	"""Corps JSON BRUT (FedaPay poste du JSON). None = invalide."""
 	if not raw:
 		return None
 	try:
@@ -58,18 +59,18 @@ def _parse_payload():
 	return payload if isinstance(payload, dict) else None
 
 
-def _extract_reference(payload):
-	"""provider_reference posé à l'initiation — aller-retour via l'attribut `data` du
-	widget, restitué par KkiaPay dans `stateData` (dict ou chaîne JSON selon le canal)."""
-	state = payload.get("stateData") or {}
-	if isinstance(state, str):
+def _extract_reference(entity):
+	"""provider_reference posé à l'initiation — aller-retour via `custom_metadata` FedaPay,
+	restitué dans `entity.custom_metadata` (dict ou chaîne JSON selon le canal)."""
+	meta = entity.get("custom_metadata") or {}
+	if isinstance(meta, str):
 		try:
-			state = json.loads(state)
+			meta = json.loads(meta)
 		except (ValueError, TypeError):
-			state = {}
-	if isinstance(state, dict) and state.get("reference"):
-		return state["reference"]
-	return payload.get("reference")  # compat simulateur DEV
+			meta = {}
+	if isinstance(meta, dict) and meta.get("provider_reference"):
+		return meta["provider_reference"]
+	return entity.get("reference")  # compat simulateur DEV / référence marchande
 
 
 def _find_payment_by_reference(reference):
@@ -100,7 +101,7 @@ def _promote_payment(existing, transaction_id, reference, reconciliation=None):
 	fee = frappe.get_doc("Applicant Fee", existing.applicant_fee)
 	existing.payment_status = "Confirmed"
 	existing.paid_at = now_datetime()
-	existing.provider = "kkiapay"
+	existing.provider = "fedapay"
 	existing.provider_transaction_id = transaction_id  # opposabilité + revert API
 	if reconciliation:
 		existing.reconciliation = reconciliation
@@ -158,20 +159,23 @@ def _orphan_trace(existing, transaction_id, reference):
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 def payment():
-	payload = _parse_payload()
+	raw = _raw_body()
+	payload = _parse_payload(raw)
 	if payload is None:
 		return _error("WEBHOOK_PAYLOAD_INVALID", "Expected a JSON body.", 400)
-	received = frappe.get_request_header("x-kkiapay-secret")
-	if not _valid_header_secret(received):
+	# FedaPay : signature HMAC-SHA256 sur le CORPS BRUT (x-fedapay-signature = t=<ts>,s=<hash>).
+	if not _valid_signature(raw, frappe.get_request_header("x-fedapay-signature")):
 		log_event("webhook_payment", "rejected_signature",
-		          ref=payload.get("transactionId"), level="warning")
-		return _error("WEBHOOK_SIGNATURE_INVALID", "Invalid payment webhook secret.", 403)
+		          ref=(payload.get("entity") or {}).get("id"), level="warning")
+		return _error("WEBHOOK_SIGNATURE_INVALID", "Invalid payment webhook signature.", 403)
 
-	reference = _extract_reference(payload)
-	transaction_id = payload.get("transactionId")
-	event = payload.get("event") or ""
-	success = event == "transaction.success" or payload.get("isPaymentSucces") is True \
-		or str(payload.get("status") or "").lower() in {"confirmed", "success", "paid"}
+	# FedaPay : {name: "transaction.approved"|…, entity:{id,status,amount,custom_metadata:{provider_reference}}}
+	entity = payload.get("entity") if isinstance(payload.get("entity"), dict) else {}
+	reference = _extract_reference(entity)
+	transaction_id = entity.get("id") or payload.get("transactionId")
+	event = payload.get("name") or payload.get("event") or ""
+	success = event in ("transaction.approved", "transaction.transferred") \
+		or str(entity.get("status") or payload.get("status") or "").lower() in {"approved", "transferred", "confirmed", "success", "paid"}
 
 	# Reboucle par provider_reference (liage persisté à l'initiation, candidat OU agent).
 	existing = _find_payment_by_reference(reference)

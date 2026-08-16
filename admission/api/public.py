@@ -2217,22 +2217,22 @@ def prepare_online_payment(applicant, fee, *, idempotency_key=None, descriptor_a
 				"source": "online",  # ADM-DEBT-25 : traçabilité canal
 				"amount_xof": fee.amount_xof,
 				"payment_status": "Pending",
-				"provider": "kkiapay",
+				"provider": "fedapay",
 				"provider_reference": reference,
 				"idempotency_key": idempotency_key,
 			}
 		).insert(ignore_permissions=True)
-	# LOT KKIAPAY : tout ce dont le widget a besoin (clé PUBLIQUE seulement — jamais
-	# private/secret côté front) ; `data` fait l'aller-retour widget→webhook (stateData).
-	from admission.api import kkiapay as kkiapay_client
+	# PAIEMENT-FEDAPAY : tout ce dont le checkout a besoin (clé PUBLIQUE seulement — jamais
+	# secret côté front) ; `custom_metadata.provider_reference` fait l'aller-retour checkout→webhook.
+	from admission.api import fedapay as fedapay_client
 	descriptor = {
-		"provider": "kkiapay",
-		"mode": kkiapay_client.mode(),  # mock (DEV) | sandbox | live
-		"public_key": kkiapay_client.public_key(),
-		"sandbox": kkiapay_client.is_sandbox(),
+		"provider": "fedapay",
+		"mode": fedapay_client.mode(),  # mock (DEV) | sandbox | live
+		"public_key": fedapay_client.public_key(),
+		"sandbox": fedapay_client.is_sandbox(),
 		"amount_xof": fee.amount_xof if descriptor_amount is None else descriptor_amount,
 		"reference": reference,
-		"data": json.dumps({"reference": reference, "sdk": "lanem-admission"}),
+		"custom_metadata": {"provider_reference": reference},
 		"webhook_required": True,
 	}
 	if ventilation is not None:

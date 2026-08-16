@@ -1,4 +1,14 @@
-"""Client KkiaPay (LOT KKIAPAY) — re-vérification serveur des transactions.
+"""⚠️ ABANDONNÉ (PAIEMENT-FEDAPAY, DEC-216 révisée) — remplacé par `fedapay.py`.
+
+Ce module n'est PLUS sur le chemin de production du paiement : ni `webhook.py` ni
+`public.py` ne l'importent (grep de contrôle au dossier de preuves). Il subsiste UNIQUEMENT
+comme code dormant référencé par des diagnostics hors write-set (`admin_config`, `recette_check`,
+`health`, `alerting`) — aucune route webhook, il ne peut rien encaisser. INSTRUCTION DE REPRISE :
+retirer ce fichier et ses références de diagnostic dans un lot dédié (voir DETTES-REPORTEES-V1.1).
+
+--- Documentation historique conservée ci-dessous ---
+
+Client KkiaPay (LOT KKIAPAY) — re-vérification serveur des transactions.
 
 Modèle de sécurité du provider (extrait de son plugin WooCommerce officiel et de son
 SDK Python — la doc ne publie pas le REST brut) : le webhook n'est qu'un DÉCLENCHEUR ;
