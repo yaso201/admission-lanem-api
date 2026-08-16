@@ -19,9 +19,9 @@ LEGAL = "admission.api.legal"
 class TestPrepareOnlinePayment(TestCase):
     def test_creates_pending_linked(self):
         with patch(f"{PUBLIC}.frappe") as mf, patch(f"{PUBLIC}.secrets") as msec, \
-             patch("admission.api.kkiapay.frappe") as mkk, \
+             patch("admission.api.fedapay.frappe") as mkk, \
              patch(f"{PUBLIC}._online_payment_exists", return_value=False):
-            mkk.conf = {"kkiapay_sandbox": 1, "kkiapay_public_key": "pk_test"}
+            mkk.conf = {"fedapay_sandbox": 1, "fedapay_public_key": "pk_test"}
             msec.token_hex.return_value = "abc123"
             inserted = MagicMock(); mf.get_doc.return_value = inserted
             from admission.api.public import prepare_online_payment
@@ -34,11 +34,11 @@ class TestPrepareOnlinePayment(TestCase):
         self.assertEqual(doc["applicant"], "CAN-1")
         self.assertEqual(doc["provider_reference"], "abc123")  # liage persisté serveur
         inserted.insert.assert_called_once_with(ignore_permissions=True)
-        self.assertEqual(desc["provider"], "kkiapay")
-        self.assertEqual(desc["mode"], "sandbox")       # piloté par site_config (kkiapay.mode)
+        self.assertEqual(desc["provider"], "fedapay")
+        self.assertEqual(desc["mode"], "sandbox")       # piloté par site_config (fedapay.mode)
         self.assertEqual(desc["public_key"], "pk_test")  # clé PUBLIQUE seule côté front
         self.assertTrue(desc["sandbox"])
-        self.assertIn("abc123", desc["data"])            # aller-retour widget→webhook (stateData)
+        self.assertEqual(desc["custom_metadata"]["provider_reference"], "abc123")  # round-trip checkout→webhook
         self.assertTrue(desc["webhook_required"])
         self.assertEqual(desc["reference"], "abc123")
 
@@ -60,10 +60,10 @@ class TestSubmitOnlineDescriptorUnchanged(TestCase):
     @patch(f"{LEGAL}._get_active_legal_document")
     @patch(f"{PUBLIC}._ensure_fee")
     @patch(f"{PUBLIC}._get_applicant")
-    @patch("admission.api.kkiapay.frappe")
+    @patch("admission.api.fedapay.frappe")
     @patch(f"{PUBLIC}.frappe")
     def test_descriptor_keys_values(self, mf, mkk, mget, mens, mlegal, mrec, msec, _exists):
-        mkk.conf = {"kkiapay_sandbox": 1, "kkiapay_public_key": "pk_test"}
+        mkk.conf = {"fedapay_sandbox": 1, "fedapay_public_key": "pk_test"}
         mf.form_dict = {}; mf.request = None
         applicant = MagicMock(); applicant.name = "CAN-001"; applicant.pieces = []; mget.return_value = applicant
         refund = MagicMock(); refund.name = "LEGAL-REFUND"; mlegal.return_value = refund
@@ -74,7 +74,7 @@ class TestSubmitOnlineDescriptorUnchanged(TestCase):
         result = submit_payment_online(dossier_id="CAN-001", token="tok", consent_refund=True)
         self.assertTrue(result["ok"])
         data = result["data"]
-        self.assertEqual(data["provider"], "kkiapay")
+        self.assertEqual(data["provider"], "fedapay")
         self.assertEqual(data["mode"], "sandbox")
         self.assertTrue(data["webhook_required"])
         self.assertEqual(data["amount_xof"], 25000)
@@ -94,7 +94,7 @@ class TestInitiateOnlinePaymentStaff(TestCase):
         with patch(f"{STAFF}.frappe") as mf, \
              patch(f"{STAFF}._prepare_fee_channel", return_value=(None, None)), \
              patch(f"{STAFF}._ensure_fee") as mens, \
-             patch(f"{STAFF}.prepare_online_payment", return_value={"provider": "kkiapay", "reference": "R-AGENT"}) as mprep, \
+             patch(f"{STAFF}.prepare_online_payment", return_value={"provider": "fedapay", "reference": "R-AGENT"}) as mprep, \
              patch(f"{STAFF}._ok", side_effect=lambda d: {"ok": True, **d}), \
              patch(f"{STAFF}._error", side_effect=lambda c, m, s=400: {"ok": False, "code": c}):
             mf.db.exists.return_value = True

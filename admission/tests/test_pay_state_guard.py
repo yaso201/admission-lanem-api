@@ -17,17 +17,18 @@ STAFF = "admission.api.staff"
 SECRET = "whsecret"
 
 
-def _payload(ref="REF-1", event="transaction.success", tx="TX-1", amount=15000):
-    return {"transactionId": tx, "event": event,
-            "isPaymentSucces": event == "transaction.success",
-            "amount": amount, "method": "MOBILE_MONEY",
-            "stateData": {"reference": ref, "sdk": "lanem-admission"}}
+def _payload(ref="REF-1", event="transaction.approved", tx="TX-1", amount=15000):
+    """Payload FedaPay (cf. webhook.py)."""
+    status = "approved" if event in ("transaction.approved", "transaction.transferred") else "declined"
+    return {"name": event,
+            "entity": {"id": tx, "status": status, "amount": amount,
+                       "custom_metadata": {"provider_reference": ref}}}
 
 
-def _rq(mf, payload, header=SECRET):
-    mf.conf = {"admission_payment_webhook_secret": SECRET}
+def _rq(mf, payload):
+    mf.conf = {"fedapay_webhook_secret": SECRET}
     mf.request.data = json.dumps(payload)
-    mf.get_request_header.return_value = header
+    mf.get_request_header.return_value = "t=1700000000,s=deadbeef"
 
 
 def _pending(status="Pending", amount=15000):
@@ -54,6 +55,12 @@ def _wire(mf, mfind, pending, applicant_status, st):
 
 
 class TestPromotionStateGuard(TestCase):
+    def setUp(self):
+        # Signature FedaPay valide (on teste la garde d'ÉTAT, pas la signature — prouvée ailleurs).
+        _p = patch(f"{WEBHOOK}.valid_webhook_signature", return_value=True)
+        _p.start()
+        self.addCleanup(_p.stop)
+
     @patch(f"{WEBHOOK}.notify_uf_payment")
     @patch(f"{WEBHOOK}.send_payment_receipt")
     @patch(f"{WEBHOOK}.apply_confirmed_payment_cascade")

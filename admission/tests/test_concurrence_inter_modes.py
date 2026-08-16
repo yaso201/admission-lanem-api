@@ -1,20 +1,22 @@
 """Robustesse de l'invariant argent INTER-MODES (RECO-BANCAIRE / DEC-PAY-RECON).
 
 Invariant : pour un `Applicant Fee` donné, il existe AU PLUS UN `Applicant Fee Payment`
-en statut `Confirmed`, tous modes confondus (KkiaPay webhook ET validation manuelle staff).
+en statut `Confirmed`, tous modes confondus (webhook FedaPay ET validation manuelle staff).
 R3 (D-RACE-FEE-01) le garantit par l'index UNIQUE sur la colonne générée
 `confirmed_fee = if(payment_status='Confirmed', applicant_fee, NULL)` — path-agnostique.
 
 Ce harnais PROUVE deux dimensions DISTINCTES, sur DB réelle, threads réels :
   (1) INVARIANT (argent)      : count(Confirmed where fee=X) == 1 dans tous les cas.
-  (2) ROBUSTESSE (ergonomie)  : caractérisation du perdant — orphelin gracieux (KkiaPay,
-      check fee_resolved + try/except) vs exception non capturée (manuel, D-MANUAL-ROBUST-25).
+  (2) ROBUSTESSE (ergonomie)  : caractérisation du perdant — orphelin gracieux (webhook
+      FedaPay, check fee_resolved + try/except) vs exception non capturée (manuel, D-MANUAL-ROBUST-25).
 
 Style aligné sur test_concurrence_fee_lock.py (R3) : chaque thread ouvre sa PROPRE connexion,
 commite hors du rollback du FrappeTestCase ; purge explicite par nom en tearDown. Aucun
 exec/tmp/réécriture dynamique (V-LEARN-CAMPUS-08/09) — fichier versionné, relisible.
 """
 
+import hashlib
+import hmac
 import json
 import threading
 from unittest.mock import patch
@@ -31,6 +33,12 @@ _AMOUNT = 15000
 
 def _stub(*a, **k):
     return None
+
+
+def _fedapay_sig(secret, body, ts="1700000000"):
+    """Signature FedaPay VALIDE : en-tête `t=<ts>,s=<hash>`, hash = HMAC-SHA256(secret, `<ts>.<corps brut>`)."""
+    payload = ts.encode("utf-8") + b"." + body.encode("utf-8")
+    return f"t={ts},s=" + hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
 
 
 class TestConcurrenceInterModes(FrappeTestCase):
@@ -62,9 +70,9 @@ class TestConcurrenceInterModes(FrappeTestCase):
         }).insert(ignore_permissions=True, ignore_mandatory=True)
 
         # DEUX Pending sur le MÊME fee, un par mode (précondition inter-modes réelle :
-        # declare_payment_offline banque + initiate_online_payment KkiaPay tant que le fee est Pending).
+        # declare_payment_offline banque + initiate_online_payment FedaPay tant que le fee est Pending).
         self.ref_online = f"{_MARK}-ONLINE"
-        self.pay_online = self._make_pending("Online", self.ref_online, provider="kkiapay")
+        self.pay_online = self._make_pending("Online", self.ref_online, provider="fedapay")
         self.pay_bank = self._make_pending("Bank", f"{_MARK}-BANK",
                                            justificatif="/private/files/test-justif.pdf")
         frappe.db.commit()  # visible aux connexions des threads
@@ -113,15 +121,16 @@ class TestConcurrenceInterModes(FrappeTestCase):
     # ---- appels « inline » (connexion COURANTE — usage séquentiel) ----
     def _webhook_call(self, ref, secret, out):
         try:
+            body = json.dumps({"name": "transaction.approved",
+                               "entity": {"id": f"TX-{ref}", "status": "approved",
+                                          "custom_metadata": {"provider_reference": ref}}})
             frappe.local.request = frappe._dict(
-                data=json.dumps({"transactionId": f"TX-{ref}", "event": "transaction.success",
-                                 "stateData": {"reference": ref}}),
-                headers={"x-kkiapay-secret": secret})
+                data=body, headers={"x-fedapay-signature": _fedapay_sig(secret, body)})
             from admission.api.webhook import payment
             payment()
-            out.append(("kkiapay", "ok"))
+            out.append(("fedapay", "ok"))
         except Exception as exc:  # noqa: BLE001
-            out.append(("kkiapay", "exc", repr(exc)))
+            out.append(("fedapay", "exc", repr(exc)))
 
     def _manual_call(self, out):
         try:
@@ -155,7 +164,7 @@ class TestConcurrenceInterModes(FrappeTestCase):
             frappe.destroy()
 
     def _patches(self):
-        # Stubs posés UNE FOIS avant les threads (mock.patch non thread-safe) : I/O KkiaPay (verify)
+        # Stubs posés UNE FOIS avant les threads (mock.patch non thread-safe) : I/O FedaPay (verify)
         # + effets aval (cascade/notif/reçu) des DEUX chemins + hook UF (HTTP). Le VRAI cœur
         # (statut→Confirmed, save, index unique, commit) tourne réel.
         return [
@@ -171,8 +180,8 @@ class TestConcurrenceInterModes(FrappeTestCase):
     # ===================== Cas A — concurrent (≥5 runs) =====================
     def test_a_concurrent_inter_modes(self):
         site = frappe.local.site
-        secret = frappe.conf.get("admission_payment_webhook_secret")
-        self.assertTrue(secret, "secret webhook requis (admission_payment_webhook_secret)")
+        secret = frappe.conf.get("fedapay_webhook_secret")
+        self.assertTrue(secret, "secret webhook requis (fedapay_webhook_secret)")
         losers = []
         RUNS = 5
         for i in range(RUNS):
@@ -199,11 +208,11 @@ class TestConcurrenceInterModes(FrappeTestCase):
                              f"[run {i}] INVARIANT VIOLÉ : {len(confirmed)} Confirmed attendu 1 — {confirmed} ; out={out}")
             # caractérisation du perdant (dimension robustesse)
             manual = next((o for o in out if o[0] == "manuel"), None)
-            kkia = next((o for o in out if o[0] == "kkiapay"), None)
+            kkia = next((o for o in out if o[0] == "fedapay"), None)
             if manual and manual[1] == "exc":
                 losers.append("manuel:exception")          # D-MANUAL-ROBUST-25 se manifeste
             elif len(self._orphans()) == 1:
-                losers.append("kkiapay:orphelin")          # perdant gracieux
+                losers.append("fedapay:orphelin")          # perdant gracieux
             else:
                 losers.append(f"indéterminé(out={out})")
         print(f"\n[Cas A] {RUNS} runs — invariant count==1 : OK partout | perdants = {losers}")
@@ -211,7 +220,7 @@ class TestConcurrenceInterModes(FrappeTestCase):
     # ===================== Cas B1 — séquentiel manuel → webhook =====================
     def test_b1_manuel_puis_webhook_orphelin_gracieux(self):
         site = frappe.local.site
-        secret = frappe.conf.get("admission_payment_webhook_secret")
+        secret = frappe.conf.get("fedapay_webhook_secret")
         self._reset_pending()
         with self._patched():
             manual_out = []
@@ -223,19 +232,19 @@ class TestConcurrenceInterModes(FrappeTestCase):
         self.assertEqual(len(confirmed), 1, f"1 Confirmed attendu, obtenu {confirmed}")
         self.assertEqual(confirmed[0], self.pay_bank, "le manuel (1er) doit être le Confirmed")
         self.assertEqual(len(self._orphans()), 1, "le webhook perdant doit être orphelin gracieux")
-        self.assertEqual(("kkiapay", "ok"), tuple(out[0][:2]))
+        self.assertEqual(("fedapay", "ok"), tuple(out[0][:2]))
         print(f"\n[Cas B1] manuel→webhook : Confirmed={confirmed}, webhook perdant → orphelin gracieux OK")
 
     # ===================== Cas B2 — séquentiel webhook → manuel (D-MANUAL-ROBUST-25) =====================
     def test_b2_webhook_puis_manuel_gracieux(self):
         # D-MANUAL-ROBUST-25 : le manuel sur un fee déjà Confirmed doit DÉGRADER GRACIEUSEMENT
         # (409 ALREADY_PAID, Pending intact — le staff décide), PAS lever une exception (500).
-        secret = frappe.conf.get("admission_payment_webhook_secret")
+        secret = frappe.conf.get("fedapay_webhook_secret")
         self._reset_pending()
         with self._patched():
             out = []
             self._webhook_call(self.ref_online, secret, out)  # online → Confirmed (connexion courante)
-            self.assertEqual(("kkiapay", "ok"), tuple(out[0][:2]))
+            self.assertEqual(("fedapay", "ok"), tuple(out[0][:2]))
             from admission.api.staff import confirm_offline_payment
             frappe.set_user("Administrator")
             res = confirm_offline_payment(dossier_id=self.applicant.name, payment_id=self.pay_bank)

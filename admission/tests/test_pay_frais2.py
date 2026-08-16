@@ -42,7 +42,7 @@ class TestPrepareEnrollmentOnline(TestCase):
     def test_no_acompte_no_save(self):
         with patch(f"{PUBLIC}.frappe"), patch(f"{PUBLIC}.secrets") as ms, \
              patch(f"{PUBLIC}._online_payment_exists", return_value=True):
-            ms.token_hex.return_value = "r2"  # référence réelle (sérialisée dans desc["data"])
+            ms.token_hex.return_value = "r2"  # référence réelle (round-trip via custom_metadata)
             from admission.api.public import prepare_enrollment_online_payment
             applicant = MagicMock(); fee = MagicMock(); fee.name = "ENR-1"; fee.amount_xof = 50000
             desc = prepare_enrollment_online_payment(applicant, fee, acompte_xof=0)
@@ -59,10 +59,10 @@ class TestFrais1DescriptorUnchanged(TestCase):
             from admission.api.public import prepare_online_payment
             fee = MagicMock(); fee.amount_xof = 15000
             desc = prepare_online_payment(MagicMock(), fee)
-        # LOT KKIAPAY : +public_key/sandbox/data (besoins widget) — toujours SANS ventilation
-        # ni fee_type au frais 1 (non-régression candidat).
+        # FedaPay : +public_key/sandbox/custom_metadata (besoins checkout) — toujours SANS
+        # ventilation ni fee_type au frais 1 (non-régression candidat).
         self.assertEqual(set(desc), {"provider", "mode", "amount_xof", "reference",
-                                     "webhook_required", "public_key", "sandbox", "data"})
+                                     "webhook_required", "public_key", "sandbox", "custom_metadata"})
         self.assertEqual(desc["amount_xof"], 15000)
 
 
@@ -103,13 +103,19 @@ class TestWebhookInsertHardening(TestCase):
     rejeté 409, quel que soit le type de frais (le durcissement PAY-FIX-FRAIS2 devient
     la règle générale)."""
 
+    def setUp(self):
+        # Signature FedaPay valide (on teste le durcissement « pas de Pending → 409 », pas la signature).
+        _p = patch(f"{WEBHOOK}.valid_webhook_signature", return_value=True)
+        _p.start(); self.addCleanup(_p.stop)
+
     @staticmethod
     def _rq(mfw, ref):
         import json as _json
-        mfw.conf = {"admission_payment_webhook_secret": "s"}
-        mfw.request.data = _json.dumps({"transactionId": "TX-1", "event": "transaction.success",
-                                        "stateData": {"reference": ref}})
-        mfw.get_request_header.return_value = "s"
+        mfw.conf = {"fedapay_webhook_secret": "s"}
+        mfw.request.data = _json.dumps({"name": "transaction.approved",
+                                        "entity": {"id": "TX-1", "status": "approved",
+                                                   "custom_metadata": {"provider_reference": ref}}})
+        mfw.get_request_header.return_value = "t=1700000000,s=deadbeef"
 
     @patch(f"{PUBLIC}.frappe")  # _error utilise public.frappe.local.response
     @patch(f"{WEBHOOK}._find_payment_by_reference", return_value=None)

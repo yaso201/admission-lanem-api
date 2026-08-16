@@ -246,7 +246,7 @@ class TestSubmitEnrollmentPaymentOnline(TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["data"]["amount_xof"], 50000)
-        self.assertEqual(result["data"]["provider"], "kkiapay")
+        self.assertEqual(result["data"]["provider"], "fedapay")
 
 
 class TestDeclareEnrollmentPaymentOffline(TestCase):

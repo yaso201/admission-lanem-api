@@ -570,18 +570,21 @@ class TestCapturePromoAtPayment(TestCase):
     def test_webhook_frais1_captures_promo_via_cascade(
         self, mock_frappe, mock_find, mock_now, _mock_verify, _msend, mock_capture, _mnotify,
     ):
-        # LOT KKIAPAY : auth en-tête x-kkiapay-secret + re-vérification provider, puis
-        # PROMOTION du Pending lié (plus d'insert). C2-BOURSES/R1 : la capture vit DANS
-        # la cascade partagée — confirmation frais 1 (fee_type application) → capture (DEC-228).
+        # FedaPay : signature HMAC vérifiée + re-vérification serveur, puis PROMOTION du Pending
+        # lié (plus d'insert). C2-BOURSES/R1 : la capture vit DANS la cascade partagée —
+        # confirmation frais 1 (fee_type application) → capture (DEC-228).
         import json as _json
         from admission.api.webhook import payment
 
+        _sig = patch(f"{WEBHOOK}.valid_webhook_signature", return_value=True)
+        _sig.start(); self.addCleanup(_sig.stop)
         secret = "whsecret"
-        mock_frappe.conf = {"admission_payment_webhook_secret": secret}
+        mock_frappe.conf = {"fedapay_webhook_secret": secret}
         mock_frappe.request.data = _json.dumps(
-            {"transactionId": "TX-1", "event": "transaction.success",
-             "amount": 25000, "stateData": {"reference": "REF-1"}})
-        mock_frappe.get_request_header.return_value = secret
+            {"name": "transaction.approved",
+             "entity": {"id": "TX-1", "status": "approved", "amount": 25000,
+                        "custom_metadata": {"provider_reference": "REF-1"}}})
+        mock_frappe.get_request_header.return_value = "t=1700000000,s=deadbeef"
         mock_frappe.session.user = "Administrator"
 
         pending = MagicMock()

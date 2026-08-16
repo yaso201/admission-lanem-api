@@ -50,6 +50,7 @@ def setUpModule():
 
 PUB = "admission.api.public"
 WEBHOOK = "admission.api.webhook"
+FEDAPAY = "admission.api.fedapay"  # la signature webhook est vérifiée dans fedapay.valid_webhook_signature
 
 # now_datetime() réel nécessite une DB (timezone) → indisponible hors site : on le patche.
 NOW = "2026-06-09 12:00:00"
@@ -177,22 +178,41 @@ class TestDevOtpLeak(TestCase):
 
 
 class TestSec2Webhook(TestCase):
-    """LOT KKIAPAY : auth = en-tête `x-kkiapay-secret` (constant-time, fail-closed) +
-    re-vérification serveur — la signature HMAC maison (ADM-DEBT-74) est SUPPRIMÉE."""
+    """FedaPay : auth = signature HMAC `x-fedapay-signature` (`t=<ts>,s=<hash>`, comparaison
+    constant-time, fail-closed) + re-vérification serveur. Le webhook n'est qu'un DÉCLENCHEUR ;
+    la source de vérité reste `verify_transaction`. La signature est vérifiée dans
+    `fedapay.valid_webhook_signature` (secret = `fedapay_webhook_secret` de site_config)."""
+
+    def setUp(self):
+        # `valid_webhook_signature` lit `fedapay.frappe.conf` — on la patche pour injecter le
+        # secret de test (jamais une vraie valeur) sans dépendre de la config du site.
+        self._fp = patch(f"{FEDAPAY}.frappe")
+        self.fedapay_frappe = self._fp.start()
+        self.addCleanup(self._fp.stop)
 
     @staticmethod
-    def _rq(mf, header, secret_conf="s3cr3t"):
+    def _sign(secret, body, ts="1700000000"):
+        """Signature FedaPay VALIDE : HMAC-SHA256(secret, "<ts>.<corps brut>")."""
+        payload = ts.encode("utf-8") + b"." + body.encode("utf-8")
+        sig = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+        return f"t={ts},s={sig}"
+
+    def _rq(self, mf, header=None, secret_conf="s3cr3t"):
+        """Câble une requête webhook FedaPay. `header=None` ⇒ signature HMAC VALIDE calculée sur
+        le corps avec `secret_conf` ; passer un `header` explicite teste une signature absente/mal
+        formée. Le secret est posé sur `fedapay.frappe.conf` (nom de config, valeur de test)."""
         import json as _json
-        mf.conf = {"admission_payment_webhook_secret": secret_conf} if secret_conf else {}
-        mf.request.data = _json.dumps({"transactionId": "TX-1", "event": "transaction.success",
-                                       "isPaymentSucces": True, "amount": 25000,
-                                       "stateData": {"reference": "REF-1"}})
-        mf.get_request_header.return_value = header
+        body = _json.dumps({"name": "transaction.approved",
+                            "entity": {"id": "TX-1", "status": "approved", "amount": 25000,
+                                       "custom_metadata": {"provider_reference": "REF-1"}}})
+        mf.request.data = body
+        self.fedapay_frappe.conf = {"fedapay_webhook_secret": secret_conf} if secret_conf else {}
+        mf.get_request_header.return_value = header if header is not None else self._sign(secret_conf, body)
 
     @patch(f"{PUB}.frappe")
     @patch(f"{WEBHOOK}.frappe")
     def test_webhook_no_secret_rejects(self, mock_wh_frappe, mock_pub_frappe):
-        self._rq(mock_wh_frappe, "anything", secret_conf=None)  # secret absent → fail-closed
+        self._rq(mock_wh_frappe, header="anything", secret_conf=None)  # secret absent → fail-closed
         mock_pub_frappe.local.response = {}
         from admission.api.webhook import payment
         result = payment()
@@ -202,7 +222,7 @@ class TestSec2Webhook(TestCase):
     @patch(f"{PUB}.frappe")
     @patch(f"{WEBHOOK}.frappe")
     def test_webhook_bad_signature_rejects(self, mock_wh_frappe, mock_pub_frappe):
-        self._rq(mock_wh_frappe, "WRONG-SECRET")
+        self._rq(mock_wh_frappe, header="WRONG-SECRET")  # secret présent, signature mal formée
         mock_pub_frappe.local.response = {}
         from admission.api.webhook import payment
         result = payment()
@@ -219,7 +239,7 @@ class TestSec2Webhook(TestCase):
     def test_webhook_valid_signature_accepted(
         self, mock_frappe, mock_find, _mock_now, _mock_verify, mock_capture, _msend, _mnotify,
     ):
-        self._rq(mock_frappe, "s3cr3t")  # en-tête == secret dashboard → accepté
+        self._rq(mock_frappe)  # signature HMAC VALIDE sur le corps → acceptée
         pending = MagicMock()
         pending.payment_status = "Pending"
         pending.name = "REC-001"; pending.applicant = "CAN-001"

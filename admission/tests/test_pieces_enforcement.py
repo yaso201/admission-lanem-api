@@ -80,7 +80,7 @@ class TestHelperManquantes(TestCase):
 class TestSubmitPaymentOnlineGuard(TestCase):
     @patch(f"{LEGAL}._record_consent", return_value="CONS-1")
     @patch(f"{LEGAL}._get_active_legal_document")
-    @patch(f"{PUBLIC}.prepare_online_payment", return_value={"provider": "kkiapay", "reference": "R-1"})
+    @patch(f"{PUBLIC}.prepare_online_payment", return_value={"provider": "fedapay", "reference": "R-1"})
     @patch(f"{PUBLIC}._ensure_fee")
     @patch(f"{PUBLIC}._get_applicant")
     @patch(f"{PUBLIC}.frappe")
@@ -101,7 +101,7 @@ class TestSubmitPaymentOnlineGuard(TestCase):
 
     @patch(f"{LEGAL}._record_consent", return_value="CONS-1")
     @patch(f"{LEGAL}._get_active_legal_document")
-    @patch(f"{PUBLIC}.prepare_online_payment", return_value={"provider": "kkiapay", "reference": "R-1"})
+    @patch(f"{PUBLIC}.prepare_online_payment", return_value={"provider": "fedapay", "reference": "R-1"})
     @patch(f"{PUBLIC}._ensure_fee")
     @patch(f"{PUBLIC}._get_applicant")
     @patch(f"{PUBLIC}.frappe")
@@ -121,7 +121,7 @@ class TestSubmitPaymentOnlineGuard(TestCase):
 
     @patch(f"{LEGAL}._record_consent", return_value="CONS-1")
     @patch(f"{LEGAL}._get_active_legal_document")
-    @patch(f"{PUBLIC}.prepare_online_payment", return_value={"provider": "kkiapay", "reference": "R-1"})
+    @patch(f"{PUBLIC}.prepare_online_payment", return_value={"provider": "fedapay", "reference": "R-1"})
     @patch(f"{PUBLIC}._ensure_fee")
     @patch(f"{PUBLIC}._get_applicant")
     @patch(f"{PUBLIC}.frappe")
@@ -140,7 +140,7 @@ class TestSubmitPaymentOnlineGuard(TestCase):
 
     @patch(f"{LEGAL}._record_consent", return_value="CONS-1")
     @patch(f"{LEGAL}._get_active_legal_document")
-    @patch(f"{PUBLIC}.prepare_online_payment", return_value={"provider": "kkiapay", "reference": "R-1"})
+    @patch(f"{PUBLIC}.prepare_online_payment", return_value={"provider": "fedapay", "reference": "R-1"})
     @patch(f"{PUBLIC}._ensure_fee")
     @patch(f"{PUBLIC}._get_applicant")
     @patch(f"{PUBLIC}.frappe")
@@ -158,7 +158,7 @@ class TestSubmitPaymentOnlineGuard(TestCase):
 
     @patch(f"{LEGAL}._record_consent", return_value="CONS-1")
     @patch(f"{LEGAL}._get_active_legal_document")
-    @patch(f"{PUBLIC}.prepare_online_payment", return_value={"provider": "kkiapay", "reference": "R-1"})
+    @patch(f"{PUBLIC}.prepare_online_payment", return_value={"provider": "fedapay", "reference": "R-1"})
     @patch(f"{PUBLIC}._ensure_fee")
     @patch(f"{PUBLIC}._get_applicant")
     @patch(f"{PUBLIC}.frappe")
@@ -226,9 +226,9 @@ class TestPrepareCoreNotGated(TestCase):
         # T6 + G3a4 : le cœur partagé prepare_online_payment ne porte PAS la garde
         # (enrollment / canal staff non gatés) → renvoie le descriptor MALGRÉ pièces manquantes.
         with patch(f"{PUBLIC}.frappe") as mf, patch(f"{PUBLIC}.secrets") as msec, \
-             patch("admission.api.kkiapay.frappe") as mkk, \
+             patch("admission.api.fedapay.frappe") as mkk, \
              patch(f"{PUBLIC}._online_payment_exists", return_value=False):
-            mkk.conf = {"kkiapay_sandbox": 1, "kkiapay_public_key": "pk_test"}
+            mkk.conf = {"fedapay_sandbox": 1, "fedapay_public_key": "pk_test"}
             msec.token_hex.return_value = "ref"
             mf.get_doc.return_value = MagicMock()
             from admission.api.public import prepare_online_payment
@@ -236,7 +236,7 @@ class TestPrepareCoreNotGated(TestCase):
             applicant.pieces = [_piece("identite", "Piece d'identite", 1, "missing")]
             fee = MagicMock(); fee.amount_xof = 15000; fee.name = "AFF-1"
             desc = prepare_online_payment(applicant, fee)
-        self.assertEqual(desc["provider"], "kkiapay")
+        self.assertEqual(desc["provider"], "fedapay")
         self.assertEqual(desc["reference"], "ref")
 
 

@@ -1,9 +1,10 @@
-"""Tests LOT KKIAPAY — webhook provider réel (ferme ADM-DEBT-74).
+"""Tests webhook paiement — provider FedaPay (ex-LOT KKIAPAY, ferme ADM-DEBT-74).
 
-Contrat : POST JSON brut KkiaPay + en-tête `x-kkiapay-secret` (constant-time) ; le payload
-n'est jamais cru sur parole — re-vérification serveur `verify_transaction` (status SUCCESS +
-montant >= attendu) AVANT promotion du Pending lié par stateData.reference. Plus d'insert
-fallback : webhook sans Pending = 409. transaction.failed → Pending→Rejected. Style unitaire mocké.
+Contrat : POST JSON brut FedaPay + en-tête `x-fedapay-signature` (`t=<ts>,s=<hash>`, HMAC-SHA256
+constant-time) ; le payload n'est jamais cru sur parole — re-vérification serveur
+`verify_transaction` (status SUCCESS + montant >= attendu) AVANT promotion du Pending lié par
+`entity.custom_metadata.provider_reference`. Plus d'insert fallback : webhook sans Pending = 409.
+transaction.canceled → Pending→Rejected. Style unitaire mocké.
 """
 
 import json
@@ -15,18 +16,21 @@ PUBLIC = "admission.api.public"
 SECRET = "whsecret"
 
 
-def _payload(ref="REF-1", event="transaction.success", tx="TX-1", amount=15000):
-    return {"transactionId": tx, "event": event,
-            "isPaymentSucces": event == "transaction.success",
-            "amount": amount, "method": "MOBILE_MONEY",
-            "stateData": {"reference": ref, "sdk": "lanem-admission"}}
+def _payload(ref="REF-1", event="transaction.approved", tx="TX-1", amount=15000):
+    """Payload FedaPay : {name, entity:{id,status,amount,custom_metadata:{provider_reference}}}."""
+    status = "approved" if event in ("transaction.approved", "transaction.transferred") else "declined"
+    return {"name": event,
+            "entity": {"id": tx, "status": status, "amount": amount,
+                       "custom_metadata": {"provider_reference": ref}}}
 
 
-def _rq(mf, payload, header=SECRET):
-    """Requête KkiaPay simulée : corps JSON BRUT + en-tête secret."""
-    mf.conf = {"admission_payment_webhook_secret": SECRET}
+def _rq(mf, payload):
+    """Requête FedaPay simulée : corps JSON BRUT + en-tête signature. La VALIDITÉ de signature est
+    contrôlée par le mock de valid_webhook_signature (setUp) — la HMAC réelle est prouvée au harnais
+    unitaire fedapay (12/12). Le secret n'est qu'un nom de config, jamais une vraie valeur."""
+    mf.conf = {"fedapay_webhook_secret": SECRET}
     mf.request.data = json.dumps(payload)
-    mf.get_request_header.return_value = header
+    mf.get_request_header.return_value = "t=1700000000,s=deadbeef"
 
 
 def _pending(status="Pending", amount=15000):
@@ -40,6 +44,13 @@ def _pending(status="Pending", amount=15000):
 
 
 class TestWebhookPromotion(TestCase):
+    def setUp(self):
+        # Signature FedaPay considérée VALIDE ici (on teste la PROMOTION, pas la signature — celle-ci
+        # est prouvée au harnais unitaire fedapay + un test de rejet dédié TestWebhookTransport).
+        _p = patch(f"{WEBHOOK}.valid_webhook_signature", return_value=True)
+        _p.start()
+        self.addCleanup(_p.stop)
+
     @patch(f"{WEBHOOK}.notify_uf_payment")
     @patch(f"{WEBHOOK}.send_payment_receipt")
     @patch(f"{WEBHOOK}.apply_confirmed_payment_cascade")
@@ -93,7 +104,7 @@ class TestWebhookPromotion(TestCase):
     @patch(f"{WEBHOOK}._find_payment_by_reference")
     @patch(f"{WEBHOOK}.frappe")
     def test_failed_event_rejects_pending(self, mf, mfind):
-        _rq(mf, _payload(event="transaction.failed"))
+        _rq(mf, _payload(event="transaction.canceled"))
         pending = _pending()
         mfind.return_value = pending
         mf.db.get_value.return_value = "Pending"   # re-lecture du statut SOUS verrou (DEC-5)
@@ -330,18 +341,28 @@ class TestWebhookTransport(TestCase):
     @patch(f"{PUBLIC}.frappe")
     @patch(f"{WEBHOOK}.frappe")
     def test_missing_body_rejected_400(self, mf, _mfpub):
-        mf.request = None  # pas de corps JSON
+        mf.request = None  # pas de corps JSON (avant la vérif de signature)
         from admission.api.webhook import payment
         res = payment()
         self.assertFalse(res["ok"])
         self.assertEqual(res["error"]["code"], "WEBHOOK_PAYLOAD_INVALID")
 
-    def test_extract_reference_handles_statedata_string(self):
-        # KkiaPay peut restituer stateData en CHAÎNE JSON selon le canal.
+    @patch(f"{WEBHOOK}.valid_webhook_signature", return_value=False)
+    @patch(f"{WEBHOOK}.frappe")
+    def test_invalid_signature_rejected_403(self, mf, _sig):
+        # Gate 6 (niveau webhook) : signature FedaPay invalide → 403, AUCUNE promotion.
+        _rq(mf, _payload())
+        from admission.api.webhook import payment
+        res = payment()
+        self.assertFalse(res["ok"])
+        self.assertEqual(res["error"]["code"], "WEBHOOK_SIGNATURE_INVALID")
+
+    def test_extract_reference_handles_custom_metadata(self):
+        # FedaPay restitue provider_reference dans entity.custom_metadata (dict ou chaîne JSON).
         from admission.api.webhook import _extract_reference
         self.assertEqual(
-            _extract_reference({"stateData": json.dumps({"reference": "REF-9"})}), "REF-9")
-        self.assertEqual(_extract_reference({"stateData": {"reference": "REF-8"}}), "REF-8")
+            _extract_reference({"custom_metadata": json.dumps({"provider_reference": "REF-9"})}), "REF-9")
+        self.assertEqual(_extract_reference({"custom_metadata": {"provider_reference": "REF-8"}}), "REF-8")
         self.assertEqual(_extract_reference({"reference": "REF-7"}), "REF-7")  # compat simulateur
         self.assertIsNone(_extract_reference({}))
 

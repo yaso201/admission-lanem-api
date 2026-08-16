@@ -8,7 +8,7 @@ prouve l'EFFET (sérialisation observée). C'est l'élément BLOQUANT de gate CL
 
 Pré-requis d'exécution (au déploiement, serveur) :
   - MariaDB up, champ `reconciliation` MIGRÉ (`bench migrate` fait) ;
-  - secret webhook configuré (`admission_payment_webhook_secret`) ;
+  - secret webhook configuré (`fedapay_webhook_secret`) ;
   - lancer : `bench --site <site> run-tests --module admission.tests.test_concurrence_fee_lock`.
 
 Scénario (le cas exact de la vague) : 2 Payment DISTINCTS du MÊME fee, références distinctes,
@@ -22,6 +22,8 @@ verrou (hors course) → stubés dans les threads pour isoler la sérialisation 
 un cycle de vie Applicant complet dans la fixture).
 """
 
+import hashlib
+import hmac
 import json
 import threading
 from unittest.mock import patch
@@ -35,6 +37,12 @@ _MARK = "ZZCONC"  # marqueur de fixtures pour purge ciblée
 
 def _stub(*args, **kwargs):
     return None
+
+
+def _fedapay_sig(secret, body, ts="1700000000"):
+    """Signature FedaPay VALIDE : en-tête `t=<ts>,s=<hash>`, hash = HMAC-SHA256(secret, `<ts>.<corps brut>`)."""
+    payload = ts.encode("utf-8") + b"." + body.encode("utf-8")
+    return f"t={ts},s=" + hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
 
 
 class TestConcurrenceFeeLockReal(FrappeTestCase):
@@ -70,7 +78,7 @@ class TestConcurrenceFeeLockReal(FrappeTestCase):
             "payment_mode": "Online",
             "amount_xof": 15000,
             "payment_status": "Pending",
-            "provider": "kkiapay",
+            "provider": "fedapay",
             "provider_reference": ref,
         }).insert(ignore_permissions=True, ignore_mandatory=True).name
 
@@ -92,11 +100,12 @@ class TestConcurrenceFeeLockReal(FrappeTestCase):
         frappe.init(site=site)
         frappe.connect()
         try:
+            body = json.dumps({"name": "transaction.approved",
+                               "entity": {"id": f"TX-{ref}", "status": "approved",
+                                          "custom_metadata": {"provider_reference": ref}}})
             frappe.local.request = frappe._dict(
-                data=json.dumps({"transactionId": f"TX-{ref}",
-                                 "event": "transaction.success",
-                                 "stateData": {"reference": ref}}),
-                headers={"x-kkiapay-secret": secret},
+                data=body,
+                headers={"x-fedapay-signature": _fedapay_sig(secret, body)},
             )
             from admission.api.webhook import payment
             payment()
@@ -107,14 +116,14 @@ class TestConcurrenceFeeLockReal(FrappeTestCase):
 
     def test_two_concurrent_success_one_confirmed_one_orphan(self):
         site = frappe.local.site
-        secret = frappe.conf.get("admission_payment_webhook_secret")
-        self.assertTrue(secret, "secret webhook requis (admission_payment_webhook_secret)")
+        secret = frappe.conf.get("fedapay_webhook_secret")
+        self.assertTrue(secret, "secret webhook requis (fedapay_webhook_secret)")
         errors = []
         threads = [
             threading.Thread(target=self._worker, args=(self.ref_a, site, secret, errors)),
             threading.Thread(target=self._worker, args=(self.ref_b, site, secret, errors)),
         ]
-        # Stubs posés UNE FOIS (thread-safe), AVANT le démarrage : I/O KkiaPay (verify) + effets aval
+        # Stubs posés UNE FOIS (thread-safe), AVANT le démarrage : I/O FedaPay (verify) + effets aval
         # (cascade/notif/reçu). Le VRAI chemin verrou (for_update Payment+Fee, fee_resolved, save
         # statut, commit) tourne RÉEL dans chaque thread → c'est lui qu'on prouve.
         with patch(f"{WEBHOOK}.verify_transaction", return_value={"status": "SUCCESS", "amount": 15000}), \
