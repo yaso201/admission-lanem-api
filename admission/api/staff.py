@@ -52,6 +52,7 @@ from admission.api.permissions import roles_at_or_above
 from admission.api._actions import (
     action_context,
     available_actions,
+    blocked_actions,
     can_control_pieces,
     can_manage_payments,
     payment_allowed_states,
@@ -1008,6 +1009,42 @@ def _staff_convocation_available(applicant, session_doc):
     return bool(_frais1_confirmed_payment(applicant))
 
 
+# NT-UX (DEC-C) — pour les états où l'avancement ne dépend PAS d'un geste staff (donc pas d'action
+# grisée), on nomme la condition manquante et l'acteur attendu. Les états SOU/ACC/ACO sont déjà
+# couverts par `blocked_actions` (start_review / enroll / verify_bac_diploma).
+_AWAITING_BY_STATE = {
+    "SOP": {"reason": "Paiement des frais de candidature à confirmer avant la mise à l'étude",
+            "actor": "Administratif"},
+    "INC": {"reason": "Complément demandé — en attente du candidat", "actor": "Candidat"},
+}
+
+
+def _awaiting_hint(applicant):
+    """{reason, actor} de ce que le dossier attend à son état courant, ou None. Fallback du message
+    générique quand ni action disponible ni action grisée ne fait avancer le dossier côté staff."""
+    return _AWAITING_BY_STATE.get(applicant.status)
+
+
+def _default_bourses_keys(details):
+    """NT-UX (DEC-D) — sélection par défaut NON conflictuelle : au plus une bourse par groupe
+    d'exclusivité (la mieux dotée), via `_apply_exclusivity_local` (source unique, même algo qu'UF).
+    Calcul SERVEUR (le front ne déduit pas la règle) et LECTURE SEULE (aucun endpoint mutant)."""
+    from admission.api.public import _apply_exclusivity_local
+    rows = [{"mirror_key": d["mirror_key"], "rate": d.get("taux") or 0,
+             "exclusivity_group": d.get("exclusivity_group") or ""} for d in (details or [])]
+    return [r["mirror_key"] for r in _apply_exclusivity_local(rows)]
+
+
+def _bourses_payload(mirror_details, applicant):
+    """Payload bourses de get_dossier + NT-UX `default_validees` (DEC-D) : la modale coche cette
+    sélection non conflictuelle (source = proposées sinon demandées) au lieu de tout cocher."""
+    demandees = mirror_details(applicant.requested_scholarships)
+    proposees = mirror_details(applicant.proposed_scholarships)
+    return {"demandees": demandees, "proposees": proposees,
+            "validees": mirror_details(applicant.validated_scholarships),
+            "default_validees": _default_bourses_keys(proposees or demandees)}
+
+
 @frappe.whitelist(methods=["GET"])
 def get_dossier(dossier_id=None):
     """C4-FRONT — détail shaped d'un dossier pour la page /dossier du front staff.
@@ -1072,6 +1109,10 @@ def get_dossier(dossier_id=None):
     transfer_payload = _transfer_payload(applicant, session_doc)
     action_ctx = action_context(applicant)
     action_ctx.update(_transfer_action_context(applicant, session_doc))
+    # NT-UX — précondition dépendante de la SESSION (miroir de la garde COEF_REQUIRED de saisir_note) :
+    # les coefficients d'épreuve de la session sont-ils tous posés ? Fusionné ici (session_doc dispo).
+    action_ctx["coef_complete"] = exam_grading.coefficients_complete(
+        exam_grading.coefficients_of(session_doc)) if session_doc else True
 
     def _mirror_details(keys_json):
         keys = json.loads(keys_json or "[]")
@@ -1117,9 +1158,7 @@ def get_dossier(dossier_id=None):
         "frais": fees,
         "paiements": payments,
         "notes": _notes_payload(applicant, session_doc),
-        "bourses": {"demandees": _mirror_details(applicant.requested_scholarships),
-                    "proposees": _mirror_details(applicant.proposed_scholarships),
-                    "validees": _mirror_details(applicant.validated_scholarships)},
+        "bourses": _bourses_payload(_mirror_details, applicant),
         "promo": {"code": applicant.promo_code, "rate": float(applicant.promo_rate or 0),
                   "captured_date": str(applicant.promo_captured_date or "")},
         "acompte_xof": float(applicant.acompte_xof or 0),
@@ -1134,6 +1173,15 @@ def get_dossier(dossier_id=None):
             applicant, _viewer_roles,
             is_prepa=bool(session_doc.is_prepa_session) if session_doc else False,
             ctx=action_ctx),
+        # NT-UX (DEC-A/B) — actions pertinentes à l'état mais bloquées par une condition
+        # franchissable, à rendre grisées + raison + acteur attendu (EXPOSE la garde, ne l'affaiblit pas).
+        "blocked_actions": blocked_actions(
+            applicant, _viewer_roles,
+            is_prepa=bool(session_doc.is_prepa_session) if session_doc else False,
+            ctx=action_ctx),
+        # NT-UX (DEC-C) — quand aucun geste staff ne fait avancer le dossier, nommer la condition
+        # manquante et l'acteur attendu (calcul serveur, le front ne déduit rien).
+        "awaiting": _awaiting_hint(applicant),
         "can_control_pieces": can_control_pieces(applicant, _viewer_roles),
         "can_manage_payments": can_manage_payments(applicant, _viewer_roles),
         # CONVOCATION-PREPA : le serveur pilote le bouton. Règle exacte : session Open,

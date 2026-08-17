@@ -60,6 +60,20 @@ def _c(ctx, key):
     return (ctx or {}).get(key, True)
 
 
+def _notes_ok(applicant, is_prepa):
+    """NT-UX — miroir de `_require_validated_notes_if_prepa` (staff.py) : un dossier Prépa exige des
+    notes VALIDÉES avant toute décision ; un dossier Licence n'est jamais bloqué. Dérivé de (a, p),
+    pas du contexte (les deux valeurs sont déjà passées aux règles)."""
+    return (not is_prepa) or bool(applicant.notes_validated)
+
+
+def _diploma_uploaded(applicant):
+    """NT-UX — miroir de `_has_uploaded_diploma` (staff.py:1450), inline pour éviter le cycle
+    _actions↔staff : la pièce diplome_bac est-elle déposée (status uploaded) ?"""
+    return any(getattr(r, "piece_code", None) == "diplome_bac" and getattr(r, "status", None) == "uploaded"
+               for r in (getattr(applicant, "pieces", None) or []))
+
+
 _ASC, _EXA = "ascending", "exact"
 
 _ACTION_RULES = {
@@ -70,8 +84,8 @@ _ACTION_RULES = {
     "reopen_dossier":        lambda a, p, c: ("Admission Administratif", _ASC) if a.status == "REJ" else None,
     "request_complement":    lambda a, p, c: ("Admission Administratif", _ASC) if a.status == "SOU"
                                              else (("Admission Responsable", _ASC) if a.status == "ETU" else None),
-    "verify_bac_diploma":    lambda a, p, c: ("Admission Administratif", _ASC) if a.status == "ACO" and not a.bac_verified else None,
-    "saisir_note_concours":  lambda a, p, c: ("Admission Administratif", _ASC) if a.status == "ETU" and p and not a.notes_validated else None,
+    "verify_bac_diploma":    lambda a, p, c: ("Admission Administratif", _ASC) if a.status == "ACO" and not a.bac_verified and _c(c, "diploma_uploaded") else None,
+    "saisir_note_concours":  lambda a, p, c: ("Admission Administratif", _ASC) if a.status == "ETU" and p and not a.notes_validated and _c(c, "coef_complete") else None,
     "withdraw":              lambda a, p, c: ("Admission Administratif", _ASC) if a.status in _WITHDRAW_STATES else None,
     # ── décision « maker » : EXACT Responsable (Direction EXCLUE — SoD) ──
     "transfer_session":      lambda a, p, c: ("Admission Responsable", _EXA) if p and a.status in ("SOU", "INC", "ETU") and (c or {}).get("transfer_ready", False) else None,
@@ -80,13 +94,13 @@ _ACTION_RULES = {
     "valider_notes_concours":lambda a, p, c: ("Admission Responsable", _EXA) if a.status == "ETU" and p and a.notes_concours and not a.notes_validated else None,
     "propose_scholarships":  lambda a, p, c: ("Admission Responsable", _EXA) if a.status in ("ETU", "ATT") and _has_requested(a) else None,
     "set_waitlist_rank":     lambda a, p, c: ("Admission Responsable", _EXA) if a.status == "ATT" else None,
-    "mark_admissible":       lambda a, p, c: ("Admission Responsable", _EXA) if a.status in ("ETU", "ATT") else None,
-    "waitlist":              lambda a, p, c: ("Admission Responsable", _EXA) if a.status == "ETU" else None,
-    "conditional_admission": lambda a, p, c: ("Admission Responsable", _EXA) if a.status == "ETU" and a.conditionnel else None,
-    "refuse":                lambda a, p, c: ("Admission Responsable", _EXA) if a.status == "ETU"
-                                             else (("Admission Direction", _EXA) if a.status == "ADM" else None),
+    "mark_admissible":       lambda a, p, c: ("Admission Responsable", _EXA) if a.status in ("ETU", "ATT") and _notes_ok(a, p) else None,
+    "waitlist":              lambda a, p, c: ("Admission Responsable", _EXA) if a.status == "ETU" and _notes_ok(a, p) else None,
+    "conditional_admission": lambda a, p, c: ("Admission Responsable", _EXA) if a.status == "ETU" and a.conditionnel and _notes_ok(a, p) else None,
+    "refuse":                lambda a, p, c: ("Admission Responsable", _EXA) if a.status == "ETU" and _notes_ok(a, p)
+                                             else (("Admission Direction", _EXA) if a.status == "ADM" and _notes_ok(a, p) else None),
     # ── validation « checker » : EXACT Direction ──
-    "accept_admission":      lambda a, p, c: ("Admission Direction", _EXA) if a.status == "ADM" else None,
+    "accept_admission":      lambda a, p, c: ("Admission Direction", _EXA) if a.status == "ADM" and _notes_ok(a, p) else None,
     "lift_condition":        lambda a, p, c: ("Admission Direction", _EXA) if a.status == "ACO" and a.bac_verified else None,
     "refuse_condition":      lambda a, p, c: ("Admission Direction", _EXA) if a.status == "ACO" else None,
     "enroll":                lambda a, p, c: ("Admission Direction", _EXA) if a.status == "ACC" and _c(c, "enrollment_ready") else None,
@@ -126,6 +140,9 @@ def action_context(applicant):
         "pieces_verified": not pieces_requises_non_verifiees(applicant),   # start_review
         "notify_ready": not notify_pieces_blocked(applicant),              # notify_pieces_recap
         "enrollment_ready": _enrollment_ready(applicant),                  # enroll
+        "diploma_uploaded": _diploma_uploaded(applicant),                  # verify_bac_diploma (NT-UX)
+        # `coef_complete` (saisir_note_concours) est dépendant de la SESSION → fusionné dans
+        # get_dossier (où le doc session est disponible), comme _transfer_action_context.
     }
 
 
@@ -135,6 +152,63 @@ def available_actions(applicant, roles, *, is_prepa, ctx=None):
     roles = roles or []
     return [key for key, rule in _ACTION_RULES.items()
             if _authorized(rule(applicant, is_prepa, ctx), roles)]
+
+
+# NT-UX (DEC-A/B/C) — EXPOSITION des indisponibilités « franchissables ». Déclaration UX PURE :
+# libellé + acteur qui débloque + code + prédicat d'ÉTAT (la seule clause d'état de la règle, SANS
+# la condition franchissable). La VALEUR de la condition vient de `action_context` (qui miroite la
+# garde endpoint) → aucune règle réécrite, aucune garde dupliquée (GK9). `state` vrai + `ok` faux
+# + action non-disponible → grisée avec raison. `state` faux → l'action reste ABSENTE (pas de mur
+# de 29 boutons). `actor` = qui pose la condition manquante (le « prochain geste réel »).
+_BLOCKED = {
+    # ── 7 familles du mandat ──
+    "mark_admissible":       {"state": lambda a, p: a.status in ("ETU", "ATT"),
+                              "ok": lambda a, p, c: _notes_ok(a, p),
+                              "code": "NOTES_NOT_VALIDATED", "reason": "Notes du concours à valider", "actor": "Responsable"},
+    "waitlist":              {"state": lambda a, p: a.status == "ETU",
+                              "ok": lambda a, p, c: _notes_ok(a, p),
+                              "code": "NOTES_NOT_VALIDATED", "reason": "Notes du concours à valider", "actor": "Responsable"},
+    "conditional_admission": {"state": lambda a, p: a.status == "ETU" and bool(a.conditionnel),
+                              "ok": lambda a, p, c: _notes_ok(a, p),
+                              "code": "NOTES_NOT_VALIDATED", "reason": "Notes du concours à valider", "actor": "Responsable"},
+    "refuse":                {"state": lambda a, p: a.status == "ETU",
+                              "ok": lambda a, p, c: _notes_ok(a, p),
+                              "code": "NOTES_NOT_VALIDATED", "reason": "Notes du concours à valider", "actor": "Responsable"},
+    "saisir_note_concours":  {"state": lambda a, p: a.status == "ETU" and p and not a.notes_validated,
+                              "ok": lambda a, p, c: _c(c, "coef_complete"),
+                              "code": "COEF_REQUIRED", "reason": "Coefficients des épreuves à poser", "actor": "Responsable"},
+    "verify_bac_diploma":    {"state": lambda a, p: a.status == "ACO" and not a.bac_verified,
+                              "ok": lambda a, p, c: _c(c, "diploma_uploaded"),
+                              "code": "DIPLOMA_MISSING", "reason": "Diplôme du bac à déposer", "actor": "Candidat"},
+    # ── DEC-C : jalons non-décisionnels bloqués par une précondition candidat/pièces ──
+    "start_review":          {"state": lambda a, p: a.status == "SOU",
+                              "ok": lambda a, p, c: _c(c, "pieces_verified"),
+                              "code": "PIECES_NOT_VERIFIED", "reason": "Pièces requises à vérifier", "actor": "Administratif"},
+    "enroll":                {"state": lambda a, p: a.status == "ACC",
+                              "ok": lambda a, p, c: _c(c, "enrollment_ready"),
+                              "code": "ENROLLMENT_NOT_READY", "reason": "Frais 2 et consentement requis", "actor": "Candidat"},
+}
+
+
+def blocked_actions(applicant, roles, *, is_prepa, ctx=None):
+    """NT-UX — actions PERTINENTES à l'état courant mais indisponibles par une condition
+    FRANCHISSABLE, à rendre grisées + raison (DEC-B). Ne réécrit aucune garde : la valeur de la
+    condition vient d'`action_context`. Une action déjà disponible n'est jamais « bloquée » ; une
+    action hors état reste absente. `roles` n'est PAS filtré — on nomme l'acteur attendu même si
+    le lecteur n'est pas ce rôle (ordre visible, DEC-A/C)."""
+    ctx = ctx or {}
+    avail = set(available_actions(applicant, roles, is_prepa=is_prepa, ctx=ctx))
+    out = []
+    for key, meta in _BLOCKED.items():
+        if key in avail:
+            continue                                   # disponible → pas bloquée
+        if not meta["state"](applicant, is_prepa):
+            continue                                   # hors état → absente
+        if meta["ok"](applicant, is_prepa, ctx):
+            continue                                   # condition satisfaite → bloquée pour un autre motif (rôle) → pas ici
+        out.append({"action": key, "actor": meta["actor"],
+                    "code": meta["code"], "reason": meta["reason"]})
+    return out
 
 
 def can_control_pieces(applicant, roles):

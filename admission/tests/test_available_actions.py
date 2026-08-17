@@ -12,6 +12,7 @@ from unittest import TestCase
 
 from admission.api._actions import (
     available_actions,
+    blocked_actions,
     can_control_pieces,
     can_manage_payments,
 )
@@ -310,3 +311,74 @@ class TestCoherenceMatrix(FrappeTestCase):
                     if key in applicable and gate == "PASSED" and key not in shown:
                         violations.append(f"REVERSE {cell}: autorisé+applicable mais masqué")
         self.assertEqual(violations, [], "\n".join(violations))
+
+
+class TestBlockedActions(TestCase):
+    """NT-UX (DEC-A/B/C) — les actions pertinentes à l'état mais bloquées par une condition
+    franchissable sont EXPOSÉES (grisées + raison + acteur), jamais laissées en boutons actifs qui
+    échouent. Invariant : disponible ∩ bloqué = ∅ ; hors état ⇒ absent (pas grisé)."""
+
+    def _bl(self, applicant, roles, *, is_prepa, ctx=None):
+        return {b["action"]: b for b in blocked_actions(applicant, roles, is_prepa=is_prepa, ctx=ctx)}
+
+    def test_prepa_etu_sans_notes_4_decisions_bloquees(self):
+        a = _a(status="ETU", notes_validated=0, conditionnel=1)
+        ctx = {"coef_complete": True}                       # coef posés → saisir_note dispo
+        bl = self._bl(a, RESP, is_prepa=True, ctx=ctx)
+        av = available_actions(a, RESP, is_prepa=True, ctx=ctx)
+        for k in ("mark_admissible", "waitlist", "conditional_admission", "refuse"):
+            self.assertIn(k, bl)
+            self.assertEqual(bl[k]["code"], "NOTES_NOT_VALIDATED")
+            self.assertEqual(bl[k]["reason"], "Notes du concours à valider")
+            self.assertEqual(bl[k]["actor"], "Responsable")
+            self.assertNotIn(k, av)                         # plus de bouton actif-qui-échoue
+        self.assertIn("saisir_note_concours", av)           # le vrai prochain geste, disponible
+        self.assertNotIn("saisir_note_concours", bl)
+
+    def test_coef_manquant_saisir_note_grise(self):
+        a = _a(status="ETU", notes_validated=0)
+        bl = self._bl(a, ADMIN, is_prepa=True, ctx={"coef_complete": False})
+        self.assertEqual(bl["saisir_note_concours"]["code"], "COEF_REQUIRED")
+        self.assertNotIn("saisir_note_concours",
+                         available_actions(a, ADMIN, is_prepa=True, ctx={"coef_complete": False}))
+
+    def test_aco_diplome_non_depose_verify_bac_grise(self):
+        a = _a(status="ACO", bac_verified=0)
+        self.assertIn("verify_bac_diploma", self._bl(a, ADMIN, is_prepa=False, ctx={"diploma_uploaded": False}))
+        self.assertEqual(self._bl(a, ADMIN, is_prepa=False, ctx={"diploma_uploaded": False})["verify_bac_diploma"]["code"],
+                         "DIPLOMA_MISSING")
+        self.assertNotIn("verify_bac_diploma", self._bl(a, ADMIN, is_prepa=False, ctx={"diploma_uploaded": True}))
+        self.assertIn("verify_bac_diploma", available_actions(a, ADMIN, is_prepa=False, ctx={"diploma_uploaded": True}))
+
+    def test_sou_pieces_non_verifiees_start_review_grise(self):
+        a = _a(status="SOU")
+        self.assertIn("start_review", self._bl(a, ADMIN, is_prepa=False, ctx={"pieces_verified": False}))
+        self.assertNotIn("start_review", self._bl(a, ADMIN, is_prepa=False, ctx={"pieces_verified": True}))
+
+    def test_acc_enroll_grise_si_frais2_ou_consentement_absents(self):
+        a = _a(status="ACC")
+        self.assertIn("enroll", self._bl(a, DIR, is_prepa=False, ctx={"enrollment_ready": False}))
+        self.assertNotIn("enroll", self._bl(a, DIR, is_prepa=False, ctx={"enrollment_ready": True}))
+
+    def test_licence_etu_decisions_disponibles_jamais_bloquees(self):
+        a = _a(status="ETU")                                 # is_prepa=False → notes_ok=True
+        self.assertIn("mark_admissible", available_actions(a, RESP, is_prepa=False))
+        self.assertNotIn("mark_admissible", self._bl(a, RESP, is_prepa=False))
+
+    def test_hors_etat_reste_absent(self):
+        self.assertEqual(blocked_actions(_a(status="BRO"), ADMIN, is_prepa=False), [])
+
+    def test_non_conditionnel_reste_absent_pas_grise(self):
+        a = _a(status="ETU", conditionnel=0, notes_validated=0)
+        bl = self._bl(a, RESP, is_prepa=True, ctx={"coef_complete": True})
+        self.assertNotIn("conditional_admission", bl)        # hors état (pas conditionnel) → absent
+        self.assertIn("mark_admissible", bl)                 # mais les décisions ETU sont grisées
+
+    def test_invariant_disponible_inter_bloque_vide(self):
+        for st, prepa, ctx in [("ETU", True, {"coef_complete": True}), ("SOU", False, {"pieces_verified": False}),
+                               ("ACO", False, {"diploma_uploaded": False}), ("ACC", False, {"enrollment_ready": False})]:
+            a = _a(status=st, notes_validated=0, conditionnel=1)
+            for roles in (ADMIN, RESP, DIR):
+                av = set(available_actions(a, roles, is_prepa=prepa, ctx=ctx))
+                bl = {b["action"] for b in blocked_actions(a, roles, is_prepa=prepa, ctx=ctx)}
+                self.assertEqual(av & bl, set(), f"{st}/{roles}: {av & bl}")
