@@ -472,3 +472,45 @@ class TestDownloadPiece(TestCase):
         from admission.api.staff import download_piece_file
         res = download_piece_file(dossier_id="CAN-1", piece_code="identite")
         self.assertEqual(res["error"]["code"], "PIECE_FILE_NOT_FOUND")
+
+
+class TestSEC1PieceGuards(TestCase):
+    """SEC-1 (OWASP A01) — durcissement anti-régression du garde de rôle des 5 endpoints pièce.
+
+    RECON SEC-1 : la « faille 1 » de l'audit est un FAUX POSITIF au head PROD. Les 5 endpoints
+    N'ONT PAS de only_for dans leur corps propre, MAIS leur 1ʳᵉ instruction est
+    `_resolve_piece_sou(...)`, dont la 1ʳᵉ ligne est `frappe.only_for(CONFIRM_ROLES)` (=ADMIN_UP),
+    présente depuis la création du socle (c5ad47d, 2026-06-27). Le garde EXISTE, factorisé dans le
+    helper commun — l'audit a lu les corps d'endpoints (1512-1590) sans tracer dans le helper.
+
+    Les tests …_role_garde préexistants (side_effect sur only_for) sont FAIBLES : ils passent même
+    si le garde disparaît (une PermissionError incidente de la chaîne mockée les satisfait). On
+    verrouille ici par la VOIE POSITIVE : chacun des 5 endpoints appelle only_for EXACTEMENT une
+    fois avec ADMIN_UP. Ce test ÉCHOUE si quelqu'un retire le only_for du helper (garde = 0 appel)
+    → barrière de non-régression réelle. La preuve de REFUS runtime (PermissionError sous rôle
+    insuffisant, franchissement sous ADMIN_UP) est en intégration : docs/SEC-1-PREUVES.md."""
+
+    def _run(self, name, **kwargs):
+        import admission.api.staff as staff
+        with patch(f"{STAFF}._record_piece_verdict"), \
+             patch(f"{STAFF}.now_datetime", return_value="t"), \
+             patch(f"{STAFF}.frappe") as mf:
+            mf.db.exists.return_value = True
+            mf.session.user = "agent@lanem.bj"
+            mf.get_doc.return_value = _app([_piece("identite", status="uploaded")])
+            getattr(staff, name)(**kwargs)
+            return mf.only_for
+
+    def test_les_5_endpoints_appellent_only_for_admin_up(self):
+        from admission.api.staff import ADMIN_UP
+        cases = [
+            ("verify_piece", dict(dossier_id="CAN-1", piece_code="identite")),
+            ("reject_piece", dict(dossier_id="CAN-1", piece_code="identite",
+                                  reason="Illisible / floue", comment="x")),
+            ("require_piece", dict(dossier_id="CAN-1", piece_code="identite")),
+            ("waive_piece", dict(dossier_id="CAN-1", piece_code="identite")),
+            ("reset_piece_requirement", dict(dossier_id="CAN-1", piece_code="identite")),
+        ]
+        for name, kwargs in cases:
+            only_for = self._run(name, **kwargs)
+            only_for.assert_called_once_with(ADMIN_UP)   # voie positive : détecte l'absence de garde
