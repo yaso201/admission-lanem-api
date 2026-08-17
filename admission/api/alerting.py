@@ -37,7 +37,7 @@ _SPIKE_WINDOW_SECONDS = 600
 _ALERT_LABELS = {
     "uf_payment": "Échec de notification UF (paiement)",
     "uf_abandon": "Échec de notification UF (abandon)",
-    "kkiapay_verify": "Vérification KkiaPay impossible",
+    "fedapay_verify": "Vérification FedaPay impossible",
     "payment_orphan": "Paiement orphelin (remboursement dû)",
     "payment_refused_terminal": "Paiement sur dossier terminal (remboursement dû)",
     "payment_underpaid": "Paiement insuffisant (revue requise)",

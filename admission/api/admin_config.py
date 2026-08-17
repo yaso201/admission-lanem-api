@@ -1,7 +1,7 @@
 """LOT C (SM BACK-OFFICE) — réglages NON-SECRETS & diagnostic.
 
 DÉCISION D1 : AUCUN secret n'est lu ni écrit ici. Les secrets (`site_config` : tokens campus/UF,
-clés KkiaPay, hmac, webhook, SMTP) restent fichier/OPS. Cette interface n'expose que :
+clés FedaPay, hmac, webhook, SMTP) restent fichier/OPS. Cette interface n'expose que :
  - un DIAGNOSTIC présent/absent (booléens, JAMAIS la valeur) — réutilise la logique recette_check ;
  - des réglages NON-SECRETS (cloisonnement de consultation, politique de rétention).
 
@@ -31,28 +31,27 @@ def _present(key):
 def get_config_health():
     """Diagnostic présent/absent des intégrations — JAMAIS de valeur de secret (D1)."""
     frappe.only_for(SM_ROLES)
-    kkiapay_keys = all(_present(k) for k in
-                       ("kkiapay_public_key", "kkiapay_private_key", "kkiapay_secret_key"))
-    if frappe.conf.get("kkiapay_mock"):
-        kkiapay_mode = "MOCK"
-    elif frappe.conf.get("kkiapay_sandbox"):
-        kkiapay_mode = "SANDBOX"
+    fedapay_keys = all(_present(k) for k in ("fedapay_public_key", "fedapay_secret_key"))
+    if frappe.conf.get("fedapay_mock"):
+        fedapay_mode = "MOCK"
+    elif frappe.conf.get("fedapay_sandbox"):
+        fedapay_mode = "SANDBOX"
     else:
-        kkiapay_mode = "LIVE"
+        fedapay_mode = "LIVE"
     smtp_present = bool(frappe.db.count("Email Account", {"default_outgoing": 1}))
     return _ok({
         "campus": {"present": _present("campus_base_url") and _present("campus_api_token")},
         "uf": {"present": _present("uf_backoffice_url") and _present("uf_api_key")
                and _present("uf_api_secret")},
-        "kkiapay": {"present": kkiapay_keys, "mode": kkiapay_mode},
+        "fedapay": {"present": fedapay_keys, "mode": fedapay_mode},
         "hmac_secret": {"present": _present("token_hmac_secret")},
-        "webhook_secret": {"present": _present("admission_payment_webhook_secret")},
+        "webhook_secret": {"present": _present("fedapay_webhook_secret")},
         "smtp": {"present": smtp_present},
         # drapeaux d'environnement (booléens, non secrets) — utiles au SM avant une bascule.
         "flags": {
             "developer_mode": bool(frappe.conf.get("developer_mode")),
             "expose_dev_otp": bool(frappe.conf.get("expose_dev_otp")),
-            "kkiapay_mock": bool(frappe.conf.get("kkiapay_mock")),
+            "fedapay_mock": bool(frappe.conf.get("fedapay_mock")),
         },
     })
 

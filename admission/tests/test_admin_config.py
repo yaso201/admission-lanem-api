@@ -17,7 +17,7 @@ class TestAdminConfig(FrappeTestCase):
         res = CFG.get_config_health()
         self.assertTrue(res["ok"])
         d = res["data"]
-        for grp in ("campus", "uf", "kkiapay", "hmac_secret", "webhook_secret", "smtp"):
+        for grp in ("campus", "uf", "fedapay", "hmac_secret", "webhook_secret", "smtp"):
             self.assertIn("present", d[grp])
             self.assertIsInstance(d[grp]["present"], bool)
         # aucune valeur de secret ne doit transiter (pas de clé "value"/"token"/"secret_value")

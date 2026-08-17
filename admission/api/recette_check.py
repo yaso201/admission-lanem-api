@@ -9,7 +9,7 @@ EXÉCUTABLE et re-jouable sur n'importe quel site (recette, préprod, prod) :
 Chaque contrôle est PASS / FAIL / WARN avec le remède exact (clé site_config, action
 OPS). Aucune écriture, aucun secret affiché (présence seulement). Document compagnon :
 specifications/RECETTE-CHECKLIST-ADMISSION.md (actions humaines hors-config incluses :
-KkiaPay réel, SMS, DNS/HTTPS, juridique).
+FedaPay réel, SMS, DNS/HTTPS, juridique).
 """
 
 import os
@@ -73,23 +73,41 @@ def _check_dev_mode():
     return PASS, "désactivé"
 
 
-def _check_kkiapay_keys():
-    """LOT KKIAPAY : sans les 3 clés marchand, la re-vérification serveur est impossible
-    → le webhook rejette TOUT (fail-closed) → aucun paiement online ne se confirme."""
-    missing = [k for k in ("kkiapay_public_key", "kkiapay_private_key", "kkiapay_secret_key")
+def _check_fedapay_keys():
+    """LOT FEDAPAY : sans les 2 clés marchand (public front + secret Bearer serveur), la
+    re-vérification serveur est impossible → le webhook rejette TOUT (fail-closed) → aucun
+    paiement online ne se confirme. Flag-aware : si le paiement en ligne est DÉSACTIVÉ
+    (online_payment_enabled=0), l'absence de clés n'est pas un échec — mais pas un PASS non
+    plus : elles restent requises à la réactivation du drapeau."""
+    from admission.api.public import _online_payment_enabled
+    missing = [k for k in ("fedapay_public_key", "fedapay_secret_key")
                if not frappe.conf.get(k)]
     if missing:
+        if not _online_payment_enabled():
+            return WARN, (f"clés absentes ({', '.join(missing)}) — paiement en ligne DÉSACTIVÉ "
+                          "(online_payment_enabled=0) ; requises avant réactivation du drapeau")
         return FAIL, f"clés manquantes : {', '.join(missing)} — paiement online inopérant (fail-closed)"
-    env = "SANDBOX" if frappe.conf.get("kkiapay_sandbox") else "LIVE"
-    return PASS, f"3 clés posées (environnement {env})"
+    env = "SANDBOX" if frappe.conf.get("fedapay_sandbox") else "LIVE"
+    return PASS, f"2 clés posées (environnement {env})"
 
 
-def _check_kkiapay_mode():
-    if frappe.conf.get("kkiapay_mock"):
-        return FAIL, "kkiapay_mock actif — la vérification provider est SIMULÉE (DEV uniquement)"
-    if frappe.conf.get("kkiapay_sandbox"):
-        return WARN, "kkiapay_sandbox actif — transactions de TEST (ok recette, à retirer en prod)"
+def _check_fedapay_mode():
+    if frappe.conf.get("fedapay_mock"):
+        return FAIL, "fedapay_mock actif — la vérification provider est SIMULÉE (DEV uniquement)"
+    if frappe.conf.get("fedapay_sandbox"):
+        return WARN, "fedapay_sandbox actif — transactions de TEST (ok recette, à retirer en prod)"
     return PASS, "mode LIVE"
+
+
+def _check_fedapay_webhook():
+    """Secret webhook FedaPay. Flag-aware comme les clés : DÉSACTIVÉ + absent → WARN, pas FAIL."""
+    from admission.api.public import _online_payment_enabled
+    if frappe.conf.get("fedapay_webhook_secret"):
+        return PASS, "secret posé"
+    if not _online_payment_enabled():
+        return WARN, ("secret absent — paiement en ligne DÉSACTIVÉ (online_payment_enabled=0) ; "
+                      "requis avant réactivation (sinon webhook FedaPay REJETÉ, fail-closed SEC-2)")
+    return FAIL, "`fedapay_webhook_secret` absent — le webhook FedaPay sera REJETÉ (fail-closed SEC-2)"
 
 
 def _check_local_person():
@@ -277,14 +295,13 @@ CHECKS = [
     # ── Secrets (présence seulement) ──
     ("SEC-token", "Secret HMAC tokens/OTP", _check_secret(
         "token_hmac_secret", "OTP et tracking fail-loud sans lui (DEC-276) ; MÊME valeur côté campus")),
-    ("SEC-webhook", "Secret webhook paiement", _check_secret(
-        "admission_payment_webhook_secret", "le webhook KkiaPay sera REJETÉ (fail-closed SEC-2)")),
+    ("SEC-webhook", "Secret webhook paiement", _check_fedapay_webhook),
     ("SEC-campus", "Token API campus (ensure_person/bridge)", _check_secret(
         "campus_api_token", "create_dossier → PERSON_RESOLUTION_FAILED 503 ; client « External API Client » côté campus")),
     ("SEC-uf-key", "Clé API UF", _check_secret("uf_api_key", "notifications UF en échec (redrive s'accumulera)")),
     ("SEC-uf-secret", "Secret API UF", _check_secret("uf_api_secret", "idem uf_api_key")),
-    ("SEC-kkiapay", "Clés marchand KkiaPay (3)", _check_kkiapay_keys),
-    ("MODE-kkiapay", "Mode KkiaPay (mock interdit, sandbox toléré)", _check_kkiapay_mode),
+    ("SEC-fedapay", "Clés marchand FedaPay (2)", _check_fedapay_keys),
+    ("MODE-fedapay", "Mode FedaPay (mock interdit, sandbox toléré)", _check_fedapay_mode),
     ("MODE-local-person", "Résolution Person via campus (pas de locale)", _check_local_person),
     # ── URLs / transport (DAT-2 : https obligatoire hors developer_mode) ──
     ("URL-campus", "campus_base_url en https", _check_url(

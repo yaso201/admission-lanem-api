@@ -23,13 +23,16 @@ _HEALTH_TZ = "Africa/Porto-Novo"
 _CRITICAL_CONF = (
     "campus_base_url",
     "candidate_portal_url",
-    "admission_payment_webhook_secret",
-    # OBS-3 : clés marchand KkiaPay — absentes = tous les paiements échouent fail-closed
-    # EN SILENCE (verify_transaction → None). Angle mort classe A : sans ça, health « ment »
-    # (healthy) pendant que l'encaissement est mort. Recette les a (3/3) → 0 fausse alarme.
-    "kkiapay_public_key",
-    "kkiapay_private_key",
-    "kkiapay_secret_key",
+)
+# Clés marchand FedaPay (secret webhook + public front + secret Bearer serveur). Critiques
+# SEULEMENT quand le paiement en ligne est ACTIF (online_payment_enabled). Absentes + paiement
+# actif → verify_transaction/webhook échouent fail-closed EN SILENCE → health « mentirait »
+# (healthy) pendant que l'encaissement est mort : angle mort classe A. Drapeau à 0 → aucun
+# encaissement → absentes = normal (visibles sous « paiement désactivé », sans dégrader).
+_PAYMENT_CONF = (
+    "fedapay_webhook_secret",
+    "fedapay_public_key",
+    "fedapay_secret_key",
 )
 # En attente : absent = NORMAL tant que la dépendance n'est pas en recette (visible dans le
 # détail, sans dégrader). ⚠️ Rebasculer dans _CRITICAL_CONF quand UF arrivera en recette.
@@ -60,12 +63,22 @@ def _probe_catalog():
 
 def _probe_config():
     """Config critique POSÉE — noms de clés manquantes seulement, JAMAIS les valeurs (0 secret).
-    Les clés « en attente » (dépendance pas encore en recette) restent VISIBLES sans dégrader."""
-    missing = [k for k in _CRITICAL_CONF if not frappe.conf.get(k)]
+    Les clés « en attente » (dépendance pas encore en recette) restent VISIBLES sans dégrader.
+    Flag-aware : les clés FedaPay ne sont critiques que si le paiement en ligne est actif ;
+    drapeau à 0 → visibles sous « paiement désactivé » sans dégrader (angle mort évité dans
+    les deux sens : pas de faux 503 payment-off, pas de faux healthy payment-on)."""
+    from admission.api.public import _online_payment_enabled
+    payment_on = _online_payment_enabled()
+    critical = _CRITICAL_CONF + (_PAYMENT_CONF if payment_on else ())
+    missing = [k for k in critical if not frappe.conf.get(k)]
     pending = [k for k in _PENDING_CONF if not frappe.conf.get(k)]
     detail = "complète" if not missing else "manquant: " + ",".join(missing)
     if pending:
         detail += " (en attente: " + ",".join(pending) + ")"
+    if not payment_on:
+        pay_off = [k for k in _PAYMENT_CONF if not frappe.conf.get(k)]
+        if pay_off:
+            detail += " (paiement désactivé: " + ",".join(pay_off) + ")"
     return (not missing), detail
 
 

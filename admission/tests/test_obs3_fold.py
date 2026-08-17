@@ -81,32 +81,45 @@ class TestItem4TransitionLogError(TestCase):
             self.assertEqual(call.kwargs["dossier_id"], "CAN-2026-00001")
 
 
-class TestItem5KkiapayCritical(TestCase):
-    def _probe(self, present_keys):
-        with patch(f"{H}.frappe") as mf:
+class TestItem5FedapayCritical(TestCase):
+    def _probe(self, present_keys, payment_on=True):
+        # `_probe_config` importe `_online_payment_enabled` localement → on le patche
+        # directement pour rendre le flag-aware déterministe (indépendant du site_config réel).
+        with patch(f"{H}.frappe") as mf, \
+             patch("admission.api.public._online_payment_enabled", return_value=payment_on):
             mf.conf.get.side_effect = lambda k, d=None: "x" if k in present_keys else None
             from admission.api.health import _probe_config
             return _probe_config()
 
     def test_all_present_ok(self):
-        allk = ("campus_base_url", "candidate_portal_url", "admission_payment_webhook_secret",
-                "kkiapay_public_key", "kkiapay_private_key", "kkiapay_secret_key")
+        allk = ("campus_base_url", "candidate_portal_url", "fedapay_webhook_secret",
+                "fedapay_public_key", "fedapay_secret_key")
         ok, detail = self._probe(allk)
         self.assertTrue(ok)
 
-    def test_missing_kkiapay_key_degrades_by_name_only(self):
-        allk = ("campus_base_url", "candidate_portal_url", "admission_payment_webhook_secret",
-                "kkiapay_public_key", "kkiapay_private_key")           # secret_key ABSENTE
-        ok, detail = self._probe(allk)
-        self.assertFalse(ok)                                          # angle mort A fermé : health dégrade
-        self.assertIn("kkiapay_secret_key", detail)                  # nom seul, pas de valeur
+    def test_missing_fedapay_key_degrades_when_payment_on(self):
+        # Paiement ACTIF → clés marchand critiques (angle mort A : health doit dégrader).
+        allk = ("campus_base_url", "candidate_portal_url", "fedapay_webhook_secret",
+                "fedapay_public_key")                                 # secret_key ABSENTE
+        ok, detail = self._probe(allk, payment_on=True)
+        self.assertFalse(ok)                                          # dégrade
+        self.assertIn("fedapay_secret_key", detail)                  # nom seul, pas de valeur
+
+    def test_missing_fedapay_key_visible_not_degraded_when_payment_off(self):
+        # Paiement DÉSACTIVÉ (drapeau à 0) → clés absentes VISIBLES sans dégrader (ruling 3) :
+        # pas de faux 503 quand l'encaissement est volontairement coupé.
+        allk = ("campus_base_url", "candidate_portal_url")            # aucune clé fedapay
+        ok, detail = self._probe(allk, payment_on=False)
+        self.assertTrue(ok)                                          # ne dégrade PAS
+        self.assertIn("paiement désactivé", detail)                  # mais visible
+        self.assertIn("fedapay_secret_key", detail)
 
 
 class TestItem6DigestHealthLine(TestCase):
     def test_digest_embeds_health_summary(self):
         with patch(f"{A}.frappe") as mf, patch(f"{A}._send_telegram", return_value=True), \
              patch(f"{O}._ops_counters", return_value={"uf_unreplicated": 0}), \
-             patch(f"{H}._run_checks", return_value=(False, {"config": {"ok": False, "detail": "manquant: kkiapay_secret_key"}})):
+             patch(f"{H}._run_checks", return_value=(False, {"config": {"ok": False, "detail": "manquant: fedapay_secret_key"}})):
             mf.conf.get.side_effect = lambda k, d=None: {"admission_ops_digest_recipients": "ops@lanem.bj"}.get(k, d)
             mf.cache.make_key.side_effect = lambda k: k
             mf.local.site = "rec"
