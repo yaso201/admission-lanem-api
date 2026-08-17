@@ -229,6 +229,11 @@ class TestSec2Webhook(TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"]["code"], "WEBHOOK_SIGNATURE_INVALID")
 
+    # OBS-1 : la cascade BRO→SOU enfile une notif async (public._enqueue_submission_notif → frappe.enqueue
+    # enqueue_after_commit) via le frappe RÉEL de public.py. Sur un applicant MagicMock la callback FUYAIT
+    # sur after_commit → PicklingError au setUpClass suivant. On mocke la frontière d'effet de bord (job
+    # async hors périmètre de ce test de vérification de signature).
+    @patch("admission.api.public._enqueue_submission_notif")
     @patch(f"{WEBHOOK}.notify_uf_payment")
     @patch(f"{WEBHOOK}.send_payment_receipt")
     @patch("admission.api.public._capture_promo_if_eligible")  # C2-BOURSES/R1 : capture dans la cascade
@@ -237,7 +242,7 @@ class TestSec2Webhook(TestCase):
     @patch(f"{WEBHOOK}._find_payment_by_reference")
     @patch(f"{WEBHOOK}.frappe")
     def test_webhook_valid_signature_accepted(
-        self, mock_frappe, mock_find, _mock_now, _mock_verify, mock_capture, _msend, _mnotify,
+        self, mock_frappe, mock_find, _mock_now, _mock_verify, mock_capture, _msend, _mnotify, _menqueue_notif,
     ):
         self._rq(mock_frappe)  # signature HMAC VALIDE sur le corps → acceptée
         pending = MagicMock()

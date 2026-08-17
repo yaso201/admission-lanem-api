@@ -560,6 +560,11 @@ class TestCapturePromoAtPayment(TestCase):
 
         mock_capture.assert_not_called()
 
+    # OBS-1 : la cascade BRO→SOU enfile une notif async (public._enqueue_submission_notif → frappe.enqueue
+    # enqueue_after_commit) via le frappe RÉEL de public.py (seul WEBHOOK.frappe est mocké). Sur un
+    # applicant MagicMock la callback FUYAIT sur after_commit → PicklingError au setUpClass suivant. On
+    # mocke la frontière d'effet de bord (job async hors périmètre de ce test de capture promo).
+    @patch("admission.api.public._enqueue_submission_notif")
     @patch(f"{WEBHOOK}.notify_uf_payment")
     @patch("admission.api.public._capture_promo_if_eligible")
     @patch(f"{WEBHOOK}.send_payment_receipt")
@@ -568,7 +573,7 @@ class TestCapturePromoAtPayment(TestCase):
     @patch(f"{WEBHOOK}._find_payment_by_reference")
     @patch(f"{WEBHOOK}.frappe")
     def test_webhook_frais1_captures_promo_via_cascade(
-        self, mock_frappe, mock_find, mock_now, _mock_verify, _msend, mock_capture, _mnotify,
+        self, mock_frappe, mock_find, mock_now, _mock_verify, _msend, mock_capture, _mnotify, _menqueue_notif,
     ):
         # FedaPay : signature HMAC vérifiée + re-vérification serveur, puis PROMOTION du Pending
         # lié (plus d'insert). C2-BOURSES/R1 : la capture vit DANS la cascade partagée —

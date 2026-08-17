@@ -26,7 +26,12 @@ class TestCascadeHelper(TestCase):
         self.assertEqual(applicant.status, "SOU")
         applicant.save.assert_called_once()
 
-    def test_cascade_from_bro(self):
+    # OBS-1 : la cascade BRO→SOU enfile une notif async (frappe.enqueue enqueue_after_commit) ;
+    # sur un applicant MagicMock, la callback capture le Mock et FUYAIT sur frappe.db.after_commit
+    # jusqu'au commit d'un setUpClass ultérieur → PicklingError (faux-rouge d'isolation). On mocke la
+    # frontière d'effet de bord (le job async est hors périmètre de ce test unitaire de la cascade).
+    @patch("admission.api.public._enqueue_submission_notif")
+    def test_cascade_from_bro(self, _menqueue_notif):
         from admission.api.public import apply_confirmed_payment_cascade
         applicant = MagicMock(); applicant.status = "BRO"
         fee = MagicMock(); fee.status = "Pending"
