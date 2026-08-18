@@ -1,0 +1,25 @@
+{
+  "$id": "public.list_programmes",
+  "title": "Catalogue des programmes (candidat)",
+  "x-source": "AUDIT-360-A3-CONTRATS §2.1 #11 (CF + 4 I : level_order, partner_name, dd_component_1/2)",
+  "x-level": "back-conformance",
+  "x-consumers": { "applicant": "admission-tunnel.js (catalogue)" },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["programmes"],
+  "properties": {
+    "programmes": { "type": "array", "items": {
+      "type": "object", "additionalProperties": true,
+      "required": ["code", "label", "niveaux", "parcours", "partner", "location"],
+      "properties": {
+        "code": { "type": "string" }, "label": { "type": "string" },
+        "parcours": { "type": ["string", "null"] },
+        "partner": { "type": ["string", "null"] },
+        "location": { "type": ["string", "null"] },
+        "niveaux": { "type": "array", "items": {
+          "type": "object", "additionalProperties": true,
+          "required": ["level_code", "level_name"],
+          "properties": { "level_code": { "type": "string" }, "level_name": { "type": ["string", "null"] } } } }
+      } } }
+  }
+}

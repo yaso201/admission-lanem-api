@@ -1,0 +1,19 @@
+{
+  "$id": "admin_config.get_config_health",
+  "title": "Diagnostic présent/absent des intégrations (SM)",
+  "x-source": "AUDIT-360-A3-CONTRATS §2.1 #1 (verdict F — fantôme corrigé par LEGAL-HYGIENE : back sert désormais fedapay)",
+  "x-level": "back-conformance + consumer",
+  "x-consumers": { "management": "reglages.astro:63-78" },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["campus", "uf", "fedapay", "hmac_secret", "webhook_secret", "smtp", "flags"],
+  "properties": {
+    "campus": { "type": "object", "additionalProperties": false, "required": ["present"], "properties": { "present": { "type": "boolean" } } },
+    "uf": { "type": "object", "additionalProperties": false, "required": ["present"], "properties": { "present": { "type": "boolean" } } },
+    "fedapay": { "type": "object", "additionalProperties": false, "required": ["present", "mode"], "properties": { "present": { "type": "boolean" }, "mode": { "type": "string", "enum": ["MOCK", "SANDBOX", "LIVE"] } } },
+    "hmac_secret": { "type": "object", "additionalProperties": false, "required": ["present"], "properties": { "present": { "type": "boolean" } } },
+    "webhook_secret": { "type": "object", "additionalProperties": false, "required": ["present"], "properties": { "present": { "type": "boolean" } } },
+    "smtp": { "type": "object", "additionalProperties": false, "required": ["present"], "properties": { "present": { "type": "boolean" } } },
+    "flags": { "type": "object", "additionalProperties": false, "required": ["developer_mode", "expose_dev_otp", "fedapay_mock"], "properties": { "developer_mode": { "type": "boolean" }, "expose_dev_otp": { "type": "boolean" }, "fedapay_mock": { "type": "boolean" } } }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "$id": "staff.whoami",
+  "title": "Identité de session management",
+  "x-source": "AUDIT-360-A3-CONTRATS §2.1 #20 (CF — aucun fantôme)",
+  "x-level": "back-conformance",
+  "x-consumers": { "management": "api.js:120-124" },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["user", "full_name", "roles", "csrf_token"],
+  "properties": {
+    "user": { "type": "string" },
+    "full_name": { "type": "string" },
+    "roles": { "type": "array", "items": { "type": "string" } },
+    "csrf_token": { "type": "string" }
+  }
+}

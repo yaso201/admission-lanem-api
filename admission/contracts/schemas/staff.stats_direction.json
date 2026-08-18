@@ -1,0 +1,22 @@
+{
+  "$id": "staff.stats_direction",
+  "title": "Statistiques Direction",
+  "x-source": "AUDIT-360-A3-CONTRATS §2.1 #27 (CF/CT + 4 I sur sessions)",
+  "x-level": "back-conformance",
+  "x-consumers": { "management": "tableau-direction.astro:132-165" },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["par_statut", "par_programme", "encaisse_xof", "sessions"],
+  "properties": {
+    "par_statut": { "type": "object", "additionalProperties": true },
+    "par_programme": { "type": "object", "additionalProperties": true },
+    "encaisse_xof": { "type": "object", "additionalProperties": true },
+    "sessions": { "type": "array", "items": {
+      "type": "object", "additionalProperties": true,
+      "required": ["name", "label", "is_open", "inscrits"],
+      "properties": {
+        "name": { "type": "string" }, "label": { "type": "string" },
+        "is_open": { "type": ["boolean", "integer"] }, "inscrits": { "type": "integer" }
+      } } }
+  }
+}

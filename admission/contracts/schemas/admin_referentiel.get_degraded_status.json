@@ -1,0 +1,16 @@
+{
+  "$id": "admin_referentiel.get_degraded_status",
+  "title": "État du mode dégradé référentiel (SM)",
+  "x-source": "AUDIT-360-A3-CONTRATS §2.1 #5 (CF — aucun fantôme)",
+  "x-level": "back-conformance",
+  "x-consumers": { "management": "reglages.astro:98-113" },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["degraded_mode", "manual_count", "campus_count", "total"],
+  "properties": {
+    "degraded_mode": { "type": "boolean" },
+    "manual_count": { "type": "integer" },
+    "campus_count": { "type": "integer" },
+    "total": { "type": "integer" }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "$id": "admin_ops.get_ops_health",
+  "title": "Compteurs d'exploitation (SM)",
+  "x-source": "AUDIT-360-A3-CONTRATS §2.1 #4 — 5 compteurs jadis ignorés, rendus par OBS-1",
+  "x-level": "back-conformance (ADDITIF : additionalProperties permis, cf. OBS-2 — le front ignore les clés inconnues)",
+  "x-consumers": { "management": "exploitation.astro:72-98" },
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["uf_unreplicated", "bridge_pending", "pending_online_stale", "orphan_refund_due", "underpaid_review", "refused_terminal", "email_queue_error", "scheduled_job_failed_24h"],
+  "properties": {
+    "uf_unreplicated": { "type": "integer" },
+    "bridge_pending": { "type": "integer" },
+    "pending_online_stale": { "type": "integer" },
+    "orphan_refund_due": { "type": "integer" },
+    "underpaid_review": { "type": "integer" },
+    "refused_terminal": { "type": "integer" },
+    "email_queue_error": { "type": "integer" },
+    "scheduled_job_failed_24h": { "type": "integer" }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "$id": "public.list_sessions",
+  "title": "Sessions ouvertes (candidat)",
+  "x-source": "AUDIT-360-A3-CONTRATS §2.1 #12 (CF + 2 I : opens_on, status non lus par l'applicant)",
+  "x-level": "back-conformance",
+  "x-consumers": { "applicant": "admission-tunnel.js (sélection de session)" },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["sessions"],
+  "properties": {
+    "sessions": { "type": "array", "items": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "label", "academic_year", "programme", "closes_on", "selectable"],
+      "properties": {
+        "id": { "type": "string" }, "label": { "type": "string" },
+        "academic_year": { "type": ["string", "null"] },
+        "programme": { "type": "object", "additionalProperties": false, "required": ["code"],
+          "properties": { "code": { "type": ["string", "null"] }, "label": { "type": ["string", "null"] } } },
+        "opens_on": { "type": ["string", "null"] },
+        "closes_on": { "type": ["string", "null"] },
+        "status": { "type": "string" },
+        "selectable": { "type": "boolean" }
+      } } }
+  }
+}

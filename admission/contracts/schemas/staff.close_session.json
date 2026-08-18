@@ -1,0 +1,20 @@
+{
+  "$id": "staff.close_session",
+  "title": "Aperçu de clôture de session (dry_run)",
+  "x-source": "A3-FIX E-02 (double déballage close_session) ; staff.py:2590 (dry_run preview)",
+  "x-level": "schéma + rejeu E-02 + consumer (back-conformance différée : requiert un fixture session)",
+  "x-consumers": { "management": "calendrier-session.astro (aperçu de clôture)" },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["session", "is_open", "dry_run", "bascules", "total", "can_execute", "blocking_dossiers", "blocking_message"],
+  "properties": {
+    "session": { "type": "string" },
+    "is_open": { "type": "boolean" },
+    "dry_run": { "type": "boolean" },
+    "bascules": { "type": "object", "additionalProperties": true },
+    "total": { "type": "integer" },
+    "can_execute": { "type": "boolean" },
+    "blocking_dossiers": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+    "blocking_message": { "type": ["string", "null"] }
+  }
+}
