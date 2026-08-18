@@ -1713,12 +1713,27 @@ def reject_piece(dossier_id=None, piece_code=None, reason=None, comment=None):
     return _ok({"dossier_id": applicant.name, "piece_code": piece_code, "status": "rejected"})
 
 
+def _requirement_locked_error(action):
+    """PIECES-REQ (DEC-O) — l'exigence se décide AVANT le dépôt. Dès qu'une pièce est déposée
+    (`status != missing`), Exiger/Dispenser/Réinitialiser n'ont plus d'objet : le serveur refuse
+    (miroir INVERSE de la garde de verdict `PIECE_NOT_UPLOADED`). Le message de `waive` nomme le
+    bon geste : refuser avec motif (traçable), là où une dispense après dépôt effacerait la trace."""
+    if action == "waive":
+        msg = "Une pièce déposée ne se dispense pas : refusez-la avec un motif (traçable)."
+    else:
+        msg = "L'exigence se décide avant le dépôt ; cette pièce est déjà déposée."
+    return _error("REQUIREMENT_LOCKED", msg, 409)
+
+
 @frappe.whitelist()
 def require_piece(dossier_id=None, piece_code=None):
-    """Exige une pièce (surcharge staff) pour CE dossier — sans toucher la liste structurelle."""
+    """Exige une pièce (surcharge staff) pour CE dossier — sans toucher la liste structurelle.
+    DEC-O : possible SEULEMENT tant que la pièce est absente (`status == missing`)."""
     applicant, row, err = _resolve_piece_sou(dossier_id, piece_code)
     if err:
         return err
+    if row.status != "missing":
+        return _requirement_locked_error("require")
     row.staff_requirement = "required"
     applicant.save(ignore_permissions=True)
     _record_piece_verdict(applicant.name, piece_code, "require")
@@ -1728,10 +1743,13 @@ def require_piece(dossier_id=None, piece_code=None):
 
 @frappe.whitelist()
 def waive_piece(dossier_id=None, piece_code=None):
-    """Dispense une pièce (surcharge staff) — ne bloque plus les gardes (notif, SOU→ETU)."""
+    """Dispense une pièce (surcharge staff) — ne bloque plus les gardes (notif, SOU→ETU).
+    DEC-O : possible SEULEMENT tant que la pièce est absente ; une pièce déposée se REFUSE (motif)."""
     applicant, row, err = _resolve_piece_sou(dossier_id, piece_code)
     if err:
         return err
+    if row.status != "missing":
+        return _requirement_locked_error("waive")
     row.staff_requirement = "waived"
     applicant.save(ignore_permissions=True)
     _record_piece_verdict(applicant.name, piece_code, "waive")
@@ -1742,10 +1760,12 @@ def waive_piece(dossier_id=None, piece_code=None):
 @frappe.whitelist()
 def reset_piece_requirement(dossier_id=None, piece_code=None):
     """Réinitialise l'exigence à 'default' (la pièce re-suit la règle structurelle du profil via
-    requise_effective). Miroir de require/waive — révisable librement tant que dossier SOU."""
+    requise_effective). Miroir de require/waive — révisable tant que la pièce est ABSENTE (DEC-O)."""
     applicant, row, err = _resolve_piece_sou(dossier_id, piece_code)
     if err:
         return err
+    if row.status != "missing":
+        return _requirement_locked_error("reset")
     row.staff_requirement = "default"
     applicant.save(ignore_permissions=True)
     _record_piece_verdict(applicant.name, piece_code, "reset")

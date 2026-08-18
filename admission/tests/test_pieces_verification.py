@@ -514,3 +514,49 @@ class TestSEC1PieceGuards(TestCase):
         for name, kwargs in cases:
             only_for = self._run(name, **kwargs)
             only_for.assert_called_once_with(ADMIN_UP)   # voie positive : détecte l'absence de garde
+
+
+class TestRequirementLockedAfterUpload(TestCase):
+    """PIECES-REQ (DEC-O) — l'exigence se décide AVANT le dépôt. Dès qu'une pièce est déposée
+    (uploaded/verified/rejected), Exiger/Dispenser/Réinitialiser sont refusés côté serveur
+    (REQUIREMENT_LOCKED). La règle suit `piece.status` : elle redevient éditable si `missing`."""
+
+    @patch(f"{STAFF}._record_piece_verdict")
+    @patch(f"{STAFF}.frappe")
+    def _run(self, endpoint, status, mf, mrec, sr="default"):
+        mf.db.exists.return_value = True
+        row = _piece("identite", required=1, status=status, staff_requirement=sr)
+        mf.get_doc.return_value = _app([row])
+        import admission.api.staff as staff
+        res = getattr(staff, endpoint)(dossier_id="CAN-1", piece_code="identite")
+        return res, row, mrec
+
+    def test_require_locked_on_deposited_states(self):
+        # DEC-O-1/8 + check-list #2/#3 : les trois états déposés refusent Exiger.
+        for status in ("uploaded", "verified", "rejected"):
+            res, row, mrec = self._run("require_piece", status)
+            self.assertEqual(res["error"]["code"], "REQUIREMENT_LOCKED", status)
+            self.assertEqual(row.staff_requirement, "default")   # aucune surcharge écrite
+            mrec.assert_not_called()
+
+    def test_waive_locked_message_guides_to_reject(self):
+        # DEC-O-2 : Dispenser une pièce déposée → refus, ET le message nomme le bon geste (Refuser).
+        res, row, mrec = self._run("waive_piece", "verified")
+        self.assertEqual(res["error"]["code"], "REQUIREMENT_LOCKED")
+        self.assertIn("refusez", res["error"]["message"].lower())
+        self.assertEqual(row.staff_requirement, "default")
+        mrec.assert_not_called()
+
+    def test_reset_locked_on_deposited(self):
+        # DEC-O-4 : Réinitialiser après dépôt → refus (même logique), surcharge existante préservée.
+        res, row, mrec = self._run("reset_piece_requirement", "uploaded", sr="required")
+        self.assertEqual(res["error"]["code"], "REQUIREMENT_LOCKED")
+        self.assertEqual(row.staff_requirement, "required")   # aucune purge — surcharge inerte conservée
+        mrec.assert_not_called()
+
+    def test_require_allowed_again_when_missing(self):
+        # DEC-O-5 : la règle suit la PIÈCE — une pièce ramenée à `missing` redevient exigeable.
+        res, row, mrec = self._run("require_piece", "missing")
+        self.assertTrue(res["ok"])
+        self.assertEqual(row.staff_requirement, "required")
+        mrec.assert_called_once_with("CAN-1", "identite", "require")
