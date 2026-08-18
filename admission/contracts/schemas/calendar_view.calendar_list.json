@@ -1,0 +1,17 @@
+{
+  "$id": "calendar_view.calendar_list",
+  "title": "Calendrier groupé par année académique (lecture seule)",
+  "x-source": "AUDIT-360-A3-CONTRATS §2.1 (endpoints lourds différés CONTRAT-2) ; CONTRAT-3",
+  "x-level": "back-conformance (appel réel in-process sur sessions dev existantes)",
+  "x-consumers": { "management": "calendrier.astro / calendrier-session.astro (rendu du calendrier)" },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["today", "default_shift_days", "pending_total", "a_traiter", "groups"],
+  "properties": {
+    "today": { "type": "string" },
+    "default_shift_days": { "type": "integer" },
+    "pending_total": { "type": "integer" },
+    "a_traiter": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+    "groups": { "type": "array", "items": { "type": "object", "additionalProperties": true } }
+  }
+}

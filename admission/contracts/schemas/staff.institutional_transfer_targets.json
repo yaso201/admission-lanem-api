@@ -1,0 +1,14 @@
+{
+  "$id": "staff.institutional_transfer_targets",
+  "title": "Sessions cibles éligibles pour un transfert institutionnel en lot",
+  "x-source": "AUDIT-360-A3-CONTRATS §2.1 #19 (voisin de institutional_transfer_preview) ; CONTRAT-3",
+  "x-level": "back-conformance (appel réel in-process sur une session dev existante)",
+  "x-consumers": { "management": "calendrier-session.astro (choix de la session cible du transfert)" },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["source_session", "targets"],
+  "properties": {
+    "source_session": { "type": "string" },
+    "targets": { "type": "array", "items": { "type": "object", "additionalProperties": true } }
+  }
+}

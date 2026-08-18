@@ -1,0 +1,43 @@
+{
+  "$id": "calendar_view.session_detail",
+  "title": "Une session + sa politique par champ + son pending (écran d'édition des dates)",
+  "x-source": "AUDIT-360-A3-CONTRATS §2.1 (endpoints lourds différés CONTRAT-2) ; CONTRAT-3",
+  "x-level": "back-conformance (appel réel in-process sur une session dev existante)",
+  "x-consumers": { "management": "calendrier-session.astro (édition des dates de session)" },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "name", "session_code", "label", "programme_code", "programme_label", "academic_year",
+    "lifecycle_state", "is_open", "is_prepa_session", "application_fee_xof", "capacity",
+    "opens_on", "closes_on", "bac_results_date", "exam_date", "exam_call_time", "exam_start_time",
+    "exam_room", "display_status", "policies", "pending", "applicant_count", "convocation_count",
+    "can_delete", "next_session"
+  ],
+  "properties": {
+    "name": { "type": "string" },
+    "session_code": { "type": "string" },
+    "label": { "type": "string" },
+    "programme_code": { "type": "string" },
+    "programme_label": { "type": ["string", "null"] },
+    "academic_year": { "type": "string" },
+    "lifecycle_state": { "type": "string" },
+    "is_open": { "type": "integer" },
+    "is_prepa_session": { "type": "integer" },
+    "application_fee_xof": { "type": ["number", "integer"] },
+    "capacity": { "type": "integer" },
+    "opens_on": { "type": ["string", "null"] },
+    "closes_on": { "type": ["string", "null"] },
+    "bac_results_date": { "type": ["string", "null"] },
+    "exam_date": { "type": ["string", "null"] },
+    "exam_call_time": { "type": ["string", "null"] },
+    "exam_start_time": { "type": ["string", "null"] },
+    "exam_room": { "type": ["string", "null"] },
+    "display_status": { "type": "string" },
+    "policies": { "type": "object", "additionalProperties": true },
+    "pending": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+    "applicant_count": { "type": "integer" },
+    "convocation_count": { "type": "integer" },
+    "can_delete": { "type": "boolean" },
+    "next_session": {}
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "$id": "staff.list_notes_roster",
+  "title": "Feuille de notes d'une session (barème + coefficients + candidats)",
+  "x-source": "AUDIT-360-A3-CONTRATS §2.1 (endpoints notes/concours différés CONTRAT-2) ; CONTRAT-3",
+  "x-level": "back-conformance (appel réel in-process sur une session dev existante ; roster vide conforme)",
+  "x-consumers": { "management": "notes.astro (saisie des notes du concours)" },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["session_id", "subjects", "coefficients", "coefficients_set", "coefficients_frozen", "candidats"],
+  "properties": {
+    "session_id": { "type": "string" },
+    "subjects": { "type": "object", "additionalProperties": true },
+    "coefficients": { "type": "object", "additionalProperties": true },
+    "coefficients_set": { "type": "boolean" },
+    "coefficients_frozen": { "type": "boolean" },
+    "candidats": { "type": "array", "items": { "type": "object", "additionalProperties": true } }
+  }
+}

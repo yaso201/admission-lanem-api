@@ -1,0 +1,63 @@
+{
+  "$id": "staff.get_dossier",
+  "title": "Détail d'un dossier — vue staff (page /dossier du front management)",
+  "x-source": "AUDIT-360-A3-CONTRATS §2.1 (get_dossier différé CONTRAT-2) ; A4 = valeurs NT-UX-2 sur blocked_actions",
+  "x-level": "back-conformance (dossier réel décoré inséré en test — forme du sérialiseur, pas le workflow)",
+  "x-a4": "blocked_actions accepte l'item réservé Administratif : {action:confirm_payment, code:RESERVED_TO_ADMINISTRATIF} (NT-UX-2)",
+  "x-consumers": { "management": "dossier.astro (détail d'un dossier + actions disponibles/bloquées)" },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "dossier_id", "statut", "conditionnel", "bac_verified", "is_prepa", "identite", "programme",
+    "session", "person_id", "related_dossiers", "bac_profile", "motif_incompletude", "motif_refus",
+    "motif_desistement", "rang_liste_attente", "pieces", "frais", "paiements", "notes", "bourses",
+    "promo", "acompte_xof", "transitions", "transfer", "soumis_le", "available_actions",
+    "blocked_actions", "awaiting", "can_control_pieces", "can_manage_payments", "convocation"
+  ],
+  "properties": {
+    "dossier_id": { "type": "string" },
+    "statut": { "type": "string" },
+    "conditionnel": { "type": "boolean" },
+    "bac_verified": { "type": "boolean" },
+    "is_prepa": { "type": "boolean" },
+    "identite": { "type": "object", "additionalProperties": true },
+    "programme": { "type": "object", "additionalProperties": true },
+    "session": { "type": "object", "additionalProperties": true },
+    "person_id": { "type": ["string", "null"] },
+    "related_dossiers": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+    "bac_profile": { "type": ["string", "null"] },
+    "motif_incompletude": {},
+    "motif_refus": {},
+    "motif_desistement": {},
+    "rang_liste_attente": { "type": ["integer", "null"] },
+    "pieces": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+    "frais": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+    "paiements": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+    "notes": { "type": "object", "additionalProperties": true },
+    "bourses": { "type": "object", "additionalProperties": true },
+    "promo": { "type": "object", "additionalProperties": true },
+    "acompte_xof": { "type": ["number", "integer"] },
+    "transitions": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+    "transfer": { "type": "object", "additionalProperties": true },
+    "soumis_le": { "type": ["string", "null"] },
+    "available_actions": { "type": "array", "items": { "type": "string" } },
+    "blocked_actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["action", "actor", "code", "reason"],
+        "properties": {
+          "action": { "type": "string" },
+          "actor": { "type": "string" },
+          "code": { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "awaiting": {},
+    "can_control_pieces": { "type": "boolean" },
+    "can_manage_payments": { "type": "boolean" },
+    "convocation": { "type": "object", "additionalProperties": true }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "$id": "calendar_view.pending_queue",
+  "title": "File de validation — propositions de changement en attente (tous programmes)",
+  "x-source": "AUDIT-360-A3-CONTRATS §2.1 (endpoints lourds différés CONTRAT-2) ; CONTRAT-3",
+  "x-level": "back-conformance (appel réel in-process ; file vide conforme)",
+  "x-consumers": { "management": "calendrier.astro (écran Direction / compteur d'onglet)" },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["items", "total"],
+  "properties": {
+    "items": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+    "total": { "type": "integer" }
+  }
+}
