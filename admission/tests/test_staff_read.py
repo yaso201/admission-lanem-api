@@ -63,9 +63,15 @@ class TestListDossiers(TestCase):
             mf.db.get_value.return_value = 0
             from admission.api.staff import list_dossiers
             res = list_dossiers()
-            mf.get_list.assert_called_once()
+            mf.get_list.assert_called()      # DEC-262 : get_list (perms), plusieurs requêtes désormais
+            self.assertFalse(mf.get_all.called and any(
+                c.args and c.args[0] == "Admission Applicant" for c in mf.get_all.call_args_list),
+                "les dossiers doivent passer par get_list, jamais get_all")
         self.assertEqual(res["data"]["dossiers"][0]["dossier_id"], "CAN-1")
         self.assertEqual(res["data"]["dossiers"][0]["bourse"], "aucune")
+        self.assertIn("total", res["data"])
+        self.assertIn("facets", res["data"])
+        self.assertIn("counts", res["data"])
 
     def test_bourse_and_notes_states(self):
         ok, err = _patches()
@@ -82,35 +88,54 @@ class TestListDossiers(TestCase):
         self.assertEqual(d["notes"], "saisies")
         self.assertTrue(d["is_prepa"])
 
-    def test_search_filters_rows(self):
+    def test_search_is_db_like_over_four_fields(self):
+        # PERF-1 : la recherche est un LIKE DB (or_filters), plus un post-filtre Python limité à la
+        # page. Couvre nom/numéro/email/téléphone. L'insensibilité accents/casse = collation
+        # utf8mb4_unicode_ci ; la recherche AU-DELÀ du 200e est prouvée en intégration sur 315
+        # dossiers dev (docs/PERF-1-PREUVES.md — cible rang 250 trouvée par « ebeniste »).
         ok, err = _patches()
         with patch(f"{STAFF}.frappe") as mf, ok, err:
-            mf.get_list.return_value = [
-                self._row(),
-                self._row(name="CAN-2", applicant_name="Zo B", email="zo@example.bj", phone="+22990000002"),
-            ]
+            mf.get_list.return_value = [self._row()]
             mf.get_all.return_value = []
             mf.db.get_value.return_value = 0
             from admission.api.staff import list_dossiers
-            res = list_dossiers(q="ama")
-        self.assertEqual(len(res["data"]["dossiers"]), 1)
+            list_dossiers(q="Aïcha")
+            or_calls = [c for c in mf.get_list.call_args_list if c.kwargs.get("or_filters")]
+        self.assertTrue(or_calls, "recherche non poussée au niveau DB (or_filters absent)")
+        of = or_calls[0].kwargs["or_filters"]
+        self.assertEqual({row[0] for row in of}, {"applicant_name", "name", "email", "phone"})
+        self.assertTrue(all(row[1] == "like" and "Aïcha" in row[2] for row in of))
 
-    def test_search_is_accent_insensitive_and_covers_email_phone(self):
+    def test_response_shape_pagination_facets_counts(self):
+        # PERF-1 DEC-A/B : la réponse porte total/limit/offset (pagination serveur) + facets + counts.
+        ok, err = _patches()
+        with patch(f"{STAFF}.frappe") as mf, ok, err:
+            mf.get_list.return_value = [self._row()]
+            mf.get_all.return_value = []
+            mf.db.get_value.return_value = 0
+            from admission.api.staff import list_dossiers
+            res = list_dossiers(limit=25, offset=10)["data"]
+        self.assertEqual((res["limit"], res["offset"]), (25, 10))
+        self.assertIn("programmes", res["facets"])
+        self.assertIn("by_status", res["counts"])
+        self.assertIn("queues", res["counts"])
+
+    def test_queue_filters_enriched_predicate(self):
+        # PERF-1 DEC-D : queue=bourse_demandee garde la bourse DEMANDÉE seule (proposée = hors file).
         ok, err = _patches()
         rows = [
-            self._row(applicant_name="Aïcha Dossou", email="aicha@x.bj", phone="+22997000001"),
-            self._row(name="CAN-2", applicant_name="Zo B", email="zo@x.bj", phone="+22997000002"),
+            self._row(name="CAN-1", requested_scholarships='["B"]', proposed_scholarships=None),
+            self._row(name="CAN-2", requested_scholarships='["B"]', proposed_scholarships='["B"]'),
         ]
         with patch(f"{STAFF}.frappe") as mf, ok, err:
             mf.get_list.return_value = rows
             mf.get_all.return_value = []
             mf.db.get_value.return_value = 0
             from admission.api.staff import list_dossiers
-            by_name = list_dossiers(q="aicha")
-            by_email = list_dossiers(q="AICHA@X.BJ")
-            by_phone = list_dossiers(q="97000001")
-        self.assertEqual([len(x["data"]["dossiers"]) for x in (by_name, by_email, by_phone)], [1, 1, 1])
-        self.assertEqual(by_name["data"]["dossiers"][0]["date_naissance"], "2000-01-01")
+            res = list_dossiers(queue="bourse_demandee")["data"]
+        ids = [d["dossier_id"] for d in res["dossiers"]]
+        self.assertIn("CAN-1", ids)
+        self.assertNotIn("CAN-2", ids)
 
 
 class TestGetDossierStaff(TestCase):
