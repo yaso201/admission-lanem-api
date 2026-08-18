@@ -885,15 +885,57 @@ def whoami():
     })
 
 
-@frappe.whitelist(methods=["GET"])
-def list_dossiers(q=None, programme=None, session=None, statuts=None, limit=200):
-    """C4-FRONT — liste shaped des dossiers pour les files de travail du front.
+_LIST_FIELDS = [
+    "name", "applicant_name", "programme_code", "programme_label", "level_code",
+    "session", "person_id", "status", "conditionnel", "bac_verified", "resoumis",
+    "email", "phone", "date_of_birth",
+    "requested_scholarships", "proposed_scholarships", "validated_scholarships",
+    "notes_concours", "notes_validated", "rang_liste_attente", "creation", "modified",
+]
 
-    Lecture via frappe.get_list (PAS get_all) : DocPerms + cloisonnement DEC-262 respectés.
-    Enrichit chaque dossier des indicateurs d'UI (bourse, notes, pièces manquantes,
-    paiement offline à confirmer) par requêtes groupées — AUCUN montant calculé ici.
+
+def _prepa_session_names():
+    return [s.name for s in frappe.get_all("Admission Session",
+            filters={"is_prepa_session": 1}, fields=["name"])]
+
+
+def _offline_pending_names():
+    """Dossiers avec un paiement offline (Cash/Bank) en attente de confirmation."""
+    return {p.applicant for p in frappe.get_all(
+        "Applicant Fee Payment",
+        filters={"payment_status": "Pending", "payment_mode": ["in", ["Cash", "Bank"]]},
+        fields=["applicant"])}
+
+
+# PERF-1 (DEC-D) — files de travail ENRICHIES non exprimables en filtre SQL (indicateurs dérivés).
+# Prédicats appliqués en Python sur le jeu PRÉ-BORNÉ (statuts + prepa/offline), avec la logique
+# EXACTE de _notes_state / _bourse_state → aucune divergence avec l'affichage (DEC-C).
+_QUEUE_PREDICATES = {
+    "paiement_a_confirmer": lambda r, c: r.name in c["offline"],
+    "notes_absentes": lambda r, c: bool(c["prepa"].get(r.session)) and _notes_state(r) == "absentes",
+    "notes_saisies": lambda r, c: bool(c["prepa"].get(r.session)) and _notes_state(r) == "saisies",
+    "bourse_demandee": lambda r, c: _bourse_state(r) == "demandee",
+}
+
+
+_LIST_ORDER = {"recent": "modified desc", "ancien": "creation asc", "nom": "applicant_name asc"}
+
+
+@frappe.whitelist(methods=["GET"])
+def list_dossiers(q=None, programme=None, session=None, statuts=None, queue=None,
+                  order="recent", limit=50, offset=0):
+    """C4-FRONT — liste PAGINÉE (serveur) des dossiers pour les files de travail du front.
+
+    PERF-1 (faille 15) : filtrage + recherche + pagination CÔTÉ SERVEUR (plus en mémoire). Renvoie
+    le VRAI total (COUNT), les `facets` (dropdowns) et les `counts` (badges de preset). La recherche
+    `q` est un LIKE DB (collation insensible accents/casse) — trouve AU-DELÀ de la page. Lecture via
+    frappe.get_list : DocPerms + cloisonnement DEC-262 respectés. Enrichissement (bourse, notes,
+    pièces, offline) calculé sur la PAGE seulement.
     """
     frappe.only_for(STAFF_ROLES)
+    limit = min(max(int(limit or 50), 1), 200)
+    offset = max(int(offset or 0), 0)
+
     filters = {"anonymized": ("!=", 1)}
     if programme:
         filters["programme_code"] = programme
@@ -902,40 +944,49 @@ def list_dossiers(q=None, programme=None, session=None, statuts=None, limit=200)
     if statuts:
         statuts = json.loads(statuts) if isinstance(statuts, str) else statuts
         filters["status"] = ["in", statuts]
-    rows = frappe.get_list(
-        "Admission Applicant",
-        filters=filters,
-        fields=[
-            "name", "applicant_name", "programme_code", "programme_label", "level_code",
-            "session", "person_id", "status", "conditionnel", "bac_verified", "resoumis",
-            "email", "phone", "date_of_birth",
-            "requested_scholarships", "proposed_scholarships", "validated_scholarships",
-            "notes_concours", "notes_validated", "rang_liste_attente", "creation", "modified",
-        ],
-        order_by="modified desc",
-        limit_page_length=min(int(limit or 200), 500),
-    )
-    if q:
-        def _search_text(value):
-            value = unicodedata.normalize("NFD", str(value or "").casefold())
-            return "".join(char for char in value if not unicodedata.combining(char))
+    # PERF-1 DEC-A/C : recherche DB (LIKE) sur les 4 champs — au-delà de la page, sans post-limit.
+    or_filters = None
+    ql = (q or "").strip()
+    if ql:
+        like = "%" + ql + "%"
+        or_filters = [["applicant_name", "like", like], ["name", "like", like],
+                      ["email", "like", like], ["phone", "like", like]]
 
-        ql = _search_text(q).strip()
-        rows = [r for r in rows if any(ql in _search_text(value) for value in (
-            r.applicant_name, r.name, getattr(r, "email", None), getattr(r, "phone", None),
-        ))]
+    order_by = _LIST_ORDER.get(order, "modified desc")
+    offline = _offline_pending_names()
+    prepa = {s: True for s in _prepa_session_names()}
+    queue_source = None
+
+    if queue in _QUEUE_PREDICATES:
+        # File enrichie : pré-borner (DB) puis filtrer Python (logique exacte) — jeux courts.
+        if queue in ("notes_absentes", "notes_saisies") and "session" not in filters:
+            filters["session"] = ["in", list(prepa.keys()) or [""]]
+        if queue == "paiement_a_confirmer":
+            filters["name"] = ["in", list(offline) or [""]]
+        base = frappe.get_list("Admission Applicant", filters=filters, or_filters=or_filters,
+                               fields=_LIST_FIELDS, order_by=order_by, limit_page_length=0)
+        ctx = {"offline": offline, "prepa": prepa}
+        matched = [r for r in base if _QUEUE_PREDICATES[queue](r, ctx)]
+        total = len(matched)
+        rows = matched[offset:offset + limit]
+        queue_source = matched
+    else:
+        all_names = frappe.get_list("Admission Applicant", filters=filters, or_filters=or_filters,
+                                    pluck="name", order_by=order_by, limit_page_length=0)
+        total = len(all_names)
+        page_names = all_names[offset:offset + limit]
+        rows = frappe.get_list("Admission Applicant", filters={"name": ["in", page_names or [""]]},
+                               fields=_LIST_FIELDS, order_by=order_by,
+                               limit_page_length=(len(page_names) or 1)) if page_names else []
 
     names = [r.name for r in rows]
-    fees_by_app, pending_offline, missing_pieces = {}, set(), {}
+    # `offline` (déjà chargé) sert d'indicateur paiement de la page — pas de re-requête.
+    pending_offline = offline
+    fees_by_app, missing_pieces = {}, {}
     if names:
         for f in frappe.get_all("Applicant Fee", filters={"applicant": ["in", names]},
                                 fields=["applicant", "fee_type", "status"]):
             fees_by_app.setdefault(f.applicant, {})[f.fee_type] = f.status
-        for p in frappe.get_all("Applicant Fee Payment",
-                                filters={"applicant": ["in", names], "payment_status": "Pending",
-                                         "payment_mode": ["in", ["Cash", "Bank"]]},
-                                fields=["applicant"]):
-            pending_offline.add(p.applicant)
         for pc in frappe.get_all("Applicant Piece",
                                  filters={"parent": ["in", names], "status": ["not in", PIECES_FOURNIE_STATUSES], "required": 1},
                                  fields=["parent"]):
@@ -995,7 +1046,61 @@ def list_dossiers(q=None, programme=None, session=None, statuts=None, limit=200)
         "soumis_le": str(r.creation),
         "modifie_le": str(r.modified),
     } for r in rows]
-    return _ok({"dossiers": dossiers, "total": len(dossiers), "limite": min(int(limit or 200), 500)})
+
+    # PERF-1 (DEC-C) — facets des dropdowns : distinct sur le JEU FILTRÉ PAR LA RECHERCHE (+ preset
+    # si file active), jamais sur toute la base ni sur la seule page. Le dropdown reste peuplé.
+    if queue_source is not None:
+        facet_rows = queue_source
+    else:
+        facet_rows = frappe.get_list("Admission Applicant", filters={"anonymized": ("!=", 1)},
+                                     or_filters=or_filters,
+                                     fields=["programme_code", "programme_label", "session", "status"],
+                                     limit_page_length=0)
+    _progs, _sess, _stats = {}, set(), set()
+    for fr in facet_rows:
+        _pc = getattr(fr, "programme_code", None)
+        if _pc:
+            _progs[_pc] = getattr(fr, "programme_label", None) or _pc
+        if getattr(fr, "session", None):
+            _sess.add(fr.session)
+        if getattr(fr, "status", None):
+            _stats.add(fr.status)
+    facets = {
+        "programmes": [{"code": c, "label": l} for c, l in sorted(_progs.items(), key=lambda kv: (kv[1] or ""))],
+        "sessions": sorted(_sess),
+        "statuts": sorted(_stats),
+    }
+
+    # PERF-1 (DEC-C) — compteurs des badges de preset, GLOBAUX (files de travail), cloisonnement
+    # respecté (get_list). by_status via GROUP BY ; 3 files enrichies via la logique exacte.
+    counts_by_status = {getattr(row, "status", None): getattr(row, "cnt", 0) for row in frappe.get_list(
+        "Admission Applicant", filters={"anonymized": ("!=", 1)},
+        fields=["status", "count(name) as cnt"], group_by="status")}
+    counts_by_status.pop(None, None)
+    # Chaque compteur de file reflète EXACTEMENT le preset front correspondant (statut compris) —
+    # sinon le badge mentirait (notes = ETU only ; bourse = ETU/ATT ; sop/notesv = tous statuts).
+    prepa_names = list(prepa.keys())
+    _notes_rows = frappe.get_list(
+        "Admission Applicant", filters={"anonymized": ("!=", 1), "session": ["in", prepa_names or [""]]},
+        fields=["status", "notes_concours", "notes_validated"], limit_page_length=0) if prepa_names else []
+    _bourse_rows = frappe.get_list(
+        "Admission Applicant", filters={"anonymized": ("!=", 1), "status": ["in", ["ETU", "ATT"]]},
+        fields=["requested_scholarships", "proposed_scholarships", "validated_scholarships"], limit_page_length=0)
+    _pay_count = len(frappe.get_list(
+        "Admission Applicant", filters={"anonymized": ("!=", 1), "name": ["in", list(offline) or [""]]},
+        pluck="name", limit_page_length=0)) if offline else 0
+    counts = {
+        "by_status": counts_by_status,
+        "queues": {
+            "paiement_a_confirmer": _pay_count,                                          # admin sop (tous statuts)
+            "notes_absentes": sum(1 for r in _notes_rows if r.status == "ETU" and _notes_state(r) == "absentes"),  # admin notes (ETU)
+            "notes_saisies": sum(1 for r in _notes_rows if _notes_state(r) == "saisies"),  # resp notesv (tous statuts prepa)
+            "bourse_demandee": sum(1 for r in _bourse_rows if _bourse_state(r) == "demandee"),  # resp bourse (ETU/ATT)
+        },
+    }
+
+    return _ok({"dossiers": dossiers, "total": total, "limit": limit, "offset": offset,
+                "facets": facets, "counts": counts})
 
 
 def _staff_convocation_available(applicant, session_doc):

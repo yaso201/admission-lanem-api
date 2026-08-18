@@ -242,10 +242,11 @@ class TestListExposeResoumis(TestCase):
     @patch(f"{STAFF}.frappe")
     def test_r11_list_dossiers_expose_resoumis(self, mf):
         mf.get_list.return_value = []
-        from admission.api.staff import list_dossiers
+        from admission.api.staff import list_dossiers, _LIST_FIELDS
         list_dossiers()
-        fields = mf.get_list.call_args.kwargs.get("fields", [])
-        self.assertIn("resoumis", fields)
+        # PERF-1 : la requête de la PAGE lit _LIST_FIELDS (source unique des champs) ; `resoumis` y
+        # figure → exposé dans la sortie shaped (couvert par R11bis).
+        self.assertIn("resoumis", _LIST_FIELDS)
 
     def _row(self, resoumis):
         return SimpleNamespace(
