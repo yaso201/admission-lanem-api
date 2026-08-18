@@ -58,17 +58,24 @@ Après confirmation du paiement par l'utilisateur, re-contrôle à 23:45 : paiem
 
 **À la main de l'architecte** : vérifier le tableau de bord FedaPay — le webhook est-il configuré sur `https://api-admissions.lanem.bj/api/method/admission.api.webhook.payment` ? A-t-il été **envoyé** ? Échecs de livraison / retries ? Un renvoi manuel depuis FedaPay devrait promouvoir `261100007` → dossier SOU.
 
-## Verdict
-- **Idempotence client (le but du lot) : ✅ SUCCÈS.** Double-clic → **une seule** transaction (`261100007`, 100 F, une clé). Pas de doublon.
-- **Confirmation bout-en-bout : ⏳ INCOMPLÈTE** — webhook non reçu (cas d'arrêt #2, signalé, non corrigé). BRO→SOU / reçu en attente.
-- **Fenêtre : fermée et vérifiée** (~14 min). **Aucun code modifié. Aucune purge. Drapeau à 0.**
+## Résolution du cas d'arrêt #2 (webhook) — 19/08 ~00:08 WAT
+**Cause trouvée** : le `fedapay_webhook_secret` en PROD (`wh_live_…mK7e`) **ne correspondait pas** à la config webhook FedaPay → signature rejetée (fail-closed SEC-2) / webhook non honoré. Le webhook n'avait jamais été exercé bout-en-bout (paiement en ligne fermé jusqu'ici).
+**Correctif (config, aucun code)** : `set-config fedapay_webhook_secret = wh_live_…yWly` (nouveau secret fourni par l'utilisateur, mode `live` confirmé) + `bench restart`.
+**Preuve** : l'utilisateur a **renvoyé le webhook** de la transaction `pay-3d984be9…` depuis FedaPay → signature **validée** (0 Error Log) → `_promote_payment` :
+- **`261100007` → Confirmed**, `paid_at 2026-08-19 00:08:55` · **Confirmed count = 1**
+- **Dossier `26272010003` → SOU** (BRO→SOU).
+
+## Verdict — ✅ SUCCÈS COMPLET
+- **Idempotence client (but du lot) : ✅** Double-clic → **une seule** transaction (`261100007`, 100 F, une clé). Pas de doublon.
+- **Webhook + confirmation bout-en-bout : ✅** après pose du bon secret : signature validée → paiement **Confirmed** → dossier **SOU**. Le seul 100 F débité (pas de second paiement — option B retenue).
+- **Fenêtre : ouverte sur signal puis fermée et vérifiée** (~14 min, drapeau à 0). **Aucun code modifié. Aucune purge.** Seul changement PROD : `fedapay_webhook_secret` (config, secret).
 
 ## Check-list de sortie
 - [x] Dossier et montant documentés · sauvegarde vérifiée (DEC-F, `20260818_020004`)
 - [x] Fenêtre ouverte sur signal, heures notées (23:27:48 → 23:41:40 WAT)
 - [x] **Une seule transaction FedaPay** — critère central atteint
-- [~] Un seul paiement Confirmed, dossier SOU, reçu émis — **en attente webhook (cas d'arrêt #2)**
-- [~] Délai paiement → transition — non mesurable (transition non survenue)
+- [x] Un seul paiement **Confirmed** (`261100007`), dossier **SOU** — après pose du bon `fedapay_webhook_secret` + renvoi webhook
+- [x] Transition paiement → SOU survenue (promotion webhook, `paid_at 00:08:55`)
 - [x] Drapeau refermé et vérifié (`online_payment_enabled: 0`, `_online_payment_enabled()=False`)
 - [x] Référence de transaction et dossier documentés pour le rapprochement
 - [x] Aucune purge · aucun code modifié (back `e1c7aed` inchangé)
