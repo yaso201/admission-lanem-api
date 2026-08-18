@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import frappe
 
-from admission.api.calendar_rules import field_policies
+from admission.api.calendar_rules import field_policies, deletion_verdict
 from admission.api.permissions import roles_at_or_above
 from admission.api.public import _ok, _error
 from admission.api.sessions import _state, session_display_status
@@ -80,7 +80,9 @@ def _serialize(doc, with_counts=True):
     row["pending"] = _pending_rows(doc)
     row["applicant_count"] = _applicant_count(doc.name) if with_counts else None
     row["convocation_count"] = _convocation_count(doc.name) if with_counts else None
-    row["can_delete"] = row["lifecycle_state"] == "Draft" and not row["applicant_count"]
+    # CAL-DEL (D6) — même verdict GK9 que le garde serveur : le bouton n'apparaît jamais pour une
+    # suppression que le serveur rejetterait (état + dossiers + frais + transferts + proposition).
+    row["can_delete"] = deletion_verdict(doc)["deletable"]
     return row
 
 

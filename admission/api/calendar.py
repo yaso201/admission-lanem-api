@@ -15,7 +15,7 @@ import re
 import frappe
 from frappe.utils import add_days, cint, getdate
 
-from admission.api.calendar_rules import is_machine_defaulted_time
+from admission.api.calendar_rules import is_machine_defaulted_time, deletion_verdict
 from admission.api.permissions import roles_at_or_above
 from admission.api.public import _ok, _error
 from admission.api.sessions import set_lifecycle, _state, session_display_status, log_session_change
@@ -167,16 +167,32 @@ def _create_duplicates(session_names, shift_days, academic_year, code_overrides=
 
 
 def _delete_draft(name):
-    """Filet en cas d'erreur (§3 #3) : supprime une session EN BROUILLON. Refuse tout autre état
-    (rien de publié ne se supprime). Ceinture : refuse s'il existe des dossiers rattachés."""
+    """CAL-DEL — supprime une session SANS ENGAGEMENT (Draft OU Open ; jamais Closed). L'éligibilité
+    (état + zéro rattachement) et le rôle requis viennent du verdict GK9 unique
+    (calendar_rules.deletion_verdict) — même source que le `can_delete` du front, donc pas de bouton
+    qui échoue au serveur (NT-UX).
+
+    Ordre de suppression (V-LEARN-PURGE-14 : le standalone ne cascade pas) :
+      1. journaliser l'acte 'suppression' — trace Data qui SURVIT à l'objet (DEC-E/DEC-P), avec le
+         code ET le libellé pour qu'un lecteur futur comprenne les lignes devenues sans session ;
+      2. retirer explicitement les rappels (satellite système, orphelin sinon) ;
+      3. delete_doc avec l'intégrité des liens ACTIVE (D1) — refuse tout Link engageant manqué
+         (LinkExistsError), jamais d'orphelin ni de cascade destructrice.
+    Une seule transaction, un seul commit."""
     if not frappe.db.exists("Admission Session", name):
         frappe.throw("Session inconnue.", title="Suppression impossible")
-    state = frappe.db.get_value("Admission Session", name, "lifecycle_state") or (
-        "Open" if frappe.db.get_value("Admission Session", name, "is_open") else "Closed")
-    if state != "Draft":
-        frappe.throw("Seule une session en brouillon peut être supprimée.", title="Suppression refusée")
-    if frappe.db.exists("Admission Applicant", {"session": name}):
-        frappe.throw("Des dossiers sont rattachés à cette session.", title="Suppression refusée")
+    verdict = deletion_verdict(name)
+    if verdict["required_role"] is None:      # état non éligible (Closed) — refus avant tout rôle
+        frappe.throw(verdict["reason"], title="Suppression refusée")
+    # DEC-A : le rôle requis dépend de l'état (Open → Direction, Draft → Responsable inchangé).
+    frappe.only_for(DIR_UP if verdict["required_role"] == "DIR" else RESP_UP)
+    if not verdict["deletable"]:              # un objet engageant est rattaché — motif exact
+        frappe.throw(verdict["reason"], title="Suppression refusée")
+
+    label, state = frappe.db.get_value("Admission Session", name, ["label", "lifecycle_state"])
+    state = state or verdict["state"]
+    log_session_change(name, "session", f"{label or name} · état {state}", "(supprimée)", "suppression")
+    frappe.db.delete("Admission Session Reminder", {"session": name})
     frappe.delete_doc("Admission Session", name, ignore_permissions=True)
     frappe.db.commit()
     return {"deleted": name}
@@ -235,7 +251,10 @@ def _session_guard(session):
 
 @frappe.whitelist(methods=["POST"])
 def delete_draft(session=None):
-    """Supprime une session en brouillon (le filet, §3 #3)."""
+    """CAL-DEL — supprime une session SANS ENGAGEMENT (brouillon OU publiée à 0 rattachement). Garde
+    grossière ici (Responsable+ pour atteindre l'endpoint) ; la garde fine par état (Open → Direction)
+    et l'éligibilité complète vivent dans `_delete_draft` via le verdict GK9. Nom conservé pour la
+    compat du front (`API.calendarDeleteDraft`) — le périmètre, lui, s'est élargi."""
     frappe.only_for(RESP_UP)
     err = _session_guard(session)
     if err:

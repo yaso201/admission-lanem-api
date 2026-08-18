@@ -238,3 +238,56 @@ def field_policies(session):
             "reason": probe["reason"],
         }
     return out
+
+
+# ── CAL-DEL (GK9) — verdict de suppressibilité d'une session ──────────────────
+# Source UNIQUE consommée à la fois par le garde serveur (calendar._delete_draft) ET le drapeau
+# `can_delete` du front (calendar_view._serialize) : zéro divergence entre le bouton et le serveur
+# (le défaut « actif puis rejeté » éradiqué depuis NT-UX).
+_DELETABLE_STATES = ("Draft", "Open")
+
+
+def deletion_verdict(session):
+    """Une session est supprimable si (a) son état l'autorise — `Draft` ou `Open`, jamais `Closed`
+    (l'historique ne se supprime pas, DEC-C) — ET (b) RIEN d'engageant ne lui est rattaché (DEC-B/D).
+
+    Les rattachements par Link (dossier, frais, transfert) bloqueraient de toute façon `delete_doc`
+    (`LinkExistsError`, filet structurel D1) : on les NOMME ici pour rendre le motif exact plutôt
+    qu'une erreur technique. La proposition en attente (table enfant) est bloquante par politique
+    (DEC-D). Les satellites Data (journal, rappels) ne sont PAS des engagements : ils sont traités
+    au moment de la suppression (journal survit, rappels supprimés), pas ici.
+
+    Le rôle requis dépend de l'état (DEC-A) : `Open` → Direction, `Draft` → Responsable (inchangé).
+    `session` = nom (str) OU doc portant `name`/`lifecycle_state`.
+    Retour : {deletable: bool, reason: str|None, required_role: 'DIR'|'RESP'|None, state: str}.
+    """
+    if isinstance(session, str):
+        name = session
+        state = frappe.db.get_value("Admission Session", name, "lifecycle_state") or (
+            "Open" if frappe.db.get_value("Admission Session", name, "is_open") else "Closed")
+    else:
+        name = session.name
+        state = _state_of(session)
+
+    if state not in _DELETABLE_STATES:
+        return {"deletable": False, "state": state, "required_role": None,
+                "reason": "Une session fermée appartient à l'historique : elle ne peut être supprimée."}
+
+    required_role = "DIR" if state == "Open" else "RESP"
+
+    # Rattachements engageants — ordre stable, un seul motif exact (le plus parlant d'abord).
+    if frappe.db.exists("Admission Applicant", {"session": name}):
+        reason = "Des dossiers sont rattachés à cette session."
+    elif frappe.db.exists("Applicant Fee", {"session": name}):
+        reason = "Des frais sont rattachés à cette session."
+    elif (frappe.db.exists("Admission Applicant Transfer Log", {"from_session": name})
+          or frappe.db.exists("Admission Applicant Transfer Log", {"to_session": name})):
+        reason = "Cette session est référencée par un transfert de candidat."
+    elif frappe.db.exists("Admission Session Pending Change",
+                          {"parent": name, "parenttype": "Admission Session"}):
+        reason = "Une proposition de changement est en attente sur cette session."
+    else:
+        reason = None
+
+    return {"deletable": reason is None, "state": state,
+            "required_role": required_role, "reason": reason}

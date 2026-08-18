@@ -44,7 +44,7 @@
    "fieldname": "action_type",
    "fieldtype": "Select",
    "in_standard_filter": 1,
-   "options": "proposition\nvalidation\nrejet\nouverture\nduplication\nauto-fermeture\nmodification",
+   "options": "proposition\nvalidation\nrejet\nouverture\nduplication\nauto-fermeture\nmodification\nsuppression",
    "label": "Type d'acte",
    "in_list_view": 1
   },

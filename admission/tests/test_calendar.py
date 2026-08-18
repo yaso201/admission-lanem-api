@@ -32,6 +32,14 @@ def _purge():
     # V-LEARN-PURGE-14 : db.delete du parent NE cascade PAS la table enfant → purger explicitement
     # les lignes pending_changes (sinon orphelins → pending_queue tombe).
     frappe.db.delete("Admission Session Pending Change", {"parent": ["like", f"{_MARK}%"]})
+    # CAL-DEL : satellites/rattachements référençant une session ZZCAL par nom (transferts, rappels,
+    # journal 'suppression' qui SURVIT) — nettoyés avant les sessions pour ne rien laisser traîner.
+    _names = frappe.get_all("Admission Session", filters={"session_code": ["like", f"{_MARK}%"]}, pluck="name")
+    if _names:
+        frappe.db.delete("Admission Applicant Transfer Log", {"from_session": ["in", _names]})
+        frappe.db.delete("Admission Applicant Transfer Log", {"to_session": ["in", _names]})
+        frappe.db.delete("Admission Session Reminder", {"session": ["in", _names]})
+    frappe.db.delete("Admission Session Change Log", {"session": ["like", f"{_MARK}%"]})
     frappe.db.delete("Admission Session", {"session_code": ["like", f"{_MARK}%"]})
     frappe.db.commit()
 
@@ -316,8 +324,11 @@ class TestCalendarDuplication(FrappeTestCase):
         new_name = _create_duplicates([self.src.name], 364, None)["created"][0]
         _delete_draft(new_name)   # brouillon → supprimé
         self.assertFalse(frappe.db.exists("Admission Session", new_name))
-        with self.assertRaises(frappe.ValidationError):   # source Open → refus
-            _delete_draft(self.src.name)
+        # CAL-DEL : la source Open SANS engagement est désormais supprimable (Direction) — l'ancien
+        # refus « publié = intouchable » ne tient plus. Le refus par engagement/rôle/état (Closed,
+        # dossier, transfert, frais, proposition) est couvert exhaustivement par TestSessionDeletion.
+        _delete_draft(self.src.name)
+        self.assertFalse(frappe.db.exists("Admission Session", self.src.name))
 
     # ── GK1 #2 : collision d'identifiant signalée dans l'aperçu ──────────────────
     def test_code_collision_flagged(self):
@@ -687,7 +698,7 @@ class TestCalendarView(FrappeTestCase):
         self.assertTrue(d["can_delete"])                        # brouillon sans dossier
         self.assertFalse(d["policies"]["opens_on"]["editable"] is None)
         o = session_detail(self.open.name)["data"]
-        self.assertFalse(o["can_delete"])                       # Open → non supprimable
+        self.assertTrue(o["can_delete"])                        # CAL-DEL : Open SANS engagement → supprimable (Direction)
 
     def test_pending_queue_lists_proposals(self):
         from admission.api.calendar import _propose_changes
@@ -860,3 +871,171 @@ class TestSessionGuardCAL14(FrappeTestCase):
             _session_guard("1")
             self.assertEqual(mlog.return_value.error.call_count, 2)
             mlog.return_value.warning.assert_not_called()
+
+
+class TestSessionDeletion(FrappeTestCase):
+    """CAL-DEL — suppression d'une session SANS ENGAGEMENT (Draft OU Open), refus motivé sinon,
+    rôle par état (Open→Direction), journal 'suppression' qui SURVIT à l'objet, rappels nettoyés.
+    Verdict GK9 unique (calendar_rules.deletion_verdict) partagé par le garde ET le can_delete front.
+    """
+
+    def setUp(self):
+        _purge()
+
+    def tearDown(self):
+        frappe.db.rollback()
+        _purge()
+
+    def _session(self, code, state="Open", **kw):
+        base = {"doctype": "Admission Session", "session_code": f"{_MARK}-{code}",
+                "label": f"Session {code}", "programme_code": "PREPA", "programme_label": "Cycle test",
+                "academic_year": "2027-2028", "opens_on": "2027-06-01",
+                "closes_on": "2027-08-25", "bac_results_date": "2028-01-15",
+                "application_fee_xof": 10000, "lifecycle_state": state}
+        base.update(kw)
+        s = frappe.get_doc(base).insert(ignore_permissions=True, ignore_mandatory=True)
+        frappe.db.commit()
+        return s
+
+    def _applicant(self, session_name, status="BRO"):
+        a = frappe.get_doc({"doctype": "Admission Applicant", "applicant_name": f"{_MARK} Cand",
+                            "programme_code": "PREPA", "session": session_name}
+                           ).insert(ignore_permissions=True, ignore_mandatory=True)
+        frappe.db.set_value("Admission Applicant", a.name, {"status": status}, update_modified=False)
+        return a
+
+    def _fee(self, applicant_name, session_name):
+        return frappe.get_doc({"doctype": "Applicant Fee", "applicant": applicant_name,
+                              "session": session_name, "fee_type": "application",
+                              "amount_xof": 10000, "status": "Pending"}
+                             ).insert(ignore_permissions=True, ignore_mandatory=True)
+
+    def _transfer(self, applicant_name, from_session, to_session):
+        return frappe.get_doc({"doctype": "Admission Applicant Transfer Log",
+                              "applicant": applicant_name, "transfer_type": "voluntary",
+                              "from_session": from_session, "to_session": to_session,
+                              "status_before": "SOU", "status_after": "SOU",
+                              "transferred_at": now_datetime(), "actor": "Administrator"}
+                             ).insert(ignore_permissions=True, ignore_mandatory=True)
+
+    # ── #1 : Open à 0 dossier → supprimable (le cas réel qui motive le lot) ──────
+    def test_open_empty_is_deletable(self):
+        from admission.api.calendar_rules import deletion_verdict
+        from admission.api.calendar import _delete_draft
+        s = self._session("EMPTY", "Open")
+        v = deletion_verdict(s.name)
+        self.assertTrue(v["deletable"])
+        self.assertEqual(v["required_role"], "DIR")
+        _delete_draft(s.name)
+        self.assertFalse(frappe.db.exists("Admission Session", s.name))
+
+    # ── #2 : Open avec dossier (même BRO) → refus + can_delete faux ──────────────
+    def test_open_with_dossier_blocked(self):
+        from admission.api.calendar_rules import deletion_verdict
+        from admission.api.calendar import _delete_draft
+        s = self._session("DOSS", "Open")
+        self._applicant(s.name, status="BRO")
+        v = deletion_verdict(s.name)
+        self.assertFalse(v["deletable"])
+        self.assertIn("dossiers", v["reason"])
+        with self.assertRaises(frappe.ValidationError):
+            _delete_draft(s.name)
+        self.assertTrue(frappe.db.exists("Admission Session", s.name))
+
+    # ── #6 : Open à 0 dossier MAIS transfert (from ET to) → refus motivé — piège DEC-D ──
+    def test_open_with_transfer_blocked_both_directions(self):
+        from admission.api.calendar_rules import deletion_verdict
+        s_from = self._session("TFROM", "Open")     # 0 dossier — un candidat en est PARTI
+        s_to = self._session("TTO", "Open")         # 0 dossier — référencée comme destination
+        s_home = self._session("THOME", "Open")
+        app = self._applicant(s_home.name)          # le dossier vit ailleurs
+        self._transfer(app.name, s_from.name, s_to.name)
+        self.assertFalse(frappe.db.exists("Admission Applicant", {"session": s_from.name}))
+        self.assertFalse(frappe.db.exists("Admission Applicant", {"session": s_to.name}))
+        self.assertIn("transfert", deletion_verdict(s_from.name)["reason"])   # from_session
+        self.assertIn("transfert", deletion_verdict(s_to.name)["reason"])     # to_session (symétrie)
+
+    # ── frais orphelins pointant la session sans dossier (précision architecte) ──
+    def test_open_with_fee_blocked(self):
+        from admission.api.calendar_rules import deletion_verdict
+        s = self._session("FEE", "Open")
+        s_other = self._session("FEEO", "Open")
+        app = self._applicant(s_other.name)         # dossier ailleurs
+        self._fee(app.name, s.name)                 # frais pointant s, aucun dossier sur s
+        self.assertFalse(frappe.db.exists("Admission Applicant", {"session": s.name}))
+        self.assertIn("frais", deletion_verdict(s.name)["reason"])
+
+    # ── proposition maker-checker en attente → bloque ───────────────────────────
+    def test_open_with_pending_change_blocked(self):
+        from admission.api.calendar_rules import deletion_verdict
+        from admission.api.calendar import _propose_changes
+        s = self._session("PEND", "Open")
+        _propose_changes(s.name, {"closes_on": "2027-10-01"})   # prolonger (postérieur à closes_on)
+        self.assertIn("proposition", deletion_verdict(s.name)["reason"])
+
+    # ── #3 : Closed → jamais supprimable (historique) ───────────────────────────
+    def test_closed_not_deletable(self):
+        from admission.api.calendar_rules import deletion_verdict
+        from admission.api.calendar import _delete_draft
+        s = self._session("CLOS", "Closed")
+        v = deletion_verdict(s.name)
+        self.assertFalse(v["deletable"])
+        self.assertIsNone(v["required_role"])
+        self.assertIn("historique", v["reason"])
+        with self.assertRaises(frappe.ValidationError):
+            _delete_draft(s.name)
+
+    # ── #4 : Draft → inchangé, Responsable+ ─────────────────────────────────────
+    def test_draft_deletable_resp(self):
+        from admission.api.calendar_rules import deletion_verdict
+        s = self._session("DRA", "Draft")
+        v = deletion_verdict(s.name)
+        self.assertTrue(v["deletable"])
+        self.assertEqual(v["required_role"], "RESP")
+
+    # ── #5 : rôle par état — Open→DIR_UP, Draft→RESP_UP (routage de la garde) ────
+    def test_role_gate_by_state(self):
+        from admission.api import calendar as cal
+        s_open = self._session("ROPEN", "Open")
+        s_draft = self._session("RDRA", "Draft")
+        with patch.object(cal.frappe, "only_for") as mo:
+            cal._delete_draft(s_open.name)
+            mo.assert_called_with(cal.DIR_UP)       # Open → Direction (Responsable refusé)
+        with patch.object(cal.frappe, "only_for") as mo:
+            cal._delete_draft(s_draft.name)
+            mo.assert_called_with(cal.RESP_UP)      # Draft → Responsable (inchangé)
+
+    # ── #7 : la suppression laisse une ligne de journal qui SURVIT à l'objet ─────
+    def test_deletion_journals_surviving_line(self):
+        from admission.api.calendar import _delete_draft
+        s = self._session("JOUR", "Open", label="Prépa Octobre")
+        name = s.name
+        _delete_draft(name)
+        logs = frappe.get_all("Admission Session Change Log",
+                              filters={"session": name, "action_type": "suppression"},
+                              fields=["session", "old_value", "author", "at"])
+        self.assertEqual(len(logs), 1)
+        self.assertIn("Prépa Octobre", logs[0]["old_value"])      # libellé dans la trace
+        self.assertTrue(logs[0]["author"] and logs[0]["at"])
+        self.assertFalse(frappe.db.exists("Admission Session", name))  # objet parti, trace restée
+
+    # ── #8 : aucun orphelin — rappels (satellite Data) nettoyés à la suppression ─
+    def test_deletion_leaves_no_orphan(self):
+        from admission.api.calendar import _delete_draft
+        s = self._session("ORPH", "Open")
+        frappe.get_doc({"doctype": "Admission Session Reminder", "session": s.name,
+                        "jalon": "cloture_j7"}).insert(ignore_permissions=True, ignore_mandatory=True)
+        frappe.db.commit()
+        self.assertTrue(frappe.db.exists("Admission Session Reminder", {"session": s.name}))
+        _delete_draft(s.name)
+        self.assertFalse(frappe.db.exists("Admission Session Reminder", {"session": s.name}))
+        self.assertFalse(frappe.db.exists("Admission Session", s.name))
+
+    # ── #9 : can_delete reflète le prédicat complet (état + engagements) ─────────
+    def test_can_delete_reflects_predicate(self):
+        from admission.api.calendar_view import session_detail
+        s_ok = self._session("CDOK", "Open")
+        s_ko = self._session("CDKO", "Open")
+        self._applicant(s_ko.name)
+        self.assertTrue(session_detail(s_ok.name)["data"]["can_delete"])
+        self.assertFalse(session_detail(s_ko.name)["data"]["can_delete"])
