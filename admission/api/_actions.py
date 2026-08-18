@@ -31,6 +31,10 @@ _PAYMENT_STATES_BY_FEE_TYPE = {
 _PAYMENT_MANAGE_STATES = frozenset(
     state for states in _PAYMENT_STATES_BY_FEE_TYPE.values() for state in states
 )
+# NT-UX-2 — états depuis lesquels CONFIRMER un paiement déclenche une transition workflow
+# (apply_confirmed_payment_cascade : BRO/SOP → SOU), déclarée pour l'Administratif SEUL. Ailleurs
+# (frais 2 à ACC) la confirmation ne transitionne pas → aucun rejet workflow, comportement inchangé.
+_CONFIRM_TRANSITION_STATES = frozenset({"BRO", "SOP"})
 
 
 def _has_requested(applicant):
@@ -208,6 +212,18 @@ def blocked_actions(applicant, roles, *, is_prepa, ctx=None):
             continue                                   # condition satisfaite → bloquée pour un autre motif (rôle) → pas ici
         out.append({"action": key, "actor": meta["actor"],
                     "code": meta["code"], "reason": meta["reason"]})
+
+    # NT-UX-2 — condition de RÔLE-WORKFLOW (pas une condition d'état franchissable). Depuis BRO/SOP,
+    # confirmer un paiement déclenche la transition workflow « Confirm (Online) Payment » → SOU,
+    # déclarée pour l'Administratif SEUL (create_admission_workflow.py). Le chemin staff confirme via
+    # applicant.save → validate_workflow → un rôle non-Administratif est rejeté APRÈS saisie
+    # (« actif puis rejeté »). On MIROITE ce rôle-workflow — exactement comme _ACTION_RULES miroite
+    # les rôles maker/checker EXACT — et on l'expose grisé + acteur, au même titre qu'une condition
+    # d'état. Non franchissable par le lecteur → toujours l'Administratif comme acteur. La pertinence
+    # (présence d'un paiement à confirmer) reste décidée par le front (ligne de paiement).
+    if applicant.status in _CONFIRM_TRANSITION_STATES and not _authorized(("Admission Administratif", _EXA), roles):
+        out.append({"action": "confirm_payment", "actor": "Administratif",
+                    "code": "RESERVED_TO_ADMINISTRATIF", "reason": "Réservé à l'Administratif"})
     return out
 
 
