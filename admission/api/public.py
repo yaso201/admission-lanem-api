@@ -2021,6 +2021,20 @@ def verify_recovery_otp(email=None, otp=None):
 	})
 
 
+# CONTRAT-2 B1 — clés que l'écran de reprise (`reprise.astro`, seul consommateur prouvé sur les 3
+# dépôts) lit réellement dans le dossier récupéré (A3 §2.1 #17). La vue reprise = projection de
+# `_serialize_dossier` sur ces clés (+ `reprenable` ajouté par l'appelant). Minimisation APDP :
+# aucune donnée personnelle non affichée ne transite par la récupération OTP.
+_RECOVERED_KEYS = ("dossier_id", "statut", "programme", "session", "identite", "pieces")
+
+
+def _serialize_recovered(applicant):
+    # Projection tolérante : `_serialize_dossier` réel porte toujours ces clés ; la tolérance couvre
+    # les tests qui le mockent partiellement (on ne sert que ce qui existe, jamais de clé fantôme).
+    full = _serialize_dossier(applicant)
+    return {k: full[k] for k in _RECOVERED_KEYS if k in full}
+
+
 @frappe.whitelist(allow_guest=True, methods=["GET"])
 def get_recovered_dossier(recovery_token=None, dossier_id=None):
 	"""Consultation seule : le jeton autorise uniquement les docnames mémorisés en Redis."""
@@ -2044,7 +2058,11 @@ def get_recovered_dossier(recovery_token=None, dossier_id=None):
 	if not frappe.db.exists("Admission Applicant", {"name": dossier_id, "anonymized": ("!=", 1)}):
 		return _error("INVALID_DOSSIER", "Dossier indisponible.", 404)
 	doc = frappe.get_doc("Admission Applicant", dossier_id)
-	data = _serialize_dossier(doc)
+	# CONTRAT-2 B1 (minimisation APDP, faille 19) : la reprise ne sert QUE ce que `reprise.astro`
+	# consomme (A3 §2.1 #17) — plus tout `_serialize_dossier`. Une récupération par OTP n'expose plus
+	# profil bac, bourses, promotion, paiements, convocation, motifs ni rang (invisibles à l'écran).
+	# Rendu inchangé (DEC-E) ; `get_dossier` (staff, plein) est intact.
+	data = _serialize_recovered(doc)
 	# Clé ADDITIVE (hors _serialize_dossier, partagé avec get_dossier) : le détail consulté
 	# porte la même règle DEC-332 que les résumés — le front reste un pur renderer.
 	data["reprenable"] = doc.status in CANDIDATE_EDITABLE_STATUSES

@@ -1,0 +1,16 @@
+{
+  "$id": "staff.institutional_transfer_preview",
+  "title": "Aperçu de transfert institutionnel en lot",
+  "x-source": "AUDIT-360-A3-CONTRATS §2.1 #19 ; CONTRAT-2 B2 : `dossiers[]` désormais CONSOMMÉ (nommé à l'aperçu)",
+  "x-level": "schéma + consumer (back-conformance différée : requiert un fixture transfert)",
+  "x-consumers": { "management": "calendrier-session.astro (aperçu transfert — eligible, capacity, dossiers)" },
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["eligible", "capacity", "dossiers"],
+  "properties": {
+    "eligible": { "type": "integer" },
+    "dossiers": { "type": "array", "items": { "type": "string" } },
+    "capacity": { "type": "object", "additionalProperties": true,
+      "required": ["after"], "properties": { "after": { "type": ["integer", "null"] } } }
+  }
+}

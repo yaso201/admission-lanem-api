@@ -1,0 +1,23 @@
+{
+  "$id": "public.get_recovered_dossier",
+  "title": "Dossier récupéré (vue REPRISE minimisée — B1)",
+  "x-source": "AUDIT-360-A3-CONTRATS §2.1 #17 ; CONTRAT-2 B1 : minimisation APDP de la sur-réponse",
+  "x-level": "back-conformance + minimisation (additionalProperties:false = preuve que les champs non consommés sont retirés)",
+  "x-consumers": { "applicant": "reprise.astro:276-318 (SEUL consommateur, prouvé 3 dépôts)" },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["dossier_id", "statut", "programme", "session", "identite", "pieces", "reprenable"],
+  "properties": {
+    "dossier_id": { "type": "string" },
+    "statut": { "type": "string" },
+    "reprenable": { "type": "boolean" },
+    "programme": { "type": "object", "additionalProperties": true, "required": ["code", "label"],
+      "properties": { "code": { "type": ["string", "null"] }, "label": { "type": ["string", "null"] } } },
+    "session": { "type": "object", "additionalProperties": true, "required": ["id", "label"],
+      "properties": { "id": { "type": ["string", "null"] }, "label": { "type": ["string", "null"] } } },
+    "identite": { "type": "object", "additionalProperties": true, "required": ["prenom", "nom", "email"],
+      "properties": { "prenom": { "type": ["string", "null"] }, "nom": { "type": ["string", "null"] }, "email": { "type": ["string", "null"] } } },
+    "pieces": { "type": "array", "items": { "type": "object", "additionalProperties": true,
+      "required": ["code", "statut"], "properties": { "code": { "type": "string" }, "statut": { "type": "string" } } } }
+  }
+}

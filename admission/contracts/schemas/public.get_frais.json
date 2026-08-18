@@ -1,0 +1,15 @@
+{
+  "$id": "public.get_frais",
+  "title": "Frais et simulation (candidat)",
+  "x-source": "AUDIT-360-A3-CONTRATS §2.1 #13 (CF/CT + I : devise, fee_type, textes_legaux non lus ici)",
+  "x-level": "back-conformance",
+  "x-consumers": { "applicant": "paiement.astro / admission-tunnel.js (simulation frais)" },
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["frais1", "online_payment_enabled"],
+  "properties": {
+    "frais1": { "type": "object", "additionalProperties": true, "required": ["montant_xof"],
+      "properties": { "montant_xof": { "type": ["integer", "number"] } } },
+    "online_payment_enabled": { "type": ["boolean", "integer"] }
+  }
+}

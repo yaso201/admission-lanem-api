@@ -1,0 +1,18 @@
+{
+  "$id": "staff.list_dossiers",
+  "title": "Liste des dossiers — pagination serveur (PERF-1 F15)",
+  "x-source": "AUDIT-360-A3-CONTRATS §2.1 #21 (différé CONTRAT-1) ; forme PERF-1 stable (CONTRAT-2 A3)",
+  "x-level": "back-conformance",
+  "x-consumers": { "management": "liste-dossiers.astro (fetchPage)" },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["dossiers", "total", "limit", "offset", "facets", "counts"],
+  "properties": {
+    "dossiers": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+    "total": { "type": "integer" },
+    "limit": { "type": "integer" },
+    "offset": { "type": "integer" },
+    "facets": { "type": "object", "additionalProperties": true },
+    "counts": { "type": "object", "additionalProperties": true }
+  }
+}
