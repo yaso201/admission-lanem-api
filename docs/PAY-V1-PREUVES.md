@@ -48,15 +48,30 @@ Version portée de **0.9.0 → 1.0.0** dans les **4 fichiers**, via `npm version
 | 2 | Moyens de paiement | mobile money éprouvé (checkout) ; liste exacte au retour utilisateur |
 | 3 | Aucun débit non voulu | l'utilisateur a validé volontairement (test complet) — pas de prompt agent |
 | 4 | Drapeau | **laissé levé sur décision explicite** (ouverture réelle), documenté |
-| 5 | Dossiers de simulation purgés | `26272010006` (A1) + `26271010018` (test) — voir trace ci-dessous |
+| 5 | Dossiers de simulation purgés | ✅ **exécuté** — `26272010006` + `26271010018` supprimés, base à **0 dossier** (21 sessions de campagne intactes) |
 | 6 | Version 1.0.0 cohérente (4 fichiers) + CHANGELOG | ✅ |
 | 7 | Builds propres · baseline **1189/0/0** · aucun changement de comportement | ✅ (voir builds + suite) |
 | 8 | Trois branches poussées, arrêt au push | `mandat/pay-v1` back + applicant + management |
 
-## Trace comptable (dossiers de simulation purgés)
-- `261100008` — **10 000 F**, réf `pay-89967fe7-847b-4a5a-92a6-e9b703181462`, dossier `26271010018`
-  (frais concours `AFF-2026-00030`), confirmé 2026-08-19 12:02:25 — **argent réel**, à rapprocher/rembourser.
-- `26272010006` (dossier A1, LIC-IS, frais `AFF-2026-00029` 25 000 Pending) — **jamais payé**, purgé.
+## Trace comptable — deux encaissements de test consignés
+Les deux dossiers de simulation ont été **purgés** (méthode NETTOYAGE-PREPROD : `frappe.db.delete` SQL
+direct, garde `on_trash` des consentements **contournée sans être modifiée** ; consentements de test,
+**aucune personne physique concernée**). La PROD est revenue à **0 dossier / 0 frais / 0 paiement /
+0 pièce / 0 consentement / 0 transition log**, **21 sessions de campagne intactes**.
+
+Détail des suppressions du dossier payé `26271010018` : 8 pièces (`vht61d53k5 … vhuv5ddohm`), frais
+`AFF-2026-00030`, paiement `261100008`, consentements `CONS-2026-00065/66/67`, transition log
+`14ceb95vc2`, puis le dossier. Le dossier A1 `26272010006` (LIC-IS, frais `AFF-2026-00029` 25 000
+Pending) était **impayé** — purgé sans consignation (aucun encaissement).
+
+**Deux paiements réels encaissés pendant les tests, détruits en base, consignés ici** pour rapprochement
+ou remboursement selon la politique interne (la trace vit côté FedaPay, indépendante du dossier) :
+
+| Transaction | Montant | Horodatage (WAT) | Dossier (purgé) | Frais | Origine |
+|---|---|---|---|---|---|
+| `261100007` (réf `pay-3d984be9-a645-4296-a9e6-8de4f8196028`) | **100 F** | 2026-08-19 00:08:55 | `26272010003` | `AFF-2026-00025` | PAY-TEST / NETTOYAGE-PREPROD |
+| `261100008` (réf `pay-89967fe7-847b-4a5a-92a6-e9b703181462`) | **10 000 F** | 2026-08-19 12:02:25 | `26271010018` | `AFF-2026-00030` | PAY-V1 (vérification du plafond) |
+| **Total** | **10 100 F** | — | — | — | **à rapprocher / rembourser** |
 
 ## Note
 Les tags `v1.0.0` sont posés par l'architecte après fusion et déploiement (comme `v0.9.0`/`v0.9.3`).
