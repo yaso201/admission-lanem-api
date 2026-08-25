@@ -526,12 +526,11 @@ class TestCapturePromoAtPayment(TestCase):
     @patch(f"{PUBLIC}._sync_pieces")
     @patch(f"{PUBLIC}._pieces_for_profile")
     @patch(f"{PUBLIC}._classify_bac_date")
-    @patch(f"{PUBLIC}._resolve_person_from_campus", return_value="PERS-001")
     @patch(f"{PUBLIC}._generate_token", return_value="tok")
     @patch(f"{PUBLIC}._session_doc")
     @patch(f"{PUBLIC}.frappe")
     def test_create_dossier_does_not_capture(
-        self, mock_frappe, mock_session, mock_token, mock_resolve,
+        self, mock_frappe, mock_session, mock_token,
         mock_classify, mock_pieces_for, mock_sync_pieces,
         mock_ensure, mock_capture,
     ):

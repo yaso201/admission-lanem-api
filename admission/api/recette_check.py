@@ -111,11 +111,13 @@ def _check_fedapay_webhook():
 
 
 def _check_local_person():
-    """Garde-fou : la résolution Person LOCALE (recette sans campus) ne doit jamais
-    atteindre la prod — le pont INS exige le vrai campus."""
+    """ADM-1 (DEC-AUTH-27) : la forge Person LOCALE `PERS-REC-*` a été RETIRÉE (retrait sec).
+    La résolution d'identité est désormais ASYNC POST-OTP (émetteur → registre campus).
+    Le flag `allow_local_person_resolution` est **inerte** (plus aucun code ne le lit pour
+    forger) ; s'il traîne encore en config, le signaler (WARN) pour nettoyage."""
     if frappe.conf.get("allow_local_person_resolution"):
-        return FAIL, "allow_local_person_resolution actif — Person LOCALE recette (PERS-REC-), à retirer + brancher le campus avant prod"
-    return PASS, "résolution Person déléguée au campus"
+        return WARN, "allow_local_person_resolution encore en config mais INERTE (forge PERS-REC- retirée, ADM-1) — à supprimer de site_config"
+    return PASS, "résolution Person async post-OTP via l'émetteur (forge locale retirée, ADM-1)"
 
 
 def _check_expose_dev_otp():

@@ -38,25 +38,9 @@ def _assert_no_pii(testcase, mock_log, *needles):
             testcase.assertNotIn(n, blob, f"PII/raw-result fuit dans un log_event: {n}")
 
 
-class TestPersonResolveNoPiiLeak(TestCase):
-    """🔴 _resolve_person_from_campus : no-person_id ne loggue PLUS le dict campus (PII pré-insert)."""
-
-    @patch(f"{PUBLIC}.log_event")
-    @patch(f"{PUBLIC}.requests.post")
-    @patch(f"{PUBLIC}._pii_transport_allowed", return_value=True)
-    @patch(f"{PUBLIC}._get_campus_config", return_value=CAMPUS_CFG)
-    @patch(f"{PUBLIC}.frappe")
-    def test_no_person_id_logs_event_without_result(self, mock_frappe, _cfg, _guard, mock_post, mock_log):
-        resp = MagicMock()
-        resp.json.return_value = {"ok": True, "data": {}, "email": "leak@x.com", "first_name": "LEAK"}
-        resp.raise_for_status.return_value = None
-        mock_post.return_value = resp
-        from admission.api.public import _resolve_person_from_campus
-        result = _resolve_person_from_campus("leak@x.com", "Jean", "K", "+229")
-        self.assertIsNone(result)
-        steps = [c for c in mock_log.call_args_list if c.args[:2] == ("person_resolve", "no_person_id")]
-        self.assertTrue(steps, "person_resolve/no_person_id doit être logué")
-        _assert_no_pii(self, mock_log, "leak@x.com", "LEAK")
+# TestPersonResolveNoPiiLeak RETIRÉ (ADM-1) : `_resolve_person_from_campus` supprimé.
+# L'invariant OBS-2 (aucune PII/dict campus dans les logs d'identité) est porté par
+# l'émetteur async et prouvé dans test_identity_emitter.py (no-PII sur log_event).
 
 
 class TestNotifyUfPaymentStructured(TestCase):

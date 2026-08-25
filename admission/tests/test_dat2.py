@@ -139,12 +139,6 @@ class TestGuardWiringBlocks(TestCase):
         self.assertIsNone(result)
         mock_post.assert_not_called()
 
-    @patch(f"{PUBLIC}._pii_transport_allowed", return_value=False)
-    @patch(f"{PUBLIC}._get_campus_config", return_value=CAMPUS_CFG)
-    @patch(f"{PUBLIC}.requests.post")
-    @patch(f"{PUBLIC}.frappe")
-    def test_resolve_person_blocked(self, mock_frappe, mock_post, _cfg, _guard):
-        from admission.api.public import _resolve_person_from_campus
-        result = _resolve_person_from_campus("a@b.com", "Jean", "K", "+22500000000")
-        self.assertIsNone(result)
-        mock_post.assert_not_called()
+    # test_resolve_person_blocked RETIRÉ (ADM-1) : `_resolve_person_from_campus` supprimé.
+    # L'invariant DAT-2 (garde transport PII AVANT POST) est désormais porté par l'émetteur
+    # async et prouvé dans test_identity_emitter.py (outcome `pii_transport_blocked`).

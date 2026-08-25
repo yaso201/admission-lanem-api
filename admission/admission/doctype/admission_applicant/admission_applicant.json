@@ -55,6 +55,10 @@
   "bridge_notified",
   "bridge_notified_at",
   "bridge_last_error",
+  "person_resolved",
+  "person_resolved_at",
+  "person_review_queued",
+  "identity_last_error",
   "consent_section",
   "consent_data_processing",
   "consent_data_processing_at",
@@ -379,6 +383,36 @@
    "fieldtype": "Small Text",
    "hidden": 1,
    "label": "Bridge Last Error",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "person_resolved",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Person Resolved (person_id backfilled)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "person_resolved_at",
+   "fieldtype": "Datetime",
+   "hidden": 1,
+   "label": "Person Resolved At",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "person_review_queued",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Person Review Queued (identity ambiguity)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "identity_last_error",
+   "fieldtype": "Small Text",
+   "hidden": 1,
+   "label": "Identity Last Error",
    "read_only": 1
   },
   {

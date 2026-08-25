@@ -1490,10 +1490,11 @@ def create_dossier():
 	if identity_err:
 		return identity_err
 
-	person_id = _resolve_person_from_campus(email, first_name, last_name, phone)
-	if not person_id:
-		return _error("PERSON_RESOLUTION_FAILED", "Impossible de résoudre l'identité Person auprès du campus. Réessayez.", 503)
-
+	# DEC-AUTH-27 / ADR-003 INV-3 : le dépôt N'APPELLE PLUS le registre au moment de la
+	# création (fin du SPOF — emela injoignable ne doit JAMAIS bloquer un candidat).
+	# L'Applicant naît avec la copie d'identité LOCALE (first/last/email/phone/dob) ;
+	# person_id reste NULL, résolu en ASYNC POST-OTP par identity_emitter (fin de la
+	# forge PERS-REC-*). Cf. recon b9c4ca9 (Q5), DEC-AUTH-27.
 	token = _generate_token()
 	applicant = frappe.get_doc(
 		{
@@ -1509,7 +1510,6 @@ def create_dossier():
 			"programme_label": session.programme_label,
 			"level_code": level_code,
 			"session": session.name,
-			"person_id": person_id,
 			"dossier_token_hash": _hash(token),
 			"token_expires_at": add_days(now_datetime(), TOKEN_TTL_DAYS),
 			"idempotency_key": idempotency_key,
@@ -1632,6 +1632,11 @@ def verify_otp(dossier_id=None, token=None, email_otp=None, phone_otp=None):
 	applicant.save(ignore_permissions=True)
 	frappe.db.commit()
 	log_event("verify_otp", "success", dossier_id=applicant.name)
+	# DEC-AUTH-27 : assertion d'identité POST-OTP, ASYNC/non-bloquante (idempotente,
+	# no-op si déjà résolue/en revue). Le dépôt a abouti sans registre ; c'est ici que
+	# le person_id réel est demandé au registre campus (outbox, jamais au dépôt).
+	from admission.api.identity_emitter import enqueue_identity_assertion
+	enqueue_identity_assertion(applicant.name)
 	return _ok({"dossier_id": applicant.name, "otp_verified": True, "token": new_token})
 
 
@@ -2134,6 +2139,10 @@ def claim_recovered_dossier(recovery_token=None, dossier_id=None):
 	# (préfixe du HMAC de l'adresse, jamais l'e-mail en clair) + horodatage (log_event).
 	log_event("claim_recovered_dossier", "success", dossier_id=doc.name,
 		identity=_identity_recovery_digest(doc.email or "")[:12])
+	# DEC-AUTH-27 : 2ᵉ chemin `otp_verified=1` (reprise) → même assertion identité
+	# async/idempotente. Un dossier repris qui n'a pas encore de person_id le résout ici.
+	from admission.api.identity_emitter import enqueue_identity_assertion
+	enqueue_identity_assertion(doc.name)
 	return _ok({"dossier_id": doc.name, "token": new_token, "statut": doc.status})
 
 
@@ -2640,56 +2649,8 @@ def declare_enrollment_payment_offline(
 	})
 
 
-CAMPUS_ENSURE_PERSON_PATH = "/api/method/portal_app.api.external.v1.person_api.ensure_person"
-
-
-def _resolve_person_from_campus(email, first_name, last_name, phone):
-	"""Call campus ensure_person endpoint to resolve or create a Person.
-
-	Returns PERS-NNNNN on success, None on failure.
-	Ref: DEC-226 option A — admission calls campus, not UF.
-	"""
-	config = _get_campus_config()
-	if not config:
-		# RECETTE/DEV uniquement (campus non encore branché) : identité Person LOCALE
-		# déterministe (même email → même id), pour dérouler le tunnel candidat sans le
-		# campus. GARDÉ par flag `allow_local_person_resolution` (OFF par défaut) et
-		# SIGNALÉ par le gate recette (MODE-local-person) → ne peut atteindre la prod
-		# silencieusement. Le pont INS exige toujours le vrai campus (id PERS-REC- distinct).
-		if frappe.conf.get("allow_local_person_resolution"):
-			import hashlib
-			local_id = "PERS-REC-" + hashlib.sha1((email or "").lower().encode()).hexdigest()[:10].upper()
-			log_event("person_resolve", "local_recette", person_id=local_id, level="warning")
-			return local_id
-		log_event("person_resolve", "skipped_no_config", level="error")
-		return None
-
-	if not _pii_transport_allowed(config["url"], context="ensure_person→campus"):
-		return None
-
-	payload = {
-		"email": email,
-		"first_name": first_name,
-		"last_name": last_name or "",
-		"phone": phone or "",
-	}
-
-	try:
-		resp = requests.post(
-			config["url"].rstrip("/") + CAMPUS_ENSURE_PERSON_PATH,
-			json=payload,
-			headers={"Content-Type": "application/json", "X-API-Key": config["token"]},
-			timeout=15,
-		)
-		resp.raise_for_status()
-		result = resp.json()
-		data = result.get("data") or result.get("message", {}).get("data") or {}
-		person_id = data.get("person_id")
-		if person_id:
-			log_event("person_resolve", "success", person_id=person_id)
-			return person_id
-		log_event("person_resolve", "no_person_id", level="error")
-		return None
-	except requests.RequestException as exc:
-		log_event("person_resolve", "failed", error=str(exc), level="error")
-		return None
+# _resolve_person_from_campus + CAMPUS_ENSURE_PERSON_PATH RETIRÉS (ADM-1, DEC-AUTH-27).
+# RETRAIT SEC : la résolution person_id SYNCHRONE au dépôt (SPOF, viole ADR-003 INV-3)
+# ET la forge locale PERS-REC-* sont supprimées. La résolution d'identité est désormais
+# ASYNC POST-OTP via `admission/api/identity_emitter.py` (cible = récepteur §4 vivant
+# `receive_identity_event`, pas l'ancien endpoint mort `external.v1.person_api`).

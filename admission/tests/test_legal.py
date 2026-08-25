@@ -288,7 +288,6 @@ class TestCreateDossierConsentGate(TestCase):
         self.assertEqual(result["error"]["code"], "CONSENT_REQUIRED")
 
     @patch(f"{PUBLIC}._ensure_fee")
-    @patch(f"{PUBLIC}._resolve_person_from_campus", return_value="PERS-00001")
     @patch(f"{PUBLIC}._generate_token", return_value="tok123")
     @patch(f"{PUBLIC}._hash", return_value="hashed")
     @patch(f"{PUBLIC}.now_datetime", return_value="2026-06-09 15:00:00")
@@ -298,7 +297,7 @@ class TestCreateDossierConsentGate(TestCase):
     @patch(f"{PUBLIC}.frappe")
     def test_consent_ok_dossier_created(
         self, mock_frappe, mock_session, mock_get_legal, mock_record,
-        mock_now, mock_hash, mock_token, mock_person, mock_ensure_fee,
+        mock_now, mock_hash, mock_token, mock_ensure_fee,
     ):
         from admission.api.public import create_dossier
 

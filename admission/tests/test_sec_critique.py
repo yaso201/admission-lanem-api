@@ -377,7 +377,6 @@ class TestSec3TokenExpiry(TestCase):
         mock_get.assert_called_once_with("CAN-001", "oldtok", check_expiry=False)
 
     @patch(f"{PUB}._ensure_fee")
-    @patch(f"{PUB}._resolve_person_from_campus", return_value="PERS-00001")
     @patch(f"{PUB}._generate_token", return_value="tok123")
     @patch(f"{PUB}.now_datetime", return_value="2026-06-09 15:00:00")
     @patch("admission.api.legal._record_consent", return_value="CONS-001")
@@ -386,7 +385,7 @@ class TestSec3TokenExpiry(TestCase):
     @patch(f"{PUB}.frappe")
     def test_create_dossier_sets_token_expiry(
         self, mock_frappe, mock_session, mock_get_legal, mock_record,
-        mock_now, mock_token, mock_person, mock_ensure_fee,
+        mock_now, mock_token, mock_ensure_fee,
     ):
         from admission.api.public import create_dossier
 
@@ -674,10 +673,9 @@ class TestSec5Integration(TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"]["code"], "AMOUNT_INVALID")
 
-    @patch(f"{PUB}._resolve_person_from_campus", return_value="PERS-1")
     @patch(f"{PUB}._session_doc")
     @patch(f"{PUB}.frappe")
-    def test_create_dossier_bad_email_no_campus_call(self, mock_frappe, mock_session, mock_campus):
+    def test_create_dossier_bad_email_no_campus_call(self, mock_frappe, mock_session):
         # email malformé → 400 AVANT l'appel campus (pas de 500, pas d'appel inutile).
         session = MagicMock()
         session.programme_code = "LIS"
@@ -700,4 +698,5 @@ class TestSec5Integration(TestCase):
             result = create_dossier()
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"]["code"], "EMAIL_INVALID")
-        mock_campus.assert_not_called()  # pré-validation AVANT campus
+        # ADM-1 : plus d'appel campus au dépôt (SPOF fermé) — la pré-validation email
+        # reste AVANT toute création ; l'assertion identité est POST-OTP (async).

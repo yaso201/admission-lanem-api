@@ -180,6 +180,9 @@ scheduler_events = {
 		"admission.api.notifications.send_pieces_reminders",
 		# LOT P4 : rattrapage du pont INS (un étudiant non créé côté campus n'est plus un silence).
 		"admission.api.bridge.redrive_bridge_notifications",
+		# ADM-1 (DEC-AUTH-27) : rattrapage de l'assertion d'identité (person_id non résolu au
+		# moment de l'OTP — config absente, panne réseau épuisée) ; jamais un `review_queued`.
+		"admission.api.identity_emitter.redrive_identity_assertions",
 		# OBS-2 : bilan opérationnel quotidien (compteurs _ops_counters → mail + copie Telegram).
 		"admission.api.alerting.send_daily_digest",
 	],

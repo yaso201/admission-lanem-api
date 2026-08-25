@@ -37,12 +37,11 @@ class TestDateOfBirthGate(FrappeTestCase):
         self.assertEqual(young["error"]["code"], "DOB_INVALID")
         self.assertEqual(old["error"]["code"], "DOB_INVALID")
 
-    @patch(f"{PUB}._resolve_person_from_campus")
     @patch("admission.api.legal._get_active_legal_document", return_value=MagicMock(name="LEGAL"))
     @patch(f"{PUB}._session_doc")
     @patch(f"{PUB}.frappe")
     def test_create_endpoint_blocks_missing_dob_before_campus(
-        self, mock_frappe, mock_session, _legal, resolve_person,
+        self, mock_frappe, mock_session, _legal,
     ):
         from admission.api.public import create_dossier
 
@@ -60,7 +59,7 @@ class TestDateOfBirthGate(FrappeTestCase):
         }
         result = create_dossier()
         self.assertEqual(result["error"]["code"], "DOB_REQUIRED")
-        resolve_person.assert_not_called()
+        # ADM-1 : plus d'appel campus au dépôt — DOB validée AVANT toute création.
 
 
 class TestIdentityRecoveryContract(FrappeTestCase):

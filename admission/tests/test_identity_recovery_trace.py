@@ -83,7 +83,6 @@ class TestIdentityRecoveryEndToEnd(FrappeTestCase):
         legal = SimpleNamespace(name="LEGAL-TRACE")
         try:
             with patch("admission.api.sessions.is_session_selectable", return_value=True), \
-                 patch(f"{PUB}._resolve_person_from_campus", return_value="TRACE-PERSON-PRIMARY"), \
                  patch(f"{PUB}._ensure_fee"), \
                  patch(f"{PUB}._classify_bac_date", return_value="bac_anterieur"), \
                  patch(f"{PUB}._pieces_for_profile", return_value=[]), \
