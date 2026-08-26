@@ -6,6 +6,14 @@ FONDATRICE (DEC-AUTH-27 / ADR-003 INV-3) : le **dépôt d'un dossier ne bloque J
 sur la disponibilité du registre. La résolution d'identité est donc **async/outbox,
 POST-OTP** — jamais synchrone au dépôt.
 
+Deux assertions distinctes, même transport outbox :
+  1. **ensure_person** (POST-OTP) → résout le `person_id` réel (ADM-1) ;
+  2. **add student** (À L'INS — inscription définitive, frais payés ; ruling ADM-2) →
+     matérialise le badge student **natif campus** (source=campus, is_copy=0 via
+     l'exception typée DEC-AUTH-26). Un admis non-inscrit (ACC) n'a PAS de badge, donc
+     PAS d'accès. L'inscription (staff.enroll ACC→INS) **aboutit même campus DOWN** :
+     l'assertion est enfilée, l'INS n'attend jamais le registre.
+
 Transport = instance parallèle du patron outbox F-ADM-INS-01 (`bridge.py`) :
 `frappe.enqueue(retry=3)` + flags sur l'Applicant (`person_resolved`/
 `person_review_queued`/`identity_last_error`) + redrive quotidien. Enveloppe §4 +
@@ -45,6 +53,12 @@ from admission.api._log import log_event
 
 IDENTITY_ROUTE = "/api/method/portal_app.api.identity.inbound.receive_identity_event"
 SOURCE = "admission"
+STUDENT_AFFILIATION = "student"
+# Rôle campus demandé pour le badge student. C'est un role_grant §4 (la source DEMANDE ;
+# l'allowlist SEC-1 côté campus est le PLAFOND — ROLE_ALLOWLIST["student"]={"Student"} le
+# confirme). Sans role_grant, provision_user n'accorde AUCUN rôle (allowlist = plafond, pas
+# défaut) → compte connectable mais sans accès étudiant. Preuve runtime : has_student_role.
+STUDENT_ROLE = "Student"
 # person_id canonique du registre campus (autoname PERS-.#####). On refuse tout autre
 # format (jamais stocker un id campus brut hors-forme — casserait le rapprochement).
 PERSON_ID_PATTERN = re.compile(r"^PERS-\d{5,}$")
@@ -224,6 +238,111 @@ def _mark_identity_error(applicant_name, error):
 
 
 # ---------------------------------------------------------------------------
+# Badge student natif (ADM-2, DEC-273 / DEC-AUTH-26) — assertion `add student` À L'INS
+# ---------------------------------------------------------------------------
+
+
+def enqueue_student_badge_assertion(applicant_name):
+    """À l'INS (inscription définitive, frais payés — ruling ADM-2), NON-BLOQUANT.
+    Enfile l'assertion du badge student natif (retry=3). Idempotent : `_send` no-op si
+    déjà affirmé ou identité non résolue. L'INS n'attend jamais le registre (campus DOWN
+    → assertion enfilée, reprise par le redrive)."""
+    frappe.enqueue(
+        _send_student_badge_assertion,
+        queue="default",
+        applicant_name=applicant_name,
+        is_async=True,
+        retry=3,
+    )
+
+
+def _student_badge_event_id(applicant):
+    return f"{SOURCE}:add_student:{applicant.name}"
+
+
+def build_student_badge_envelope(applicant):
+    """Enveloppe §4 `add student`. La source DÉCLARÉE est `admission` (l'autorité du
+    client — `authorize_inbound` SEC-2 : admission est autoritaire pour `student`) ; le
+    campus MATÉRIALISE le badge natif (source=campus, is_copy=0) via l'exception typée
+    DEC-AUTH-26. AUCUNE PII : person_id (identité déjà résolue) + entity_ref=dossier_id."""
+    return {
+        "event_id": _student_badge_event_id(applicant),
+        "operation": "add",
+        "source": SOURCE,
+        "person_id": applicant.person_id,
+        "affiliation_type": STUDENT_AFFILIATION,
+        "status": "active",
+        # role_grant §4 : DEMANDE le rôle Student (filtré par l'allowlist SEC-1 campus).
+        "payload": {"entity_ref": applicant.name, "role_grant": STUDENT_ROLE},
+    }
+
+
+def _send_student_badge_assertion(applicant_name):
+    """Corps de l'outbox badge. Idempotent, non-bloquant, journalisé. Retour = dict statut."""
+    if not frappe.db.exists("Admission Applicant", applicant_name):
+        return {"status": "applicant_not_found", "applicant": applicant_name}
+    applicant = frappe.get_doc("Admission Applicant", applicant_name)
+
+    # Idempotence : badge déjà affirmé → no-op terminal (pas de nouvel appel réseau).
+    if getattr(applicant, "student_badge_asserted", 0):
+        return {"status": "already_asserted", "applicant": applicant_name}
+
+    # person_id REQUIS : le badge s'ancre à l'identité résolue (post-OTP, ADM-1). Non
+    # résolu (review_queued terminal, ou retard) → on n'émet PAS de badge sans identité ;
+    # le redrive reprendra quand person_id sera posé. Signalé (jamais un NULL perdu).
+    if not applicant.person_id:
+        log_event("student_badge", "no_person_id", dossier_id=applicant_name,
+                  level="warning", alert_type="student_badge")
+        return {"status": "no_person_id", "applicant": applicant_name}
+
+    config = _get_campus_config()
+    if not config:
+        # Registre non branché (dev/recette) : INS déjà aboutie, assertion différée.
+        log_event("student_badge", "deferred_no_config", dossier_id=applicant_name, level="warning")
+        return {"status": "deferred_configuration", "applicant": applicant_name}
+
+    # L'enveloppe ne porte AUCUNE PII (person_id + dossier_id) — pas de garde DAT-2 requise.
+    try:
+        badge = _post_identity_event(build_student_badge_envelope(applicant), config)
+    except IdentityReceiverError as exc:
+        # 4xx / erreur métier = PERMANENT → fail-fast (marque, PAS de raise = pas de retry).
+        _mark_student_badge_error(applicant_name, f"récepteur: {exc}")
+        log_event("student_badge", "receiver_error", dossier_id=applicant_name,
+                  error=str(exc), level="error", alert_type="student_badge")
+        return {"status": "receiver_error", "applicant": applicant_name}
+    except requests.RequestException as exc:
+        # Réseau / 5xx = TRANSITOIRE → marque + raise (enqueue retry, puis redrive).
+        _mark_student_badge_error(applicant_name, f"réseau: {exc}")
+        log_event("student_badge", "failed", dossier_id=applicant_name,
+                  error=str(exc), level="error", alert_type="student_badge")
+        raise
+
+    # Défense en profondeur : le récepteur DOIT matérialiser natif (is_copy=0). Une copie
+    # (is_copy=1) = échec de gate côté campus → SIGNALÉ (jamais silencieux), pas un raise
+    # (le badge existe, l'anomalie est de réconciliation, pas de transport).
+    if isinstance(badge, dict) and badge.get("is_copy") not in (0, None):
+        log_event("student_badge", "not_native", dossier_id=applicant_name,
+                  level="error", alert_type="student_badge")
+
+    _mark_student_badge_asserted(applicant_name)
+    return {"status": "asserted", "applicant": applicant_name, "person_id": applicant.person_id}
+
+
+def _mark_student_badge_asserted(applicant_name):
+    frappe.db.set_value("Admission Applicant", applicant_name,
+                        {"student_badge_asserted": 1, "student_badge_asserted_at": now_datetime(),
+                         "student_badge_error": None}, update_modified=False)
+    frappe.db.commit()
+    log_event("student_badge", "asserted", dossier_id=applicant_name)
+
+
+def _mark_student_badge_error(applicant_name, error):
+    frappe.db.set_value("Admission Applicant", applicant_name,
+                        "student_badge_error", str(error)[:500], update_modified=False)
+    frappe.db.commit()
+
+
+# ---------------------------------------------------------------------------
 # Transport (X-API-Key, patron RH-01) — un seul POST ; le retry est porté par enqueue
 # ---------------------------------------------------------------------------
 
@@ -283,4 +402,21 @@ def redrive_identity_assertions():
         enqueue_identity_assertion(name)
     if pending:
         frappe.logger("identity_assert").info(f"redrive_identity_assertions: {len(pending)} ré-enfilés.")
+    return {"redriven": len(pending)}
+
+
+def redrive_student_badge_assertions():
+    """Reprise quotidienne du badge student : ré-enfile les INSCRITS (status=INS) dont
+    l'identité est résolue (person_id posé) mais dont le badge n'est PAS encore affirmé
+    (config absente à l'INS, panne réseau épuisée, ou identité résolue APRÈS l'INS).
+    Idempotent (event_id)."""
+    pending = frappe.get_all(
+        "Admission Applicant",
+        filters={"status": "INS", "student_badge_asserted": 0, "person_id": ["is", "set"]},
+        pluck="name",
+    )
+    for name in pending:
+        enqueue_student_badge_assertion(name)
+    if pending:
+        frappe.logger("student_badge").info(f"redrive_student_badge_assertions: {len(pending)} ré-enfilés.")
     return {"redriven": len(pending)}

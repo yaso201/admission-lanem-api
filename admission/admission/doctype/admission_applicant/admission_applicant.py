@@ -67,6 +67,7 @@ class AdmissionApplicant(Document):
 		if getattr(self.flags, "status_changed_to", None) == "INS":
 			self._trigger_bridge()
 			self._trigger_double_check()
+			self._trigger_student_badge()
 		self._record_transition()
 		self._warn_same_actor_payment_decision()
 
@@ -218,6 +219,19 @@ class AdmissionApplicant(Document):
 		except Exception:
 			frappe.logger("admission_applicant").warning(
 				f"Double-check enqueue failed for {self.name}: {frappe.get_traceback()}"
+			)
+
+	def _trigger_student_badge(self):
+		"""ADM-2 (DEC-273 / DEC-AUTH-26) : à l'INS (inscription définitive, frais payés),
+		enfile l'assertion du badge student natif campus (async, non-bloquant). L'INS
+		aboutit même campus DOWN — best-effort, jamais une exception qui ferait échouer
+		la transition."""
+		from admission.api.identity_emitter import enqueue_student_badge_assertion
+		try:
+			enqueue_student_badge_assertion(self.name)
+		except Exception:
+			frappe.logger("admission_applicant").warning(
+				f"Student badge enqueue failed for {self.name}: {frappe.get_traceback()}"
 			)
 
 

@@ -187,3 +187,118 @@ class TestTransientVsPermanent(_EmitterTestBase):
         mock_post.return_value = _resp({"error": "scope refusé", "status_code": 403}, status=403)
         res = em._send_identity_assertion(app.name)  # ne DOIT PAS raise (permanent)
         self.assertEqual(res["status"], "receiver_error")
+
+
+def _badge_resp(is_copy=0, status=200):
+    """Réponse §4 `add` : le récepteur renvoie le badge matérialisé (natif campus)."""
+    return _resp({"name": "PA-STU-1", "affiliation_type": "student",
+                  "source": "campus", "is_copy": is_copy, "status": "active"}, status=status)
+
+
+class TestStudentBadgeEnvelope(_EmitterTestBase):
+    """ADM-2 — enveloppe §4 `add student` : source déclarée admission (autorité), badge
+    matérialisé natif campus ; AUCUNE PII (person_id + dossier_id seulement)."""
+
+    def test_envelope_shape_and_deterministic_event_id(self):
+        app = _make_applicant(person_id="PERS-00042")
+        env = em.build_student_badge_envelope(app)
+        self.assertEqual(env["operation"], "add")
+        self.assertEqual(env["source"], "admission")          # autorité du client (SEC-2)
+        self.assertEqual(env["affiliation_type"], "student")
+        self.assertEqual(env["status"], "active")
+        self.assertEqual(env["person_id"], "PERS-00042")
+        self.assertEqual(env["event_id"], f"admission:add_student:{app.name}")  # idempotence
+        self.assertEqual(env["payload"]["entity_ref"], app.name)
+        # role_grant §4 : sans lui, provision_user n'accorde AUCUN rôle (allowlist = plafond).
+        self.assertEqual(env["payload"]["role_grant"], "Student")
+
+    def test_envelope_carries_no_pii(self):
+        app = _make_applicant(person_id="PERS-00042", email="leak@x.com", first_name="LEAKNAME")
+        blob = repr(em.build_student_badge_envelope(app))
+        self.assertNotIn("leak@x.com", blob)
+        self.assertNotIn("LEAKNAME", blob)
+
+
+class TestStudentBadgeSend(_EmitterTestBase):
+    @patch(f"{EM}._get_campus_config", return_value=CFG)
+    @patch(f"{EM}.requests.post")
+    def test_success_marks_asserted(self, mock_post, _cfg):
+        app = _make_applicant(person_id="PERS-00042")
+        mock_post.return_value = _badge_resp(is_copy=0)
+        res = em._send_student_badge_assertion(app.name)
+        self.assertEqual(res["status"], "asserted")
+        self.assertEqual(frappe.db.get_value("Admission Applicant", app.name, "student_badge_asserted"), 1)
+        self.assertTrue(frappe.db.get_value("Admission Applicant", app.name, "student_badge_asserted_at"))
+
+    @patch(f"{EM}._get_campus_config", return_value=CFG)
+    @patch(f"{EM}.requests.post")
+    def test_no_person_id_skips_no_post(self, mock_post, _cfg):
+        app = _make_applicant()  # person_id NULL (identité non résolue / review_queued)
+        res = em._send_student_badge_assertion(app.name)
+        self.assertEqual(res["status"], "no_person_id")
+        mock_post.assert_not_called()  # jamais un badge sans identité
+        self.assertEqual(frappe.db.get_value("Admission Applicant", app.name, "student_badge_asserted"), 0)
+
+    @patch(f"{EM}._get_campus_config", return_value=CFG)
+    @patch(f"{EM}.requests.post")
+    def test_already_asserted_is_noop(self, mock_post, _cfg):
+        app = _make_applicant(person_id="PERS-00042")
+        frappe.db.set_value("Admission Applicant", app.name, "student_badge_asserted", 1)
+        res = em._send_student_badge_assertion(app.name)
+        self.assertEqual(res["status"], "already_asserted")
+        mock_post.assert_not_called()  # idempotence : pas de nouvel appel réseau
+
+    @patch(f"{EM}._get_campus_config", return_value=None)
+    def test_deferred_when_no_config(self, _cfg):
+        app = _make_applicant(person_id="PERS-00042")
+        res = em._send_student_badge_assertion(app.name)
+        self.assertEqual(res["status"], "deferred_configuration")  # redrive reprendra
+
+    @patch(f"{EM}._get_campus_config", return_value=CFG)
+    @patch(f"{EM}.requests.post")
+    def test_4xx_permanent_no_raise(self, mock_post, _cfg):
+        app = _make_applicant(person_id="PERS-00042")
+        mock_post.return_value = _resp({"error": "scope refusé", "status_code": 403}, status=403)
+        res = em._send_student_badge_assertion(app.name)  # ne DOIT PAS raise
+        self.assertEqual(res["status"], "receiver_error")
+        self.assertEqual(frappe.db.get_value("Admission Applicant", app.name, "student_badge_asserted"), 0)
+
+    @patch(f"{EM}._get_campus_config", return_value=CFG)
+    @patch(f"{EM}.requests.post")
+    def test_network_error_raises_for_retry(self, mock_post, _cfg):
+        import requests as real_requests
+        app = _make_applicant(person_id="PERS-00042")
+        mock_post.side_effect = real_requests.ConnectionError("refused")
+        with self.assertRaises(real_requests.RequestException):  # → enqueue retry
+            em._send_student_badge_assertion(app.name)
+
+    @patch(f"{EM}._get_campus_config", return_value=CFG)
+    @patch(f"{EM}.requests.post")
+    def test_non_native_response_signaled_but_asserted(self, mock_post, _cfg):
+        """Défense en profondeur : is_copy=1 renvoyé = échec de gate campus → SIGNALÉ
+        (log not_native), sans raise (le badge existe, anomalie de réconciliation)."""
+        app = _make_applicant(person_id="PERS-00042")
+        mock_post.return_value = _badge_resp(is_copy=1)
+        with patch(f"{EM}.log_event") as mock_log:
+            res = em._send_student_badge_assertion(app.name)
+        self.assertEqual(res["status"], "asserted")
+        not_native = [c for c in mock_log.call_args_list if c.args[:2] == ("student_badge", "not_native")]
+        self.assertTrue(not_native, "un badge non-natif doit être signalé")
+
+
+class TestStudentBadgeRedrive(_EmitterTestBase):
+    @patch(f"{EM}.enqueue_student_badge_assertion")
+    def test_redrive_reenqueues_ins_resolved_not_asserted(self, mock_enqueue):
+        app = _make_applicant(person_id="PERS-00042")
+        frappe.db.set_value("Admission Applicant", app.name, "status", "INS")
+        # Non concerné : INS mais badge déjà affirmé.
+        done = _make_applicant(person_id="PERS-00043")
+        frappe.db.set_value("Admission Applicant", done.name,
+                            {"status": "INS", "student_badge_asserted": 1})
+        # Non concerné : person_id non résolu.
+        _make_applicant()
+        res = em.redrive_student_badge_assertions()
+        enqueued = {c.args[0] for c in mock_enqueue.call_args_list}
+        self.assertIn(app.name, enqueued)
+        self.assertNotIn(done.name, enqueued)
+        self.assertGreaterEqual(res["redriven"], 1)

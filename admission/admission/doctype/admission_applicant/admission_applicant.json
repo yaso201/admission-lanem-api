@@ -59,6 +59,9 @@
   "person_resolved_at",
   "person_review_queued",
   "identity_last_error",
+  "student_badge_asserted",
+  "student_badge_asserted_at",
+  "student_badge_error",
   "consent_section",
   "consent_data_processing",
   "consent_data_processing_at",
@@ -413,6 +416,28 @@
    "fieldtype": "Small Text",
    "hidden": 1,
    "label": "Identity Last Error",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "student_badge_asserted",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Student Badge Asserted (native campus at INS)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "student_badge_asserted_at",
+   "fieldtype": "Datetime",
+   "hidden": 1,
+   "label": "Student Badge Asserted At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "student_badge_error",
+   "fieldtype": "Small Text",
+   "hidden": 1,
+   "label": "Student Badge Last Error",
    "read_only": 1
   },
   {

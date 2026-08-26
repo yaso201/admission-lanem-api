@@ -183,6 +183,9 @@ scheduler_events = {
 		# ADM-1 (DEC-AUTH-27) : rattrapage de l'assertion d'identité (person_id non résolu au
 		# moment de l'OTP — config absente, panne réseau épuisée) ; jamais un `review_queued`.
 		"admission.api.identity_emitter.redrive_identity_assertions",
+		# ADM-2 (DEC-273 / DEC-AUTH-26) : rattrapage du badge student natif (INS + person_id
+		# résolu mais badge non affirmé — campus DOWN à l'INS, identité résolue après l'INS).
+		"admission.api.identity_emitter.redrive_student_badge_assertions",
 		# OBS-2 : bilan opérationnel quotidien (compteurs _ops_counters → mail + copie Telegram).
 		"admission.api.alerting.send_daily_digest",
 	],
