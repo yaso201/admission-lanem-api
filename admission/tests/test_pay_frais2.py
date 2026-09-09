@@ -120,20 +120,26 @@ class TestWebhookInsertHardening(TestCase):
     @patch(f"{PUBLIC}.frappe")  # _error utilise public.frappe.local.response
     @patch(f"{WEBHOOK}._find_payment_by_reference", return_value=None)
     @patch(f"{WEBHOOK}.frappe")
-    def test_enrollment_without_pending_rejected(self, mfw, _find, _mfpub):
+    def test_enrollment_without_pending_orphan_acknowledged(self, mfw, _find, _mfpub):
+        # Frais 2 (enrollment) sans Pending lié : ni insert, ni promotion. V1.1 : ACQUITTÉ en 2xx
+        # (orphelin journalisé), PAS 4xx — un 4xx ferait désactiver l'endpoint par FedaPay.
         self._rq(mfw, "R-ENROLL")
         from admission.api.webhook import payment
         res = payment()
-        self.assertFalse(res["ok"])
-        self.assertEqual(res["error"]["code"], "PAYMENT_NOT_INITIATED")
+        self.assertTrue(res["ok"])
+        self.assertTrue(res["data"]["orphan"])
+        self.assertFalse(res["data"]["promoted"])
 
     @patch(f"{PUBLIC}.frappe")
     @patch(f"{WEBHOOK}._find_payment_by_reference", return_value=None)
     @patch(f"{WEBHOOK}.frappe")
-    def test_application_without_pending_rejected_too(self, mfw, _find, _mfpub):
-        # AVANT : frais 1 sans Pending → insert compat. APRÈS : rejet uniforme (initiation requise).
+    def test_application_without_pending_orphan_acknowledged_too(self, mfw, _find, _mfpub):
+        # AVANT : frais 1 sans Pending → insert compat. PUIS : rejet 409 uniforme (initiation requise).
+        # V1.1 : orphelin ACQUITTÉ en 2xx (ni insert, ni promotion) — initiation toujours requise,
+        # mais le 4xx est retiré (sinon FedaPay désactive l'endpoint après 10 échecs).
         self._rq(mfw, "R-APP")
         from admission.api.webhook import payment
         res = payment()
-        self.assertFalse(res["ok"])
-        self.assertEqual(res["error"]["code"], "PAYMENT_NOT_INITIATED")
+        self.assertTrue(res["ok"])
+        self.assertTrue(res["data"]["orphan"])
+        self.assertFalse(res["data"]["promoted"])

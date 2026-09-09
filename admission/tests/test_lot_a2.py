@@ -100,10 +100,12 @@ class TestSourceWriters(TestCase):
     def test_webhook_has_no_insert_fallback(self):
         # LOT KKIAPAY : promotion UNIQUEMENT — un insert dans le webhook serait une
         # régression (double-paiement A2 / contournement de l'initiation W3).
+        # V1.1 : l'orphelin sans Pending n'est plus rejeté en 4xx mais ACQUITTÉ en 2xx
+        # (marqueur `no_pending_for_reference`) — toujours SANS insert ni promotion.
         from admission.api import webhook
         src = self._src(webhook, "payment")
         self.assertNotIn(".insert(", src)
-        self.assertIn("PAYMENT_NOT_INITIATED", src)
+        self.assertIn("no_pending_for_reference", src)
 
     def test_confirm_agent_aligns_source_on_final_mode(self):
         from admission.api import staff

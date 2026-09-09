@@ -3,7 +3,8 @@
 Contrat : POST JSON brut FedaPay + en-tête `x-fedapay-signature` (`t=<ts>,s=<hash>`, HMAC-SHA256
 constant-time) ; le payload n'est jamais cru sur parole — re-vérification serveur
 `verify_transaction` (status SUCCESS + montant >= attendu) AVANT promotion du Pending lié par
-`entity.custom_metadata.provider_reference`. Plus d'insert fallback : webhook sans Pending = 409.
+`entity.custom_metadata.provider_reference`. Plus d'insert fallback : webhook sans Pending = 2xx
+acquitte (orphelin journalise, PAS 4xx : un 4xx ferait desactiver l'endpoint par FedaPay).
 transaction.canceled → Pending→Rejected. Style unitaire mocké.
 """
 
@@ -79,13 +80,16 @@ class TestWebhookPromotion(TestCase):
     @patch(f"{PUBLIC}.frappe")
     @patch(f"{WEBHOOK}._find_payment_by_reference", return_value=None)
     @patch(f"{WEBHOOK}.frappe")
-    def test_no_pending_rejected_409(self, mf, _find, _mfpub):
-        # Fin de l'insert fallback : tout paiement online est INITIÉ → webhook orphelin = 409.
+    def test_no_pending_orphan_acknowledged_2xx(self, mf, _find, _mfpub):
+        # V1.1 : un webhook orphelin (aucun Pending lié) est ACQUITTÉ en 2xx, PAS 409 — sinon
+        # FedaPay rejoue 9x puis DESACTIVE l'endpoint apres 10 echecs (webhooks coupes en prod,
+        # paiements legitimes bloques « en attente »). Aucun fallback cree ; anomalie journalisee.
         _rq(mf, _payload())
         from admission.api.webhook import payment
         res = payment()
-        self.assertFalse(res["ok"])
-        self.assertEqual(res["error"]["code"], "PAYMENT_NOT_INITIATED")
+        self.assertTrue(res["ok"])
+        self.assertTrue(res["data"]["orphan"])
+        self.assertFalse(res["data"]["promoted"])
 
     @patch(f"{WEBHOOK}.verify_transaction")
     @patch(f"{WEBHOOK}._find_payment_by_reference")

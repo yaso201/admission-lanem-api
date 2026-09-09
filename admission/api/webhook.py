@@ -13,8 +13,9 @@ Modèle de sécurité (inchangé — seul le contrat provider change) :
      ET montant >= Pending attendu ;
   3. promotion UNIQUEMENT : le Pending lié par `entity.custom_metadata.provider_reference`
      (= provider_reference posé par prepare_online_payment) est promu Confirmed.
-     Plus AUCUN insert fallback : un webhook sans Pending lié = 409 (tout paiement
-     online passe par l'initiation — garde W3).
+     Plus AUCUN insert fallback : un webhook sans Pending lié est ACQUITTÉ en 2xx
+     (orphelin journalisé), JAMAIS 4xx — tout paiement online passe par l'initiation
+     (garde W3), et un 4xx ferait désactiver l'endpoint par FedaPay (V1.1).
 Idempotent : replay sur Confirmed/Paid → ok sans effet ; retentatives FedaPay couvertes.
 Événement d'échec (canceled/declined) → Pending→Rejected (silencieux, même pattern que
 expire_stale_online_pending).
@@ -180,12 +181,17 @@ def payment():
 	# Reboucle par provider_reference (liage persisté à l'initiation, candidat OU agent).
 	existing = _find_payment_by_reference(reference)
 	if not existing:
-		# Durcissement LOT KKIAPAY : plus d'insert fallback — tout paiement online est
-		# initié (Pending pré-créé). Webhook orphelin = anomalie à investiguer.
-		log_event("webhook_payment", "rejected_no_pending", ref=reference or transaction_id,
+		# Webhook ORPHELIN (aucun Pending lié à cette référence). Le Pending est TOUJOURS
+		# pré-créé à l'initiation (plus d'insert fallback, durcissement LOT KKIAPAY) → un orphelin
+		# = transaction HORS parcours (test / hors-app) ou anomalie ; dans tous les cas RÉESSAYER
+		# N'AIDE PAS. On ACQUITTE en 2xx et on journalise l'anomalie pour investigation.
+		# ⚠️ NE PAS renvoyer 4xx ici : FedaPay rejoue 9× puis DÉSACTIVE l'endpoint après 10 échecs
+		# (V1.1 — cause des webhooks coupés en prod : une transaction orpheline suffisait à tuer
+		# l'endpoint, bloquant les paiements légitimes en « en attente »). Aucun fallback créé.
+		log_event("webhook_payment", "orphan_acknowledged", ref=reference or transaction_id,
 		          level="warning")
-		return _error("PAYMENT_NOT_INITIATED",
-		              "Paiement non initialise (aucun Pending lie pour cette reference).", 409)
+		return _ok({"accepted": True, "promoted": False, "orphan": True,
+		            "reason": "no_pending_for_reference"})
 
 	# ── transaction.failed → rejet du Pending lié, SOUS VERROU (DEC-5) ──────────────
 	# (rejet silencieux : pas de hook UF) ; un success VÉRIFIÉ ultérieur le récupère (chemin SUCCESS).
