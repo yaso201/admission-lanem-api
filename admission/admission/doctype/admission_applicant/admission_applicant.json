@@ -74,6 +74,7 @@
   "promo_code",
   "promo_rate",
   "promo_captured_date",
+  "entered_promo_code",
   "integration_section",
   "idempotency_key",
   "source",
@@ -531,6 +532,13 @@
    "label": "Promo Captured Date",
    "read_only": 1,
    "description": "Date de capture promo (= date candidature). Ref: ADM-UF-5a §3bis-PROMO."
+  },
+  {
+   "fieldname": "entered_promo_code",
+   "fieldtype": "Data",
+   "label": "Entered Promo Code",
+   "read_only": 1,
+   "description": "Code promo saisi par le candidat (normalise). Validite reevaluee au GEL frais 1 (DEC-345). Distinct de promo_code (miroir UF, DEC-228)."
   },
   {
    "fieldname": "integration_section",

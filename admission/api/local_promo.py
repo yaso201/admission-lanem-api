@@ -128,3 +128,33 @@ def validate_promo_code(code=None, session=None, programme=None, level_code=None
 		sdoc = _session_doc(session)
 		programme_code = sdoc.programme_code if sdoc else None
 	return _ok(_validate_promo_code_impl(code, programme_code, level_code))
+
+
+def _set_promo_code_impl(dossier_id, token, code):
+	"""Coeur testable. Un code se pose/efface librement AVANT le gel, jamais apres (DEC-345)."""
+	from admission.api.public import _error, _get_applicant
+	applicant = _get_applicant(dossier_id, token)
+	if getattr(applicant, "local_promo_snapshot", None):
+		return _error("PROMO_LOCKED",
+		              "Le droit promo est deja fige (frais 1 confirme).", 409)
+	norm = _normalize_code(code)
+	frappe.db.set_value("Admission Applicant", applicant.name,
+	                    "entered_promo_code", norm, update_modified=False)
+	validation = _validate_promo_code_impl(
+		norm, applicant.programme_code, getattr(applicant, "level_code", None)) if norm else None
+	return {"ok": True, "entered_promo_code": norm, "validation": validation}
+
+
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+@rate_limit(key="dossier_id", limit=10, seconds=60 * 60)
+def set_promo_code(dossier_id=None, token=None, code=None):
+	"""DEC-344/345 : persiste le code saisi (auth token dossier, pattern DEC-241)."""
+	from admission.api.public import _ok, _value
+	dossier_id = dossier_id or _value("dossier_id")
+	token = token or _value("token")
+	code = code if code is not None else _value("code")
+	res = _set_promo_code_impl(dossier_id, token, code)
+	if isinstance(res, dict) and res.get("ok"):
+		return _ok({"entered_promo_code": res["entered_promo_code"],
+		            "validation": res["validation"]})
+	return res

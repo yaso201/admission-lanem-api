@@ -108,3 +108,34 @@ class TestValidatePromoCode(TestCase):
         # Anti-enumeration DEC-243/344 : expire indistinguable d'inconnu.
         r = self._call("comeexpress2026", CODE_CUMUL, False)
         self.assertEqual(r, {"valid": False, "message": "Code invalide ou expire."})
+
+
+class TestSetPromoCode(TestCase):
+    def _call(self, code, snapshot=None):
+        applicant = type("A", (), {"name": "CAN-2026-00001",
+                                   "local_promo_snapshot": snapshot,
+                                   "programme_code": "LIS", "level_code": "DEFAULT"})()
+        with patch("admission.api.public._get_applicant", return_value=applicant), \
+             patch(f"{LP}._validate_promo_code_impl", return_value={"valid": True}), \
+             patch(f"{LP}.frappe") as mf:
+            from admission.api.local_promo import _set_promo_code_impl
+            return _set_promo_code_impl("CAN-2026-00001", "tok", code), mf, applicant
+
+    def test_pose_le_code_normalise(self):
+        res, mf, a = self._call("  comeexpress2026 ")
+        mf.db.set_value.assert_called_once_with(
+            "Admission Applicant", "CAN-2026-00001",
+            "entered_promo_code", "COMEEXPRESS2026", update_modified=False)
+        self.assertTrue(res["validation"]["valid"])
+
+    def test_code_vide_efface(self):
+        res, mf, a = self._call("")
+        mf.db.set_value.assert_called_once_with(
+            "Admission Applicant", "CAN-2026-00001",
+            "entered_promo_code", "", update_modified=False)
+
+    def test_refuse_apres_gel(self):
+        res, mf, a = self._call("X", snapshot='{"final_annual_xof": 342000}')
+        self.assertFalse(res["ok"])
+        self.assertEqual(res["error"]["code"], "PROMO_LOCKED")
+        mf.db.set_value.assert_not_called()
