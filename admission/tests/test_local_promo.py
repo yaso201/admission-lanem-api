@@ -139,3 +139,53 @@ class TestSetPromoCode(TestCase):
         self.assertFalse(res["ok"])
         self.assertEqual(res["error"]["code"], "PROMO_LOCKED")
         mf.db.set_value.assert_not_called()
+
+
+class TestCaptureLocalPromo(TestCase):
+    def _applicant(self, snapshot=None, entered="COMEEXPRESS2026"):
+        a = MagicMock()
+        a.name = "CAN-2026-00001"; a.local_promo_snapshot = snapshot
+        a.entered_promo_code = entered; a.programme_code = "LIS"; a.level_code = "DEFAULT"
+        return a
+
+    def test_gel_ecrit_snapshot_et_denormalise(self):
+        a = self._applicant()
+        computed = {"base_xof": 600000.0, "campaign": "LPROMO-0001",
+                    "campaign_label": "Promo rentree", "campaign_price_xof": 380000.0,
+                    "code": "COMEEXPRESS2026", "code_rate": 0.10, "code_applied": True,
+                    "cumulable": True, "final_annual_xof": 342000.0}
+        with patch(f"{LP}.compute_local_price", return_value=computed), \
+             patch(f"{LP}.frappe"):
+            from admission.api.local_promo import capture_local_promo_if_eligible
+            capture_local_promo_if_eligible(a)
+        self.assertEqual(a.final_annual_xof, 342000.0)
+        snap = json.loads(a.local_promo_snapshot)
+        self.assertEqual(snap["final_annual_xof"], 342000.0)
+        self.assertEqual(snap["code"], "COMEEXPRESS2026")
+        a.save.assert_called_once_with(ignore_permissions=True)
+
+    def test_idempotent_snapshot_deja_pose(self):
+        a = self._applicant(snapshot='{"final_annual_xof": 342000}')
+        with patch(f"{LP}.compute_local_price") as mcalc:
+            from admission.api.local_promo import capture_local_promo_if_eligible
+            capture_local_promo_if_eligible(a)
+        mcalc.assert_not_called(); a.save.assert_not_called()
+
+    def test_rien_d_actif_aucune_ecriture(self):
+        a = self._applicant(entered="")
+        computed = {"base_xof": 600000.0, "campaign": None, "campaign_label": None,
+                    "campaign_price_xof": None, "code": None, "code_rate": 0.0,
+                    "code_applied": False, "cumulable": False, "final_annual_xof": 600000.0}
+        with patch(f"{LP}.compute_local_price", return_value=computed), \
+             patch(f"{LP}.frappe"):
+            from admission.api.local_promo import capture_local_promo_if_eligible
+            capture_local_promo_if_eligible(a)
+        a.save.assert_not_called()
+
+    def test_cascade_appelle_la_capture_pour_frais1(self):
+        # Le point unique DEC-272 appelle la capture LOCALE a cote de la capture miroir.
+        import inspect
+        from admission.api import public
+        src = inspect.getsource(public.apply_confirmed_payment_cascade)
+        self.assertIn("capture_local_promo_if_eligible", src)
+        self.assertIn("_capture_promo_if_eligible", src)

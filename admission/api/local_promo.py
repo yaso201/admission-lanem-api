@@ -158,3 +158,25 @@ def set_promo_code(dossier_id=None, token=None, code=None):
 		return _ok({"entered_promo_code": res["entered_promo_code"],
 		            "validation": res["validation"]})
 	return res
+
+
+def capture_local_promo_if_eligible(applicant):
+	"""DEC-345 : gel du droit promo LOCAL au frais 1 confirme. Idempotent.
+
+	Validite reevaluee A LA DATE DE CONFIRMATION (un code saisi mais expire est perdu).
+	N'ecrit que si une campagne ou un code s'applique — sinon plein tarif, pas de snapshot.
+	Champs SEPARES du miroir UF (promo_code/promo_rate restent DEC-228).
+	"""
+	if getattr(applicant, "local_promo_snapshot", None):
+		return
+	computed = compute_local_price(
+		applicant.programme_code, getattr(applicant, "level_code", None),
+		date.today(), code=getattr(applicant, "entered_promo_code", None))
+	if not computed["campaign"] and not computed["code_applied"]:
+		return
+	snapshot = dict(computed, captured_date=str(date.today()))
+	applicant.local_promo_snapshot = json.dumps(snapshot)
+	applicant.final_annual_xof = computed["final_annual_xof"]
+	applicant.save(ignore_permissions=True)
+	frappe.logger("promo_capture").info(
+		f"Local promo captured for {applicant.name}: final={computed['final_annual_xof']}")

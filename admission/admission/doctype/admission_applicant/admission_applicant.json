@@ -75,6 +75,8 @@
   "promo_rate",
   "promo_captured_date",
   "entered_promo_code",
+  "local_promo_snapshot",
+  "final_annual_xof",
   "integration_section",
   "idempotency_key",
   "source",
@@ -539,6 +541,21 @@
    "label": "Entered Promo Code",
    "read_only": 1,
    "description": "Code promo saisi par le candidat (normalise). Validite reevaluee au GEL frais 1 (DEC-345). Distinct de promo_code (miroir UF, DEC-228)."
+  },
+  {
+   "fieldname": "local_promo_snapshot",
+   "fieldtype": "JSON",
+   "label": "Local Promo Snapshot",
+   "read_only": 1,
+   "description": "Droit promo LOCAL fige au frais 1 confirme (DEC-345). Autoporteur : campagne, prix, code, taux, final_annual_xof, date. SEPARE du miroir UF (promo_code/promo_rate DEC-228). Transmission UF differee."
+  },
+  {
+   "fieldname": "final_annual_xof",
+   "fieldtype": "Float",
+   "label": "Final Annual XOF",
+   "read_only": 1,
+   "precision": 2,
+   "description": "Scolarite annuelle GARANTIE (denormalise du snapshot, DEC-345). Vide = plein tarif catalogue."
   },
   {
    "fieldname": "integration_section",

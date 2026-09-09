@@ -2361,6 +2361,9 @@ def apply_confirmed_payment_cascade(applicant, fee):
 	"""
 	if fee and getattr(fee, "fee_type", None) in FRAIS1_FEE_TYPES:
 		_capture_promo_if_eligible(applicant)
+		# DEC-345 : gel du droit promo LOCAL au meme point unique (3 canaux, DEC-272).
+		from admission.api.local_promo import capture_local_promo_if_eligible
+		capture_local_promo_if_eligible(applicant)
 	if fee and fee.status != "Paid":
 		fee.status = "Paid"
 		fee.save(ignore_permissions=True)
