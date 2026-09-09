@@ -80,3 +80,31 @@ class TestCodeValidOn(TestCase):
         self.assertTrue(_code_valid_on(CODE_CUMUL, date(2026, 9, 17)))
         self.assertFalse(_code_valid_on(CODE_CUMUL, date(2026, 8, 31)))
         self.assertFalse(_code_valid_on(CODE_CUMUL, date(2026, 9, 18)))
+
+
+class TestValidatePromoCode(TestCase):
+    def _call(self, code, code_row=None, valid_window=True):
+        with patch(f"{LP}._resolve_code", return_value=code_row), \
+             patch(f"{LP}._code_valid_on", return_value=valid_window), \
+             patch(f"{LP}.compute_local_price", return_value={
+                 "base_xof": 600000.0, "campaign": "LPROMO-0001",
+                 "campaign_label": "Promo rentree", "campaign_price_xof": 380000.0,
+                 "code": "COMEEXPRESS2026", "code_rate": 0.10, "code_applied": True,
+                 "cumulable": True, "final_annual_xof": 342000.0}):
+            from admission.api.local_promo import _validate_promo_code_impl
+            return _validate_promo_code_impl(code, "LIS", "DEFAULT")
+
+    def test_code_valide_renvoie_effet(self):
+        r = self._call("comeexpress2026", CODE_CUMUL, True)
+        self.assertTrue(r["valid"])
+        self.assertEqual(r["estimation"]["final_annual_xof"], 342000.0)
+        self.assertEqual(r["end_date"], "2026-09-17")
+
+    def test_code_inconnu_reponse_generique(self):
+        r = self._call("NIMPORTEQUOI", None, False)
+        self.assertEqual(r, {"valid": False, "message": "Code invalide ou expire."})
+
+    def test_code_expire_MEME_reponse_generique(self):
+        # Anti-enumeration DEC-243/344 : expire indistinguable d'inconnu.
+        r = self._call("comeexpress2026", CODE_CUMUL, False)
+        self.assertEqual(r, {"valid": False, "message": "Code invalide ou expire."})

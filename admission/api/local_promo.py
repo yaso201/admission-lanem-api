@@ -101,3 +101,30 @@ def compute_local_price(programme_code, level_code, on_date, code=None):
 			result["code_applied"] = True
 	result["final_annual_xof"] = round(max(final, 0.0), 2)
 	return result
+
+
+def _validate_promo_code_impl(code, programme_code, level_code):
+	"""Coeur testable (hors decorateurs). Reponse invalide UNIQUE (anti-enumeration)."""
+	invalid = {"valid": False, "message": "Code invalide ou expire."}
+	row = _resolve_code(code)
+	today = date.today()
+	if not row or not _code_valid_on(row, today):
+		return invalid
+	est = compute_local_price(programme_code, level_code, today, code=row["name"])
+	return {
+		"valid": True, "code": row["name"], "rate": float(row["rate"]),
+		"cumulable": bool(row["cumulable"]), "end_date": str(row["end_date"]),
+		"estimation": est,
+	}
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET"])
+@rate_limit(limit=30, seconds=60 * 60)
+def validate_promo_code(code=None, session=None, programme=None, level_code=None):
+	"""DEC-344 : validation publique plafonnee. Resolution programme via session (comme get_frais)."""
+	from admission.api.public import _ok, _session_doc
+	programme_code = programme
+	if session and not programme_code:
+		sdoc = _session_doc(session)
+		programme_code = sdoc.programme_code if sdoc else None
+	return _ok(_validate_promo_code_impl(code, programme_code, level_code))
