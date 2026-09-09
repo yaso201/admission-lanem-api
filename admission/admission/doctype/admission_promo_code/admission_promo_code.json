@@ -1,0 +1,102 @@
+{
+ "actions": [],
+ "autoname": "field:code",
+ "creation": "2026-09-10 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "code",
+  "rate",
+  "cumulable",
+  "active",
+  "column_break_w",
+  "start_date",
+  "end_date"
+ ],
+ "fields": [
+  {
+   "fieldname": "code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Code",
+   "reqd": 1,
+   "unique": 1,
+   "description": "Code normalise MAJUSCULES/trim (ex: COMEEXPRESS2026). DEC-344."
+  },
+  {
+   "fieldname": "rate",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Rate",
+   "reqd": 1,
+   "precision": 4,
+   "description": "Taux 0.00 a 1.00 (ex: 0.10)."
+  },
+  {
+   "fieldname": "cumulable",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Cumulable",
+   "default": "0",
+   "description": "Coche = multiplicatif sur le prix campagne ; sinon best-of plein tarif (DEC-344)."
+  },
+  {
+   "fieldname": "active",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Active",
+   "default": "1"
+  },
+  {
+   "fieldname": "column_break_w",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "start_date",
+   "fieldtype": "Date",
+   "label": "Start Date",
+   "reqd": 1,
+   "description": "Borne INCLUSE."
+  },
+  {
+   "fieldname": "end_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "End Date",
+   "reqd": 1,
+   "description": "Borne INCLUSE : valable jusqu'au 17 = le 17 oui, le 18 non (DEC-344)."
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-09-10 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Admission",
+ "name": "Admission Promo Code",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "role": "System Manager",
+   "write": 1,
+   "create": 1,
+   "delete": 1
+  },
+  {
+   "read": 1,
+   "role": "Admission Administratif"
+  },
+  {
+   "read": 1,
+   "role": "Admission Responsable"
+  },
+  {
+   "read": 1,
+   "role": "Admission Direction"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1
+}

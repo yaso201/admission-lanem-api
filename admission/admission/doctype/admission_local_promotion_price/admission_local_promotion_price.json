@@ -1,0 +1,50 @@
+{
+ "actions": [],
+ "creation": "2026-09-10 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "istable": 1,
+ "field_order": [
+  "program_code",
+  "level_code",
+  "promo_annual_xof"
+ ],
+ "fields": [
+  {
+   "fieldname": "program_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Program Code",
+   "reqd": 1,
+   "description": "Code programme (ex: LIS). Meme referentiel que Admission Fee Catalog."
+  },
+  {
+   "fieldname": "level_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Level Code",
+   "default": "DEFAULT",
+   "description": "Niveau, fallback DEFAULT (meme convention que le catalogue 3D, DEC-232/234)."
+  },
+  {
+   "fieldname": "promo_annual_xof",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Promo Annual XOF",
+   "reqd": 1,
+   "precision": 2,
+   "description": "PRIX CIBLE annuel promotionnel (pas un taux). DEC-343."
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-09-10 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Admission",
+ "name": "Admission Local Promotion Price",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 0
+}
