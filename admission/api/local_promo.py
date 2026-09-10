@@ -192,3 +192,67 @@ def build_promotion_locale_section(programme_code, level_code):
 	                      filters={"name": name}, fields=["name", "label", "end_date"], limit=1)
 	end = str(rows[0]["end_date"]) if rows else None
 	return {"campaign": name, "label": label, "end_date": end, "promo_annual_xof": price}
+
+
+# Ordre d'affichage FIXE des familles au bandeau (DEC-343).
+_BANNER_PARCOURS_ORDER = ("Licence", "Bachelor", "Double-Diplomation")
+
+
+def _banner_data_uncached(on_date):
+	"""Bandeau accueil : agrege la campagne active PAR FAMILLE (parcours du programme).
+
+	Plein tarif = premiere ligne `annual` du catalogue pour le programme (identique au
+	sein d'une famille ; ⚠️ PROD n'a PAS de lignes DEFAULT — ne jamais supposer un niveau).
+	Une ligne sans base catalogue est ECARTEE (jamais de colonne sans plein tarif).
+	"""
+	campaigns = frappe.get_all(
+		"Admission Local Promotion",
+		filters={"active": 1, "start_date": ["<=", on_date], "end_date": [">=", on_date]},
+		fields=["name", "label", "end_date"], limit=1,
+	)
+	if not campaigns:
+		return {"active": False}
+	camp = campaigns[0]
+	lines = frappe.get_all(
+		"Admission Local Promotion Price",
+		filters={"parent": camp["name"]}, fields=["program_code", "promo_annual_xof"],
+	)
+	parcours_map = {p["name"]: p["parcours"] for p in frappe.get_all(
+		"Admission Programme", fields=["name", "parcours"])}
+	familles = {}
+	for row in lines:
+		parcours = parcours_map.get(row["program_code"])
+		if not parcours or parcours in familles:
+			continue
+		base_rows = frappe.get_all(
+			"Admission Fee Catalog",
+			filters={"program_code": row["program_code"], "fee_type": "annual"},
+			fields=["amount_xof"], limit=1,
+		)
+		if not base_rows:
+			continue  # pas de plein tarif -> pas de colonne (jamais de barre vide)
+		familles[parcours] = {
+			"parcours": parcours,
+			"plein_xof": float(base_rows[0]["amount_xof"]),
+			"promo_xof": float(row["promo_annual_xof"]),
+		}
+	ordered = [familles[p] for p in _BANNER_PARCOURS_ORDER if p in familles]
+	ordered += [v for k, v in familles.items() if k not in _BANNER_PARCOURS_ORDER]
+	return {"active": True, "label": camp["label"], "end_date": str(camp["end_date"]),
+	        "familles": ordered}
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET"])
+@rate_limit(limit=60, seconds=60 * 60)
+def get_active_local_promotion():
+	"""DEC-343 : resume public de la campagne active pour le bandeau d'accueil.
+
+	Cache date (anti-perime a minuit) + invalidation on_update des doctypes campagne.
+	"""
+	from admission.api.public import _cache_get_or_set, _ok
+	today = date.today()
+	data = _cache_get_or_set(
+		f"admission:local_promo_banner:{today}", 24 * 60 * 60,
+		lambda: _banner_data_uncached(today),
+	)
+	return _ok(data)

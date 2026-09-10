@@ -225,3 +225,60 @@ class TestExposition(TestCase):
         from admission.api import staff
         src = inspect.getsource(staff.get_dossier)
         self.assertIn('"locale"', src)
+
+
+class TestBannerEndpoint(TestCase):
+    """Bandeau accueil (DEC-343) : agregation PAR FAMILLE (parcours) de la campagne active."""
+
+    def _run(self, campaigns, lines, progs, catalog):
+        def fake_get_all(doctype, **kw):
+            if doctype == "Admission Local Promotion":
+                return campaigns
+            if doctype == "Admission Local Promotion Price":
+                return lines
+            if doctype == "Admission Programme":
+                return progs
+            if doctype == "Admission Fee Catalog":
+                prog = kw.get("filters", {}).get("program_code")
+                return [{"amount_xof": catalog[prog]}] if prog in catalog else []
+            return []
+        with patch(f"{LP}.frappe") as mf:
+            mf.get_all.side_effect = fake_get_all
+            from admission.api.local_promo import _banner_data_uncached
+            return _banner_data_uncached(date(2026, 9, 15))
+
+    def test_agrege_trois_familles_ordre_fixe(self):
+        campaigns = [{"name": "LPROMO-0001", "label": "Promo rentree 2026",
+                      "end_date": date(2026, 9, 25)}]
+        lines = [{"program_code": "LIC-IS", "promo_annual_xof": 380000.0},
+                 {"program_code": "BACH-UX", "promo_annual_xof": 1000000.0},
+                 {"program_code": "DD-IS-CPI", "promo_annual_xof": 1340000.0},
+                 {"program_code": "LIC-MI", "promo_annual_xof": 380000.0}]
+        progs = [{"name": "LIC-IS", "parcours": "Licence"},
+                 {"name": "LIC-MI", "parcours": "Licence"},
+                 {"name": "BACH-UX", "parcours": "Bachelor"},
+                 {"name": "DD-IS-CPI", "parcours": "Double-Diplomation"}]
+        catalog = {"LIC-IS": 600000.0, "LIC-MI": 600000.0,
+                   "BACH-UX": 1315000.0, "DD-IS-CPI": 1640000.0}
+        out = self._run(campaigns, lines, progs, catalog)
+        self.assertTrue(out["active"])
+        self.assertEqual(out["end_date"], "2026-09-25")
+        self.assertEqual([f["parcours"] for f in out["familles"]],
+                         ["Licence", "Bachelor", "Double-Diplomation"])
+        lic = out["familles"][0]
+        self.assertEqual((lic["plein_xof"], lic["promo_xof"]), (600000.0, 380000.0))
+
+    def test_pas_de_campagne_active_inactive(self):
+        out = self._run([], [], [], {})
+        self.assertEqual(out, {"active": False})
+
+    def test_famille_sans_base_catalogue_ecartee(self):
+        campaigns = [{"name": "LPROMO-0001", "label": "X", "end_date": date(2026, 9, 25)}]
+        lines = [{"program_code": "GHOST", "promo_annual_xof": 100000.0},
+                 {"program_code": "LIC-IS", "promo_annual_xof": 380000.0}]
+        progs = [{"name": "GHOST", "parcours": "Licence"},
+                 {"name": "LIC-IS", "parcours": "Licence"}]
+        catalog = {"LIC-IS": 600000.0}  # GHOST : aucun annual -> ne doit pas polluer
+        out = self._run(campaigns, lines, progs, catalog)
+        self.assertEqual(len(out["familles"]), 1)
+        self.assertEqual(out["familles"][0]["plein_xof"], 600000.0)

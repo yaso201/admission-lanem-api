@@ -153,6 +153,11 @@ doc_events = {
 	"Admission Level Mirror": {"on_update": "admission.api.public.invalidate_catalog_cache"},
 	"Admission Legal Document": {"on_update": "admission.api.public.invalidate_catalog_cache"},
 	"Admission Session": {"on_update": "admission.api.public.invalidate_catalog_cache"},
+	# PROMO-LOCALE (DEC-343/344) : campagnes/codes locaux edites en Desk -> bandeau + get_frais frais.
+	"Admission Local Promotion": {"on_update": "admission.api.public.invalidate_catalog_cache",
+	                              "on_trash": "admission.api.public.invalidate_catalog_cache"},
+	"Admission Promo Code": {"on_update": "admission.api.public.invalidate_catalog_cache",
+	                         "on_trash": "admission.api.public.invalidate_catalog_cache"},
 }
 
 # Scheduled Tasks
