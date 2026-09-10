@@ -922,6 +922,12 @@ def _build_promotion_section(applicant):
 	}
 
 
+def _local_promo_section(programme_code, level_code):
+	# DEC-343 : campagne locale (hors miroir UF) servie a get_frais.
+	from admission.api.local_promo import build_promotion_locale_section
+	return build_promotion_locale_section(programme_code, level_code)
+
+
 def _assert_fee_unpaid(fee):
 	"""Garde amont B1 (anti double-débit) : refuse si un paiement Confirmed existe DÉJÀ sur ce fee.
 	MÊME critère autoritaire que la branche orphelin du webhook (le paiement Confirmed, pas la
@@ -1194,6 +1200,12 @@ def _serialize_dossier(applicant):
 		],
 		"bourses": _build_bourses_section(applicant),
 		"promotion": _build_promotion_section(applicant),
+		# DEC-345 : droit promo LOCAL — code saisi + snapshot fige (separe du miroir UF).
+		"promo_locale": {
+			"entered_code": getattr(applicant, "entered_promo_code", None) or None,
+			"snapshot": json.loads(applicant.local_promo_snapshot)
+			if getattr(applicant, "local_promo_snapshot", None) else None,
+		},
 		"paiement": {
 			"frais1": {
 				"montant_xof": fee.amount_xof if fee else None,
@@ -1375,6 +1387,8 @@ def _build_frais_data(session_doc, level_code=None):
 		},
 		"bourses_eligibles": _get_scholarships_for_programme(session_doc.programme_code),
 		"promotions_actives": _get_promotions_for_programme(session_doc.programme_code),
+		# DEC-343 : campagne LOCALE a prix cibles (UF absent) — plein tarif = scolarite_annuelle.
+		"promotion_locale": _local_promo_section(session_doc.programme_code, level_code),
 		"scolarite_annuelle": _resolve_fee_from_catalog(session_doc.programme_code, "annual", level_code),
 		"scholarship_cap": _get_scholarship_cap_local(),
 		"simulation_disclaimer": disclaimer_text,

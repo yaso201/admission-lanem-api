@@ -189,3 +189,39 @@ class TestCaptureLocalPromo(TestCase):
         src = inspect.getsource(public.apply_confirmed_payment_cascade)
         self.assertIn("capture_local_promo_if_eligible", src)
         self.assertIn("_capture_promo_if_eligible", src)
+
+
+class TestExposition(TestCase):
+    def test_build_frais_data_expose_promotion_locale(self):
+        import inspect
+        from admission.api import public
+        src = inspect.getsource(public._build_frais_data)
+        self.assertIn('"promotion_locale"', src)
+
+    def test_frais_promotion_locale_shape(self):
+        from admission.api.local_promo import build_promotion_locale_section
+        with patch(f"{LP}._campaign_price_for", return_value=CAMPAIGN), \
+             patch(f"{LP}.frappe") as mf:
+            mf.get_all.return_value = [
+                {"name": "LPROMO-0001", "label": "Promo rentree", "end_date": date(2026, 9, 25)}]
+            out = build_promotion_locale_section("LIS", "DEFAULT")
+        self.assertEqual(out["promo_annual_xof"], 380000.0)
+        self.assertEqual(out["end_date"], "2026-09-25")
+
+    def test_frais_sans_campagne_renvoie_none(self):
+        from admission.api.local_promo import build_promotion_locale_section
+        with patch(f"{LP}._campaign_price_for", return_value=(None, None, None)):
+            self.assertIsNone(build_promotion_locale_section("LIS", "DEFAULT"))
+
+    def test_get_dossier_expose_promo_locale(self):
+        # Le payload candidat vit dans _serialize_dossier (get_dossier delegue).
+        import inspect
+        from admission.api import public
+        src = inspect.getsource(public._serialize_dossier)
+        self.assertIn('"promo_locale"', src)
+
+    def test_staff_get_dossier_expose_locale(self):
+        import inspect
+        from admission.api import staff
+        src = inspect.getsource(staff.get_dossier)
+        self.assertIn('"locale"', src)

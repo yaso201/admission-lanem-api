@@ -1265,7 +1265,14 @@ def get_dossier(dossier_id=None):
         "notes": _notes_payload(applicant, session_doc),
         "bourses": _bourses_payload(_mirror_details, applicant),
         "promo": {"code": applicant.promo_code, "rate": float(applicant.promo_rate or 0),
-                  "captured_date": str(applicant.promo_captured_date or "")},
+                  "captured_date": str(applicant.promo_captured_date or ""),
+                  # DEC-345 : droit promo LOCAL fige (snapshot autoporteur, hors miroir UF).
+                  "locale": {
+                      "entered_code": getattr(applicant, "entered_promo_code", None) or None,
+                      "final_annual_xof": float(applicant.final_annual_xof or 0) or None,
+                      "snapshot": json.loads(applicant.local_promo_snapshot)
+                      if getattr(applicant, "local_promo_snapshot", None) else None,
+                  }},
         "acompte_xof": float(applicant.acompte_xof or 0),
         "transitions": transitions,
         "transfer": transfer_payload,

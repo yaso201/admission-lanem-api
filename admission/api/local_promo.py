@@ -180,3 +180,15 @@ def capture_local_promo_if_eligible(applicant):
 	applicant.save(ignore_permissions=True)
 	frappe.logger("promo_capture").info(
 		f"Local promo captured for {applicant.name}: final={computed['final_annual_xof']}")
+
+
+def build_promotion_locale_section(programme_code, level_code):
+	"""Section get_frais (DEC-343) : campagne active pour (programme, niveau), ou None."""
+	today = date.today()
+	name, label, price = _campaign_price_for(programme_code, level_code, today)
+	if not name:
+		return None
+	rows = frappe.get_all("Admission Local Promotion",
+	                      filters={"name": name}, fields=["name", "label", "end_date"], limit=1)
+	end = str(rows[0]["end_date"]) if rows else None
+	return {"campaign": name, "label": label, "end_date": end, "promo_annual_xof": price}
