@@ -591,10 +591,21 @@ def accept_admission(dossier_id=None, bourses_validees=None):
         if bourses_err:
             return bourses_err  # gardes AVANT toute transition : un refus de bourse ne change rien
     applicant.status = "ACC"
+    # Rotation du token (même patron que request_complement / notify_pieces_recap) → le mail
+    # d'acceptation porte un lien /reprise TOKENISÉ. Sans lui, le CTA « Confirmer ma place »
+    # pointait sur /suivi NU : page qui n'identifie le candidat que par l'ancrage navigateur
+    # (30 min), donc cul-de-sac dès que le mail est ouvert ailleurs ou plus tard — aucun accès
+    # au paiement des frais 2 (constat 2026-09-22). Le clair n'est jamais persisté ; l'OTP reste
+    # re-exigé à l'arrivée (double barrière). 1 seul save.
+    tok = _generate_token()
+    applicant.dossier_token_hash = _hash(tok)
+    applicant.token_expires_at = add_days(now_datetime(), TOKEN_TTL_DAYS)
+    applicant.otp_verified = 0
     applicant.save(ignore_permissions=True)  # → _on_accepted (frais 2) ; ne pas court-circuiter
     # Bourse notifiée AVEC la décision (D11 §6.3) — taux indicatifs, jamais de montants (R4).
     send_decision_notification(applicant, "admission acceptée",
-                               bourses=_validated_scholarship_details(applicant))  # générique (Prépa+Licence ; notes déjà envoyées à l'admissibilité)
+                               bourses=_validated_scholarship_details(applicant),
+                               token=tok)  # générique (Prépa+Licence ; notes déjà envoyées à l'admissibilité)
     log_event("accept_admission", "success", dossier_id=applicant.name)
     return _ok({"dossier_id": applicant.name, "status": "ACC",
                 "validated_scholarships": json.loads(applicant.validated_scholarships or "[]")})
@@ -1904,11 +1915,16 @@ def conditional_admission(dossier_id=None):
         return notes_gate
     _stamp_decision(applicant)
     applicant.status = "ACO"
+    # Décision PORTEUSE D'ACTION (déposer le diplôme) → lien tokenisé, même patron qu'accept_admission.
+    tok = _generate_token()
+    applicant.dossier_token_hash = _hash(tok)
+    applicant.token_expires_at = add_days(now_datetime(), TOKEN_TTL_DAYS)
+    applicant.otp_verified = 0
     applicant.save(ignore_permissions=True)
     if _is_prepa(applicant):
-        send_prepa_decision_notification(applicant, "admission conditionnelle")
+        send_prepa_decision_notification(applicant, "admission conditionnelle", token=tok)
     else:
-        send_decision_notification(applicant, "admission conditionnelle")
+        send_decision_notification(applicant, "admission conditionnelle", token=tok)
     log_event("conditional_admission", "success", dossier_id=applicant.name)
     return _ok({"dossier_id": applicant.name, "status": "ACO"})
 
@@ -1941,9 +1957,15 @@ def lift_condition(dossier_id=None, bourses_validees=None):
         if bourses_err:
             return bourses_err  # gardes AVANT toute transition
     applicant.status = "ACC"
+    # Même chemin que accept_admission : ACC = frais 2 à régler → le mail doit porter un lien tokenisé.
+    tok = _generate_token()
+    applicant.dossier_token_hash = _hash(tok)
+    applicant.token_expires_at = add_days(now_datetime(), TOKEN_TTL_DAYS)
+    applicant.otp_verified = 0
     applicant.save(ignore_permissions=True)  # → _on_accepted (frais 2) ; ne pas court-circuiter
     send_decision_notification(applicant, "admission acceptée",
-                               bourses=_validated_scholarship_details(applicant))
+                               bourses=_validated_scholarship_details(applicant),
+                               token=tok)
     log_event("lift_condition", "success", dossier_id=applicant.name)
     return _ok({"dossier_id": applicant.name, "status": "ACC",
                 "validated_scholarships": json.loads(applicant.validated_scholarships or "[]")})

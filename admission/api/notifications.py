@@ -130,8 +130,13 @@ _DECISION_VIEW = {  # label (lower) → (status, intro, subject, preheader, with
 }
 
 
-def _decision_kwargs(applicant, decision_label, motif=None, bourses=None, notes=None):
-    """Construit les kwargs render pour une décision (factorisation générique/Prépa)."""
+def _decision_kwargs(applicant, decision_label, motif=None, bourses=None, notes=None, token=None):
+    """Construit les kwargs render pour une décision (factorisation générique/Prépa).
+
+    `token` (clair, rotaté par l'appelant) → CTA `/reprise` TOKENISÉ, ouvrable sur un appareil
+    vierge. Sans lui, le CTA retombe sur `/suivi` nu, qui n'identifie le candidat que par
+    l'ancrage navigateur : le lien ne mène alors nulle part passé 30 minutes.
+    """
     nom = _full_name(applicant)
     status, intro, subject, preheader, with_cta = _DECISION_VIEW.get(
         (decision_label or "").strip().lower(), _DECISION_VIEW["admissible"])
@@ -148,29 +153,32 @@ def _decision_kwargs(applicant, decision_label, motif=None, bourses=None, notes=
         kw["bourses"] = [(b["scholarship_name"], _format_rate_percent(b["rate"])) for b in bourses]
     if with_cta:
         if status == "accepte":
-            kw["cta"] = {"label": "Confirmer ma place", "url": _portal_link(applicant)}
+            kw["cta"] = {"label": "Confirmer ma place", "url": _portal_link(applicant, token=token)}
             kw["cta_intro"] = "Confirmez votre inscription avant la date limite."
         else:  # conditionnelle
-            kw["cta"] = {"label": "Téléverser mon diplôme", "url": _portal_link(applicant)}
+            kw["cta"] = {"label": "Téléverser mon diplôme", "url": _portal_link(applicant, token=token)}
             kw["cta_intro"] = "Déposez votre diplôme du bac dès que vous l'avez pour lever la condition."
     else:
         kw["secondary"] = {"label": "Ouvrir mon espace candidat", "url": _portal_link(applicant)}
     return kw, subject
 
 
-def send_decision_notification(applicant, decision_label, motif=None, bourses=None):
+def send_decision_notification(applicant, decision_label, motif=None, bourses=None, token=None):
     """Notifie le candidat (générique/Licence, SANS notes) de la décision. NON-BLOQUANT.
 
-    Signature INCHANGÉE (appelants staff.py intacts). `bourses` : liste
-    [{scholarship_name, rate}] des bourses validées (C2/R4, taux indicatifs)."""
-    kw, subject = _decision_kwargs(applicant, decision_label, motif=motif, bourses=bourses)
+    `bourses` : liste [{scholarship_name, rate}] des bourses validées (C2/R4, taux indicatifs).
+    `token` : OPTIONNEL et rétro-compatible (les appelants sans CTA ne le passent pas) — requis
+    en revanche pour les décisions PORTEUSES D'ACTION (accepté, conditionnelle), sans quoi le
+    bouton du mail mène à une page qui ne sait pas qui est le candidat."""
+    kw, subject = _decision_kwargs(applicant, decision_label, motif=motif, bourses=bourses, token=token)
     _send_candidate_mail(applicant, subject, render_candidate_email(**kw), "decision_notification")
 
 
-def send_prepa_decision_notification(applicant, decision_label):
+def send_prepa_decision_notification(applicant, decision_label, token=None):
     """Notifie le candidat Prépa de la décision AVEC ses notes de concours (DEC-197).
-    NON-BLOQUANT. Signature INCHANGÉE. Rend les LIBELLÉS d'épreuves (source unique exam_grading) et
-    « Absent(e) » pour une absence — jamais la sentinelle brute ni un 0 trompeur."""
+    NON-BLOQUANT. Rend les LIBELLÉS d'épreuves (source unique exam_grading) et « Absent(e) »
+    pour une absence — jamais la sentinelle brute ni un 0 trompeur.
+    `token` : optionnel, même rôle que dans send_decision_notification (CTA tokenisé)."""
     from admission.api.exam_grading import summary, SUBJECT_LABELS
     s = summary(getattr(applicant, "notes_concours", None), {})
     if s["absent"]:
@@ -179,7 +187,7 @@ def send_prepa_decision_notification(applicant, decision_label):
         notes = [(SUBJECT_LABELS.get(k, k), str(v)) for k, v in s["valeurs"].items()]
     else:
         notes = None
-    kw, subject = _decision_kwargs(applicant, decision_label, notes=notes or None)
+    kw, subject = _decision_kwargs(applicant, decision_label, notes=notes or None, token=token)
     _send_candidate_mail(applicant, subject, render_candidate_email(**kw), "prepa_decision_notification")
 
 

@@ -192,6 +192,27 @@ class TestAcceptAdmission(TestCase):
         app.save.assert_called_once_with(ignore_permissions=True)
         mf.db.set_value.assert_not_called()
 
+    def test_acceptation_porte_un_lien_tokenise(self):
+        """Le CTA « Confirmer ma place » doit porter un jeton de reprise.
+
+        Sans jeton, _portal_link retombe sur `/suivi` NU — page qui n'identifie le candidat
+        que par l'ancrage navigateur (30 min). Constat du 2026-09-22 : 7 admis sans aucun
+        chemin vers le paiement des frais 2. La rotation doit aussi re-exiger l'OTP.
+        """
+        app = _app("ADM")
+        ok, err = _patches()
+        with patch(f"{STAFF}.frappe") as mf, ok, err, \
+             patch(f"{STAFF}.send_decision_notification") as notif:
+            mf.db.exists.return_value = True
+            mf.get_doc.return_value = app
+            from admission.api.staff import accept_admission
+            accept_admission(dossier_id="CAN-2026-00001")
+        token = notif.call_args.kwargs.get("token")
+        self.assertTrue(token, "le mail d'acceptation doit transmettre un jeton")
+        from admission.api.public import _hash
+        self.assertEqual(app.dossier_token_hash, _hash(token))   # rotation réelle
+        self.assertEqual(app.otp_verified, 0)                    # double barrière conservée
+
     def test_invalid_state(self):
         app = _app("ETU")
         ok, err = _patches()

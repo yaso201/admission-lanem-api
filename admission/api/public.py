@@ -130,9 +130,21 @@ IDENTITY_RECOVERY_SESSION_TTL_SECONDS = 30 * 60
 
 # REPRISE-DOSSIER (DEC-332) — états où le CANDIDAT peut modifier son dossier. SOP et
 # au-delà : lecture seule, toute correction passe par le personnel. Source UNIQUE de la
-# règle : le claim (DEC-333), la garde d'écriture (_require_candidate_editable) et le
-# flag `reprenable` servi au front (pur renderer) la consomment tous les trois.
+# règle : la garde d'écriture (_require_candidate_editable) et le flag `reprenable`
+# servi au front (pur renderer) la consomment toutes deux.
 CANDIDATE_EDITABLE_STATUSES = ("BRO", "INC")
+
+# États où le candidat a encore une ACTION à mener sur son dossier — distinct de
+# « modifiable ». Un admis (ACC) ne modifie plus rien mais doit régler ses frais 2 ;
+# un admis sous réserve (ACO) doit déposer son diplôme (exception déjà nominative dans
+# _require_candidate_editable). Confondre les deux notions fermait le rattrapage
+# `/reprise` à ces candidats : lien du mail sans jeton + ancrage navigateur expiré
+# (30 min) + claim refusé = aucun chemin vers le paiement (constat 2026-09-22, 7 admis).
+#
+# SÉCURITÉ — élargir CE tuple n'ouvre AUCUN droit d'écriture : le claim délivre un jeton
+# d'ACCÈS, et toute écriture repasse par _require_candidate_editable, qui reste sur
+# CANDIDATE_EDITABLE_STATUSES. Ne jamais remplacer l'une par l'autre dans cette garde.
+CANDIDATE_ACTIONABLE_STATUSES = CANDIDATE_EDITABLE_STATUSES + ("ACC", "ACO")
 
 
 def _online_payment_enabled():
@@ -1978,6 +1990,10 @@ def _identity_recovery_summaries(names):
 		# REPRISE-DOSSIER : le front est un PUR RENDERER (patron FIX-PROGRESSION) — la règle
 		# d'états modifiables (DEC-332) vit ici, le bouton « Reprendre » s'affiche ssi True.
 		"reprenable": row.status in CANDIDATE_EDITABLE_STATUSES,
+		# `actionnable` ⊇ `reprenable` : inclut les états SANS édition mais AVEC une action
+		# candidat restante (ACC → frais 2, ACO → diplôme). C'est lui qui pilote l'accès au
+		# dossier ; `reprenable` ne pilote plus que le LIBELLÉ (reprendre vs accéder).
+		"actionnable": row.status in CANDIDATE_ACTIONABLE_STATUSES,
 	} for row in rows]
 
 
@@ -2088,6 +2104,7 @@ def get_recovered_dossier(recovery_token=None, dossier_id=None):
 	# Clé ADDITIVE (hors _serialize_dossier, partagé avec get_dossier) : le détail consulté
 	# porte la même règle DEC-332 que les résumés — le front reste un pur renderer.
 	data["reprenable"] = doc.status in CANDIDATE_EDITABLE_STATUSES
+	data["actionnable"] = doc.status in CANDIDATE_ACTIONABLE_STATUSES
 	return _ok(data)
 
 
@@ -2137,7 +2154,11 @@ def claim_recovered_dossier(recovery_token=None, dossier_id=None):
 	if not frappe.db.exists("Admission Applicant", {"name": dossier_id, "anonymized": ("!=", 1)}):
 		return _error("INVALID_DOSSIER", "Dossier indisponible.", 404)
 	doc = frappe.get_doc("Admission Applicant", dossier_id)
-	if doc.status not in CANDIDATE_EDITABLE_STATUSES:
+	# ACTIONNABLE, pas ÉDITABLE : le jeton rendu ici donne ACCÈS au dossier, jamais le droit
+	# d'écrire (_require_candidate_editable garde les écritures sur CANDIDATE_EDITABLE_STATUSES).
+	# Un ACC/ACO doit pouvoir revenir régler ses frais 2 / déposer son diplôme sans dépendre
+	# d'un mail tokenisé ni de l'ancrage navigateur.
+	if doc.status not in CANDIDATE_ACTIONABLE_STATUSES:
 		log_event("claim_recovered_dossier", "state_read_only", dossier_id=doc.name,
 			statut=doc.status, level="warning")
 		return _error(

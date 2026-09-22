@@ -148,8 +148,30 @@ class TestClaimRecoveredDossier(_ClaimBase):
         self.assertTrue(result["ok"], result)
         self.assertEqual(result["data"]["statut"], "INC")
 
+    def test_claim_acc_allowed_actionable_not_editable(self):
+        """ACC : plus modifiable, mais ACTIONNABLE (frais 2 à régler) → claim autorisé.
+
+        Régression du 2026-09-22 : 7 admis sans aucun chemin vers le paiement (lien du mail
+        sans jeton + ancrage navigateur 30 min expiré + claim refusé). Le droit d'ÉCRITURE
+        reste fermé : cf. TestWriteStateReverified.test_upload_refused_when_dossier_left_editable_states.
+        """
+        name, _ = self._mk("ACC")
+        recovery = self._open_session([name])
+        result = public.claim_recovered_dossier(recovery_token=recovery, dossier_id=name)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["data"]["statut"], "ACC")
+
+    def test_claim_aco_allowed(self):
+        """ACO : diplôme du bac à déposer — même raisonnement que ACC."""
+        name, _ = self._mk("ACO")
+        recovery = self._open_session([name])
+        result = public.claim_recovered_dossier(recovery_token=recovery, dossier_id=name)
+        self.assertTrue(result["ok"], result)
+
     def test_claim_read_only_states_refused_without_side_effect(self):
-        for status in ("SOP", "SOU", "ETU", "ADM", "ACC"):
+        # ACC/ACO RETIRÉS de cette liste : actionnables, donc réclamables (cf. tests ci-dessus).
+        # Les états ci-dessous n'attendent RIEN du candidat → aucun accès à rouvrir.
+        for status in ("SOP", "SOU", "ETU", "ADM"):
             name, _ = self._mk(status)
             hash_before = frappe.db.get_value("Admission Applicant", name, "dossier_token_hash")
             recovery = self._open_session([name])
@@ -236,6 +258,35 @@ class TestReprenableServedByBack(_ClaimBase):
         detail_sou = public.get_recovered_dossier(recovery_token=recovery, dossier_id=sou)
         self.assertTrue(detail_bro["data"]["reprenable"])
         self.assertFalse(detail_sou["data"]["reprenable"])
+
+    def test_summaries_carry_actionnable_flag(self):
+        """`actionnable` ⊋ `reprenable` : ACC/ACO n'éditent plus mais ont une action à mener.
+
+        C'est ce flag qui pilote le bouton du front ; `reprenable` n'en pilote que le libellé.
+        """
+        bro, _ = self._mk("BRO")
+        acc, _ = self._mk("ACC")
+        aco, _ = self._mk("ACO")
+        sou, _ = self._mk("SOU")
+        ref, _ = self._mk("REF")
+        rows = {r["dossier_id"]: r for r in public._identity_recovery_summaries([bro, acc, aco, sou, ref])}
+        self.assertEqual(
+            {k: v["actionnable"] for k, v in rows.items()},
+            {bro: True, acc: True, aco: True, sou: False, ref: False},
+        )
+        # …sans jamais élargir `reprenable` : un ACC ne doit pas être présenté comme modifiable.
+        self.assertFalse(rows[acc]["reprenable"])
+        self.assertFalse(rows[aco]["reprenable"])
+
+    def test_recovered_detail_carries_actionnable_flag(self):
+        acc, _ = self._mk("ACC")
+        ref, _ = self._mk("REF")
+        recovery = self._open_session([acc, ref])
+        detail_acc = public.get_recovered_dossier(recovery_token=recovery, dossier_id=acc)
+        detail_ref = public.get_recovered_dossier(recovery_token=recovery, dossier_id=ref)
+        self.assertTrue(detail_acc["data"]["actionnable"])
+        self.assertFalse(detail_acc["data"]["reprenable"])
+        self.assertFalse(detail_ref["data"]["actionnable"])
 
 
 class TestWriteStateReverified(_ClaimBase):

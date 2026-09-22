@@ -41,6 +41,9 @@ def _recovered():
     with patch.object(public, "_serialize_dossier", return_value=dict(FULL)):
         data = public._serialize_recovered(object())
     data["reprenable"] = True
+    # `actionnable` : ajouté au contrat en même temps que la correction du cul-de-sac ACC.
+    # Posé ici comme en production (get_recovered_dossier) — le schéma l'exige désormais.
+    data["actionnable"] = True
     return data
 
 
