@@ -110,8 +110,13 @@ TOKEN_TTL_DAYS = 7
 TOKEN_SLIDING_RENEW_BELOW_DAYS = 6
 
 # SEC-OTP : durée de vie du CODE OTP (éphémère, distincte du token 7j et du statut
-# otp_verified persistant).
-OTP_TTL_MINUTES = 10
+# otp_verified persistant). SOURCE UNIQUE : l'e-mail (preheader) et le front (via
+# `otp_ttl_minutes` dans la réponse de request_otp) DÉRIVENT cette valeur — aucune
+# recopie littérale, sinon un changement de durée ferait mentir le message au candidat.
+# 10 → 30 min : les délais de remise e-mail observés sur le réseau local faisaient
+# expirer le code avant que le candidat ne le reçoive. Le garde-fou reste le rate limit
+# de verify_otp (10 essais/h/dossier), pas la durée : 30 min ≈ 5 essais sur 10^6 codes.
+OTP_TTL_MINUTES = 30
 
 # DOSSIERS-IDENTITE (DEC-323/U) — seuils explicites, ajustables sans toucher à la
 # logique. Le quota e-mail est le garde principal ; le quota IP, plus large, protège
@@ -1584,7 +1589,7 @@ def request_otp(dossier_id=None, token=None):
 	phone_otp = _generate_otp()
 	applicant.otp_email_hash = _hash_otp(email_otp)  # ADM-DEBT-09 : HMAC, plus de SHA256 nu
 	applicant.otp_phone_hash = _hash_otp(phone_otp)
-	# SEC-OTP : code OTP éphémère (10 min) + re-vérif forcée (toute nouvelle demande
+	# SEC-OTP : code OTP éphémère (durée = OTP_TTL_MINUTES) + re-vérif forcée (toute nouvelle demande
 	# repasse otp_verified à 0 ; le statut persiste sinon entre les visites).
 	applicant.otp_expires_at = now_datetime() + timedelta(minutes=OTP_TTL_MINUTES)
 	applicant.otp_verified = 0
@@ -1595,7 +1600,10 @@ def request_otp(dossier_id=None, token=None):
 	# par mail (template `otp`) et n'est JAMAIS loggé. SMS = canal OPS distinct (A0.1).
 	from admission.api.notifications import send_email_otp
 	send_email_otp(applicant, email_otp, minutes=OTP_TTL_MINUTES, token=token)
-	data = {"delivery": {"email": "sent", "sms": "pending_ops"}}
+	# `otp_ttl_minutes` : le front AFFICHE cette durée au candidat au lieu de la recopier
+	# (« quelques minutes » historique = imprécis, et une valeur en dur redeviendrait fausse
+	# au prochain ajustement). Champ ADDITIF : un client qui l'ignore reste fonctionnel.
+	data = {"delivery": {"email": "sent", "sms": "pending_ops"}, "otp_ttl_minutes": OTP_TTL_MINUTES}
 	# SEC : ne JAMAIS divulguer l'OTP en réponse sur la seule foi de developer_mode
 	# (landmine prod si developer_mode reste activé). Opt-in explicite et dédié requis.
 	if frappe.conf.get("developer_mode") and frappe.conf.get("expose_dev_otp"):

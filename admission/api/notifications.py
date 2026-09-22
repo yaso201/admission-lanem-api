@@ -400,11 +400,15 @@ def send_recovery_link(applicant, token):
 # ── Code OTP e-mail (M3) ───────────────────────────────────────────────────────
 
 
-def send_email_otp(applicant, email_otp, minutes=10, token=None):
+def send_email_otp(applicant, email_otp, minutes, token=None):
     """Livre le code OTP e-mail. NON-BLOQUANT. SÉCURITÉ : jamais de code dans les
     logs ni le sujet/preheader. `token` (clair au moment du request_otp) → ajoute un
     lien de reprise « un tap » avec OTP pré-saisi (corps uniquement, pas le sujet) ;
-    le front auto-vérifie en POST et purge l'URL. Le SMS (phone_otp) = OPS (A0.1)."""
+    le front auto-vérifie en POST et purge l'URL. Le SMS (phone_otp) = OPS (A0.1).
+
+    `minutes` est OBLIGATOIRE (plus de défaut à 10) : l'appelant détient la durée réelle
+    (OTP_TTL_MINUTES). Un défaut silencieux avait laissé le preheader annoncer 10 minutes
+    pour un code qui en valait une autre — l'oubli devient désormais une TypeError visible."""
     nom = _full_name(applicant)
     kwargs = dict(
         nom=nom, dossier=applicant.name, filiere="", status="otp",
@@ -413,7 +417,7 @@ def send_email_otp(applicant, email_otp, minutes=10, token=None):
         meta=[("Candidat", nom), ("Dossier", applicant.name, True)],
         otp={"code": email_otp, "minutes": minutes},
         signoff="Service des admissions, LaNEM",
-        preheader="Votre code de vérification LaNEM — valable 10 minutes. Ne le partagez jamais.",
+        preheader=f"Votre code de vérification LaNEM — valable {minutes} minutes. Ne le partagez jamais.",
         subject="Votre code de vérification LaNEM",
     )
     if token:

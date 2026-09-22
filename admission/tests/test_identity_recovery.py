@@ -9,6 +9,7 @@ from frappe.tests.utils import FrappeTestCase
 from frappe.utils import get_datetime
 from redis.exceptions import RedisError
 
+from admission.api.public import IDENTITY_RECOVERY_OTP_TTL_SECONDS, OTP_TTL_MINUTES
 
 PUB = "admission.api.public"
 
@@ -110,9 +111,11 @@ class TestIdentityRecoveryContract(FrappeTestCase):
         applicant.name = "CAN-1"
         with patch(f"{PUB}.frappe.get_doc", return_value=applicant):
             send_identity_recovery_otp("ama@x.bj")
-        cache.setex.assert_called_once_with("otp", 600, "otp-hmac")
+        # Adossé aux constantes, pas à des littéraux : la durée OTP est un paramètre
+        # métier (10 → 30 min) et le test doit suivre sans réécriture.
+        cache.setex.assert_called_once_with("otp", IDENTITY_RECOVERY_OTP_TTL_SECONDS, "otp-hmac")
         cache.delete.assert_called_once_with("attempts")
-        send_email.assert_called_once_with(applicant, "123456", minutes=10)
+        send_email.assert_called_once_with(applicant, "123456", minutes=OTP_TTL_MINUTES)
 
     @patch(f"{PUB}._generate_token", return_value="opaque-30m")
     @patch(f"{PUB}._identity_recovery_summaries")

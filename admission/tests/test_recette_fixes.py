@@ -51,5 +51,5 @@ class TestOtpSync(TestCase):
         with patch.object(N, "render_candidate_email", return_value="<html>"), \
              patch.object(N, "_full_name", return_value="X"), \
              patch.object(N, "_send_candidate_mail") as snd:
-            N.send_email_otp(self._appl(), "123456")
+            N.send_email_otp(self._appl(), "123456", minutes=10)
             self.assertTrue(snd.call_args.kwargs.get("now"))

@@ -188,7 +188,15 @@ def _otp_code(otp):
     """Code de vérification proéminent (6 chiffres) + validité + rappel sécurité. otp={code,minutes}."""
     if not otp:
         return ""
-    minutes = otp.get("minutes", 10)
+    # Pas de défaut chiffré : un `minutes` manquant annonçait 10 minutes quoi qu'il arrive,
+    # donc potentiellement une durée FAUSSE. Absent → on tait la validité plutôt que de
+    # mentir (l'appelant, lui, est tenu de la fournir : cf. send_email_otp).
+    minutes = otp.get("minutes")
+    validite = (
+        f'<div style="font-family:{FONT};font-size:13px;color:{T3};margin-top:14px;">'
+        f'Ce code est valable <strong style="color:{T2};">{_esc(str(minutes))}&nbsp;minutes</strong>.</div>'
+        if minutes else ""
+    )
     return (
         f'<tr><td style="padding:8px 30px 0;" class="sm-px">'
         f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
@@ -196,7 +204,7 @@ def _otp_code(otp):
         f'<tr><td align="center" style="padding:24px 20px 20px;">'
         f'<div style="font-family:{FONT};font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#7C6BB0;">Votre code de vérification</div>'
         f'<div style="font-family:{MONO};font-size:42px;font-weight:600;letter-spacing:.34em;color:{INK};margin-top:12px;padding-left:.34em;line-height:1;">{_esc(otp["code"])}</div>'
-        f'<div style="font-family:{FONT};font-size:13px;color:{T3};margin-top:14px;">Ce code est valable <strong style="color:{T2};">{_esc(str(minutes))}&nbsp;minutes</strong>.</div>'
+        f'{validite}'
         f'</td></tr>'
         f'<tr><td style="padding:0 22px 20px;">'
         f'<div style="font-family:{FONT};font-size:11.5px;line-height:1.55;color:#6E649A;border-top:1px solid #E6E0F5;padding-top:14px;text-align:center;">'

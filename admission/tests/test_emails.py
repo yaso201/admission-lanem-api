@@ -60,10 +60,20 @@ class TestSendEmailOtp(TestCase):
         self.assertNotIn("987654", kw["subject"])     # jamais dans le sujet (sécurité)
         self.assertEqual(kw["recipients"], ["a@x.bj"])
 
+    def test_duree_annoncee_suit_le_parametre(self):
+        """Anti-régression : le preheader ET le corps portaient « 10 minutes » en dur.
+        Un changement de OTP_TTL_MINUTES faisait alors mentir le mail au candidat."""
+        with patch(f"{NOTIF}.frappe") as mf:
+            from admission.api.notifications import send_email_otp
+            send_email_otp(_app(), "987654", minutes=30)
+        kw = _sendmail_kwargs(mf)
+        self.assertIn("30", kw["message"])
+        self.assertNotIn("valable 10 minutes", kw["message"])
+
     def test_skip_without_email(self):
         with patch(f"{NOTIF}.frappe") as mf:
             from admission.api.notifications import send_email_otp
-            send_email_otp(_app(email=None), "987654")
+            send_email_otp(_app(email=None), "987654", minutes=10)
         mf.sendmail.assert_not_called()
 
     def test_one_tap_link_carries_otp_and_token(self):
