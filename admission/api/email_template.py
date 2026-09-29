@@ -117,7 +117,10 @@ STATUS = {
     # ─ DÉCISIONS — couleur sémantique propre à chaque état du workflow ─
     "admissible": {"band": "#1D5FA8", "soft": "#EAF1FB", "eyebrow": "Décision",      "label": "Admissible",              "mark": "✓"},
     "attente":    {"band": "#2D1B69", "soft": "#F5F2FB", "eyebrow": "Décision",      "label": "Liste d’attente",         "mark": "•"},
-    "conditionnelle": {"band": "#9A6B16", "soft": "#FBF6E9", "eyebrow": "Décision",  "label": "Admis sous réserve",       "mark": "✓"},
+    # « Admis·e » : ALIGNÉ sur le libellé servi au candidat dans son espace de suivi (ACO).
+    # Même audience, même état du dossier → même formulation ; l'e-mail disait « Admis »,
+    # l'écran « Admis·e », pour un candidat qui lit les deux.
+    "conditionnelle": {"band": "#9A6B16", "soft": "#FBF6E9", "eyebrow": "Décision",  "label": "Admis·e sous réserve",     "mark": "✓"},
     "accepte":    {"band": "#047857", "soft": "#ECFDF5", "eyebrow": "Décision",      "label": "Admission confirmée",      "mark": "✓"},
     "refuse":     {"band": "#B91C1C", "soft": "#FEF2F2", "eyebrow": "Décision",      "label": "Candidature non retenue", "mark": ""},
     "admis":      {"band": "#047857", "soft": "#ECFDF5", "eyebrow": "Décision",      "label": "Admis",                   "mark": "✓"},  # alias rétro-compat (= accepte)

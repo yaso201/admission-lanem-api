@@ -115,7 +115,7 @@ _DECISION_VIEW = {  # label (lower) → (status, intro, subject, preheader, with
     "admission conditionnelle": ("conditionnelle",
         "Votre admission est prononcée « sous réserve » : elle est conditionnée à la présentation "
         "de votre diplôme du baccalauréat. Dès sa vérification, votre admission sera confirmée.",
-        "Votre candidature LaNEM — décision (Admis sous réserve)",
+        "Votre candidature LaNEM — décision (Admis·e sous réserve)",
         "Vous êtes admis(e) sous réserve de présentation de votre diplôme du baccalauréat.", True),
     "admission acceptée": ("accepte",
         "Nous avons le plaisir de vous confirmer votre admission définitive à LaNEM, prononcée par "
