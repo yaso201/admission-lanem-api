@@ -6,3 +6,25 @@ __pycache__/
 node_modules/
 *.log
 .env
+
+# ── Canal des secrets (posé 03/09/2026) — ne jamais versionner ──
+/_transmission/
+**/_transmission/
+.transmission/
+
+# ── SOCLE SECRETS (posé 03/09/2026) — commun aux 9 dépôts ──
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa*
+id_ed25519*
+site_config.json
+common_site_config.json
+.secrets/
