@@ -28,3 +28,10 @@ id_ed25519*
 site_config.json
 common_site_config.json
 .secrets/
+
+# ── COMPLÉMENT SOCLE (posé 10/11/2026) — DEC-163 et secrets locaux Cloudflare (DEC-346) ──
+site_config.json.bak
+**/logs/*.log
+**/.DS_Store
+.dev.vars
+.dev.vars.*
