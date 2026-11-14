@@ -38,6 +38,7 @@ SMTP_FERME_PORT="${EMELA_SMTP_FERME_PORT:-2525}"         # B1 : port local qui d
 FRAPPE_SHA=665fce241eeed17b8869168cd9103d795f39e3e1
 LOG="$ROOT/journaux/provision-admission-$(date +%Y%m%d-%H%M%S).log"
 WARN=0
+BLOQUANT=0   # contrôles bloquants en écart (E1)
 
 mkdir -p "$ROOT/journaux"
 exec > >(tee -a "$LOG") 2>&1
@@ -91,7 +92,7 @@ PY
   ) || warn "$1 : création du compte de courriel factice en échec"
 }
 
-# Réglages de site B1 (courriel), B2 (fuseau), B3 (host_name), après install-app et migrate.
+# Réglages de site B1 (courriel), B2 (fuseau), B3 (host_name), E1 (ordonnanceur), après install-app et migrate.
 reglages_site() {  # $1 site  $2 fuseau (vide = inchangé)
   if [ "$1" = "$SITE_DEV" ]; then
     bench --site "$1" set-config mute_emails 1        # C5 : aucun courriel ne part du site -dev
@@ -104,12 +105,16 @@ reglages_site() {  # $1 site  $2 fuseau (vide = inchangé)
   if [ -n "$2" ]; then   # B2 : sans l'assistant de configuration, frappe se rabat sur Asia/Kolkata
     bench --site "$1" execute frappe.db.set_single_value --args "['System Settings', 'time_zone', '$2']" </dev/null
   fi
+  # E1 (VERDICT-MANDAT-02-GATE) : sur -test, l'ordonnanceur est arrêté PAR LE SCRIPT. Un assistant de configuration
+  # (benin_hr, ou E4 sur campus) l'active ; run-tests ne le rallume pas si une suite plante : son état ne se suppose pas.
+  if [ "$1" != "$SITE_DEV" ]; then bench --site "$1" disable-scheduler; fi
   bench --site "$1" clear-cache
   if [ "$1" = "$SITE_DEV" ]; then compte_courriel_factice "$1"; fi
 }
 
 # Contrôle de sortie de B1 à B3 (n'imprime aucune valeur sensible : clés de courriel « présente » ou rien).
-controle_site() {  # $1 site  $2 fuseau attendu (vide = non contrôlé)
+controle_site() {  # $1 site  $2 fuseau attendu (vide = non contrôlé) ; code 2 du contrôle = bloquant (E1)
+  local rc=0
   (cd sites && ../env/bin/python -I - "$1" "$SITE_DEV" "$2" "http://127.0.0.1:$WEB_PORT" <<'PY'
 import sys
 import frappe
@@ -131,16 +136,21 @@ if site == dev:
 else:
     if c.get("mute_emails"): ecarts.append("mute_emails présent")
     if comptes: ecarts.append("compte de courriel actif présent")
-    if not arrete: ecarts.append("ordonnanceur actif")
+    if not arrete: ecarts.append("ordonnanceur actif (E1, bloquant)")
 for k in ("mail_server", "mail_login", "mail_password"):
     if c.get(k): ecarts.append(f"clé {k} présente")
 if c.get("host_name") != host: ecarts.append("host_name inattendu")
 if tz and fuseau != tz: ecarts.append("fuseau inattendu")
 frappe.destroy()
 for e in ecarts: print("ÉCART", site, ":", e)
-sys.exit(1 if ecarts else 0)
+sys.exit(2 if any("bloquant" in e for e in ecarts) else (1 if ecarts else 0))
 PY
-  ) || warn "$1 : contrôle B1 à B3 en écart"
+  ) || rc=$?
+  if [ "$rc" = 2 ]; then
+    BLOQUANT=$((BLOQUANT + 1)); warn "$1 : ordonnanceur actif sur un site -test (E1, bloquant)"
+  elif [ "$rc" != 0 ]; then
+    warn "$1 : contrôle B1 à B3 en écart"
+  fi
 }
 
 # ---------------------------------------------------------------- 0. prérequis
@@ -214,7 +224,7 @@ for site in "${SITES[@]}"; do
   bench --site "$site" set-config mute_emails 1   # C5 : rien ne part pendant l'installation ; -test : retiré après (B1)
   bench --site "$site" list-apps | grep -qE "^$APP( |\$)" || bench --site "$site" install-app "$APP" </dev/null
   bench --site "$site" migrate </dev/null
-  step "réglages B1 à B3 sur $site"
+  step "réglages B1 à B3 et E1 sur $site"
   reglages_site "$site" "$TIME_ZONE"
 done
 bench --site "$SITE_TEST" set-config allow_tests true
@@ -234,6 +244,7 @@ for site in "${SITES[@]}"; do
     [ -z "$v" ] || warn "$site : $k est configuré (le banc doit rester isolé)"
   done
 done
+[ "$BLOQUANT" = 0 ] || die "$BLOQUANT contrôle(s) bloquant(s) en écart (E1 : ordonnanceur actif sur -test) ; journal : $LOG"
 if [ -n "$(git -C "apps/$APP" status --porcelain)" ]; then
   git -C "apps/$APP" status --short
   echo "ÉCART : git status de apps/$APP non propre ($WARN avertissement(s)) ; journal : $LOG"
